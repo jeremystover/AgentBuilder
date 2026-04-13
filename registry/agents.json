@@ -202,6 +202,53 @@
       },
       "version": "0.1.0",
       "lastDeployed": "2026-04-13T00:00:00.000Z"
+    },
+    {
+      "id": "guest-booking",
+      "name": "Guest Booking",
+      "purpose": "Manages guest bookings across multiple hosting platforms (Airbnb, VRBO, etc.) as a Guesty-style property operations system.",
+      "owner": "jeremystover",
+      "status": "draft",
+      "kind": "app",
+      "skills": [],
+      "tools": [],
+      "mcpServers": [],
+      "sharedPackages": [],
+      "oauthScopes": [],
+      "cloudflare": {
+        "workerName": "booking-sync",
+        "durableObjects": [],
+        "d1": [],
+        "kv": [],
+        "r2": [],
+        "queues": [],
+        "hasAssets": true
+      },
+      "routing": {
+        "triggerPhrases": [
+          "new booking",
+          "guest check-in",
+          "guest check-out",
+          "sync bookings",
+          "airbnb",
+          "vrbo",
+          "property availability",
+          "booking calendar"
+        ],
+        "examples": [
+          "What bookings are checking in this week?",
+          "Sync my Airbnb calendar with VRBO",
+          "Block off next weekend across all platforms",
+          "Draft a check-in message for tomorrow's guest"
+        ],
+        "nonGoals": [
+          "Personal calendar, tasks, or stakeholder management (that's Chief of Staff)",
+          "Bookkeeping, budgeting, or tax work (that's CFO)",
+          "Building or modifying other agents",
+          "Host coaching or general hospitality advice"
+        ]
+      },
+      "version": "0.0.1"
     }
   ]
 }
