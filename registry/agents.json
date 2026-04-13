@@ -48,6 +48,160 @@
         ]
       },
       "version": "0.0.1"
+    },
+    {
+      "id": "chief-of-staff",
+      "name": "Chief of Staff",
+      "purpose": "Manages calendar, stakeholders, projects, tasks, and goals to keep the user organized and optimize their time.",
+      "owner": "jeremystover",
+      "status": "active",
+      "kind": "headless",
+      "skills": [
+        "calendar-triage",
+        "task-management",
+        "goal-tracking",
+        "stakeholder-crm",
+        "meeting-prep",
+        "morning-brief",
+        "weekly-review",
+        "decision-journal",
+        "email-drafting",
+        "zoom-transcript-capture"
+      ],
+      "tools": [
+        "content-tools",
+        "planning-tools",
+        "propose-commit-changeset",
+        "goals-projects-tasks",
+        "stakeholder-360",
+        "period-reviews",
+        "zoom-recording-poll",
+        "calendar-rw",
+        "gmail-draft",
+        "ingest-cron",
+        "morning-brief-automation",
+        "commitment-nudges"
+      ],
+      "mcpServers": [],
+      "sharedPackages": [],
+      "oauthScopes": [
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.compose",
+        "https://www.googleapis.com/auth/calendar",
+        "zoom:recording:read"
+      ],
+      "cloudflare": {
+        "workerName": "personal-productivity-mcp",
+        "durableObjects": [],
+        "d1": [],
+        "kv": [],
+        "r2": [],
+        "queues": [],
+        "hasAssets": false
+      },
+      "routing": {
+        "triggerPhrases": [
+          "what's on my calendar",
+          "morning brief",
+          "weekly review",
+          "add a task",
+          "update my goals",
+          "stakeholder follow-up",
+          "meeting prep",
+          "decision journal",
+          "intake triage",
+          "draft a reply"
+        ],
+        "examples": [
+          "What's my day look like?",
+          "Give me a morning brief",
+          "Who haven't I talked to in a while?",
+          "Add a task to follow up with Acme by Friday",
+          "Generate a weekly review for last week",
+          "Pull transcripts from yesterday's Zoom meetings"
+        ],
+        "nonGoals": [
+          "Financial accounting, bookkeeping, or tax work (that's the CFO agent)",
+          "Building or modifying other agents",
+          "Customer-facing apps or external-user conversations",
+          "Code authoring or engineering tasks"
+        ]
+      },
+      "version": "4.0.0",
+      "lastDeployed": "2026-04-13T00:00:00.000Z"
+    },
+    {
+      "id": "cfo",
+      "name": "CFO",
+      "purpose": "Owns bookkeeping, budgeting, cash-flow, retirement and financial planning, and tax prep/advice. Currently implemented as a tax-prep agent and being extended into a full CFO.",
+      "owner": "jeremystover",
+      "status": "active",
+      "kind": "headless",
+      "skills": [
+        "transaction-ingest",
+        "transaction-categorization",
+        "tax-prep",
+        "bookkeeping",
+        "budgeting",
+        "budget-vs-actual",
+        "cash-flow-forecast",
+        "retirement-analysis",
+        "financial-planning",
+        "tax-advice"
+      ],
+      "tools": [
+        "teller-sync",
+        "csv-import",
+        "transaction-categorizer",
+        "tax-category-mapping"
+      ],
+      "mcpServers": [],
+      "sharedPackages": [],
+      "oauthScopes": [
+        "teller:transactions:read",
+        "teller:accounts:read"
+      ],
+      "cloudflare": {
+        "workerName": "tax-prep",
+        "durableObjects": [],
+        "d1": [],
+        "kv": [],
+        "r2": [],
+        "queues": [],
+        "hasAssets": false
+      },
+      "routing": {
+        "triggerPhrases": [
+          "categorize my transactions",
+          "how much did I spend",
+          "tax prep",
+          "quarterly taxes",
+          "budget vs actual",
+          "retirement projection",
+          "cash flow",
+          "bookkeeping",
+          "financial plan",
+          "set a budget"
+        ],
+        "examples": [
+          "Import last month's transactions from Teller",
+          "Categorize these transactions for Schedule C",
+          "What's my burn rate this quarter?",
+          "Am I on track for my retirement goal?",
+          "Set a $500/mo dining budget and track against it",
+          "How much should I pay in estimated taxes this quarter?"
+        ],
+        "nonGoals": [
+          "Calendar, tasks, goals, or stakeholder management (that's Chief of Staff)",
+          "Building or modifying other agents",
+          "Generic customer-facing financial advice for third parties",
+          "Executing trades or moving money"
+        ]
+      },
+      "version": "0.1.0",
+      "lastDeployed": "2026-04-13T00:00:00.000Z"
     }
   ]
 }
