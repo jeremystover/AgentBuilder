@@ -3,22 +3,191 @@
  *
  * Purpose: __AGENT_PURPOSE__
  *
+ * Routes:
+ *   GET  /health  → { status: 'ok', agent: '__AGENT_ID__' }
+ *   POST /chat    → { message, sessionId? } (REST, for curl testing)
+ *   POST /mcp     → JSON-RPC 2.0 MCP server (Claude custom tool integration)
+ *
+ * MCP auth: set MCP_HTTP_KEY secret via `wrangler secret put MCP_HTTP_KEY`,
+ * then add Authorization: Bearer <MCP_HTTP_KEY> in Claude's connector settings.
+ *
  * See ./SKILL.md for the full persona, tools, and non-goals.
  */
 
 import type { Env } from '../worker-configuration';
 export { __AGENT_CLASS__DO } from './durable-object.js';
 
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function jsonResponse(obj: unknown, status = 200): Response {
+  return new Response(JSON.stringify(obj), {
+    status,
+    headers: { 'content-type': 'application/json; charset=utf-8' },
+  });
+}
+
+function requireAuth(
+  request: Request,
+  env: Env,
+): { ok: true } | { ok: false; response: Response } {
+  const expected = (env as unknown as Record<string, string>).MCP_HTTP_KEY ?? '';
+  if (!expected) return { ok: true };
+
+  const header = request.headers.get('authorization') ?? '';
+  const match = header.match(/^Bearer\s+(.+)$/i);
+  const token = match?.[1]?.trim() ?? new URL(request.url).searchParams.get('key') ?? '';
+
+  if (token && token === expected) return { ok: true };
+  return { ok: false, response: jsonResponse({ error: 'Unauthorized' }, 401) };
+}
+
+// ── MCP tool definitions ─────────────────────────────────────────────────────
+// TODO: Replace this stub with your agent's actual tools.
+// Each tool should have: name, description, inputSchema, and be handled
+// in the tools/call branch of handleMcp below.
+
+const MCP_TOOLS = [
+  {
+    name: 'chat',
+    description: '__AGENT_PURPOSE__. Send a message and get a response. Pass sessionId back on follow-up turns.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        message: { type: 'string', description: 'Your message.' },
+        sessionId: { type: 'string', description: 'Session id for conversation continuity. Omit to start new.' },
+      },
+      required: ['message'],
+      additionalProperties: false,
+    },
+  },
+];
+
+// ── JSON-RPC 2.0 MCP handler ─────────────────────────────────────────────────
+
+interface JsonRpcMessage {
+  jsonrpc?: string;
+  id?: string | number | null;
+  method?: string;
+  params?: Record<string, unknown>;
+}
+
+async function handleMcp(
+  message: JsonRpcMessage,
+  env: Env,
+  originalRequest: Request,
+): Promise<unknown> {
+  const { id, method, params } = message;
+
+  if (!method) {
+    return { jsonrpc: '2.0', id: id ?? null, error: { code: -32600, message: 'Invalid Request' } };
+  }
+
+  if (method === 'initialize') {
+    return {
+      jsonrpc: '2.0',
+      id,
+      result: {
+        protocolVersion: '2024-11-05',
+        capabilities: { tools: {} },
+        serverInfo: { name: '__AGENT_ID__', version: '0.1.0' },
+        instructions: '__AGENT_PURPOSE__',
+      },
+    };
+  }
+
+  if (method === 'tools/list') {
+    return { jsonrpc: '2.0', id, result: { tools: MCP_TOOLS } };
+  }
+
+  if (method === 'tools/call') {
+    const name = String(params?.name ?? '');
+    if (name !== 'chat') {
+      return { jsonrpc: '2.0', id, error: { code: -32601, message: `Unknown tool: ${name}` } };
+    }
+
+    const args = (params?.arguments ?? {}) as { message?: string; sessionId?: string };
+    if (!args.message) {
+      return { jsonrpc: '2.0', id, error: { code: -32602, message: '`message` is required' } };
+    }
+
+    const doKey = args.sessionId ?? crypto.randomUUID();
+    const doId = env.AGENT_DO.idFromName(doKey);
+    const stub = env.AGENT_DO.get(doId);
+
+    const doRequest = new Request(originalRequest.url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ message: args.message, sessionId: doKey }),
+    });
+
+    const doResponse = await stub.fetch(doRequest);
+    if (!doResponse.ok) {
+      const text = await doResponse.text();
+      return { jsonrpc: '2.0', id, error: { code: -32000, message: text } };
+    }
+
+    const result = (await doResponse.json()) as Record<string, unknown>;
+    return {
+      jsonrpc: '2.0',
+      id,
+      result: {
+        content: [{ type: 'text', text: JSON.stringify(result) }],
+      },
+    };
+  }
+
+  if (method === 'notifications/initialized') return null;
+
+  return { jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } };
+}
+
+// ── Worker ───────────────────────────────────────────────────────────────────
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
-    if (url.pathname === '/health') {
-      return Response.json({ status: 'ok', agent: '__AGENT_ID__' });
+    if (request.method === 'GET' && url.pathname === '/health') {
+      return jsonResponse({ status: 'ok', agent: '__AGENT_ID__' });
     }
 
-    const id = env.AGENT_DO.idFromName('global');
-    const stub = env.AGENT_DO.get(id);
-    return stub.fetch(request);
+    // REST /chat for local testing with curl / chat.sh
+    if (url.pathname === '/chat' && request.method === 'POST') {
+      let sessionId: string | null = null;
+      const cloned = request.clone();
+      try {
+        const body = (await cloned.json()) as { sessionId?: string };
+        sessionId = body.sessionId ?? null;
+      } catch {
+        // DO will return 400
+      }
+      const doKey = sessionId ?? crypto.randomUUID();
+      const stub = env.AGENT_DO.get(env.AGENT_DO.idFromName(doKey));
+      return stub.fetch(request);
+    }
+
+    // MCP /mcp for Claude custom tool integration
+    if (url.pathname === '/mcp' && request.method === 'POST') {
+      const auth = requireAuth(request, env);
+      if (!auth.ok) return auth.response;
+
+      let msg: JsonRpcMessage;
+      try {
+        msg = (await request.json()) as JsonRpcMessage;
+      } catch {
+        return jsonResponse({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } });
+      }
+
+      try {
+        const out = await handleMcp(msg, env, request);
+        if (out === null) return new Response(null, { status: 204 });
+        return jsonResponse(out);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return jsonResponse({ jsonrpc: '2.0', id: msg.id ?? null, error: { code: -32000, message } });
+      }
+    }
+
+    return new Response('Not found', { status: 404 });
   },
 } satisfies ExportedHandler<Env>;
