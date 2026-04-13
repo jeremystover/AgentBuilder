@@ -206,7 +206,7 @@
     {
       "id": "guest-booking",
       "name": "Guest Booking",
-      "purpose": "Manages guest bookings across multiple hosting platforms (Airbnb, VRBO, etc.) as a Guesty-style property operations system.",
+      "purpose": "Manages guest bookings across multiple hosting platforms (Airbnb, VRBO, etc.) as a Guesty-style property operations system. Agent layer is greenfield and will be built fresh in apps/guest-booking/ in the AgentBuilder monorepo; the existing booking-sync UI worker is legacy and will eventually be absorbed.",
       "owner": "jeremystover",
       "status": "draft",
       "kind": "app",
@@ -216,7 +216,7 @@
       "sharedPackages": [],
       "oauthScopes": [],
       "cloudflare": {
-        "workerName": "booking-sync",
+        "workerName": "guest-booking",
         "durableObjects": [],
         "d1": [],
         "kv": [],
