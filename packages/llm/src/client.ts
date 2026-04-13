@@ -8,10 +8,16 @@
  * must pass `workersAi` binding for 'edge' tier to work.
  */
 
-import Anthropic from '@anthropic-ai/sdk';
 import { AgentError } from '@agentbuilder/core';
+import Anthropic from '@anthropic-ai/sdk';
 import { resolveModel } from './models.js';
-import type { CompleteRequest, CompleteResponse, ToolCall } from './types.js';
+import type {
+  ChatMessage,
+  CompleteRequest,
+  CompleteResponse,
+  ContentBlock,
+  ToolCall,
+} from './types.js';
 
 export interface LLMClientOptions {
   anthropicApiKey?: string;
@@ -65,7 +71,7 @@ export class LLMClient {
       model: modelId,
       max_tokens: maxTokens,
       system: systemBlocks,
-      messages: req.messages.map((m) => ({ role: m.role, content: m.content })),
+      messages: req.messages.map(toAnthropicMessage),
       tools: req.tools?.map((t) => ({
         name: t.name,
         description: t.description,
@@ -109,7 +115,10 @@ export class LLMClient {
     // per model — we pass through when available and ignore otherwise.
     const messages = [
       { role: 'system' as const, content: req.system },
-      ...req.messages.map((m) => ({ role: m.role, content: m.content })),
+      ...req.messages.map((m) => ({
+        role: m.role,
+        content: typeof m.content === 'string' ? m.content : flattenContentToText(m.content),
+      })),
     ];
 
     // biome-ignore lint/suspicious/noExplicitAny: Workers AI model ids are
@@ -130,4 +139,53 @@ export class LLMClient {
       model: modelId,
     };
   }
+}
+
+/**
+ * Map our internal ChatMessage (with optional structured content) to the
+ * Anthropic SDK's MessageParam shape. Plain strings pass through unchanged;
+ * ContentBlock[] gets mapped block-by-block.
+ */
+function toAnthropicMessage(msg: ChatMessage): Anthropic.MessageParam {
+  if (typeof msg.content === 'string') {
+    return { role: msg.role, content: msg.content };
+  }
+  const blocks = msg.content.map(toAnthropicBlock);
+  return { role: msg.role, content: blocks };
+}
+
+function toAnthropicBlock(block: ContentBlock): Anthropic.ContentBlockParam {
+  switch (block.type) {
+    case 'text':
+      return { type: 'text', text: block.text };
+    case 'tool_use':
+      return {
+        type: 'tool_use',
+        id: block.id,
+        name: block.name,
+        input: block.input,
+      };
+    case 'tool_result':
+      return {
+        type: 'tool_result',
+        tool_use_id: block.tool_use_id,
+        content: block.content,
+        is_error: block.is_error,
+      };
+  }
+}
+
+/**
+ * Workers AI doesn't understand tool_use/tool_result — if we ever route a
+ * tool-using conversation through the edge tier, collapse the blocks to
+ * plain text so the model at least sees something.
+ */
+function flattenContentToText(blocks: ContentBlock[]): string {
+  return blocks
+    .map((b) => {
+      if (b.type === 'text') return b.text;
+      if (b.type === 'tool_use') return `[called ${b.name}(${JSON.stringify(b.input)})]`;
+      return `[tool result: ${b.content}]`;
+    })
+    .join('\n');
 }

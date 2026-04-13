@@ -14,13 +14,11 @@
  * After scaffolding, run `pnpm install && pnpm --filter @agentbuilder/app-<id> typecheck`.
  */
 
-import { cp, mkdir, readdir, readFile, rename, writeFile, stat } from 'node:fs/promises';
-import { resolve, join, relative } from 'node:path';
+import { cp, mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
+import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-  FileRegistryStore,
-  type AgentEntry,
-} from '@agentbuilder/registry';
+import type { AgentEntry } from '@agentbuilder/registry';
+import { FileRegistryStore } from '@agentbuilder/registry/node';
 
 const REPO_ROOT = resolve(fileURLToPath(import.meta.url), '../..');
 

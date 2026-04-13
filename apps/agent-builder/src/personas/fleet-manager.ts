@@ -1,47 +1,41 @@
 /**
- * Fleet Manager persona.
+ * Fleet Manager persona — phase 2 stub.
  *
  * Job: keep the registry truthful, detect overlap between agents, and
- * propagate changes to shared code across the fleet when one agent
- * evolves a pattern worth sharing.
+ * propagate changes to shared code across the fleet.
  *
- * Tools (phase 2): registry.rw, git.diff, ast.similarity, github-app,
- * eval.runner. Read-heavy but can open PRs against sibling agents.
- * Model tier: 'default' (Sonnet) with 'fast' (Haiku) for bulk scans.
+ * Phase 2 leaves this as a single-turn stub. Phase 3 gives it registry
+ * write tools, git diff tools, and the ability to open PRs against
+ * sibling agents for shared-code updates.
  */
 
-import type { LLMClient } from '@agentbuilder/llm';
-import type { ConversationTurn, PersonaResult } from '../types.js';
+import type { ChatMessage, LLMClient } from '@agentbuilder/llm';
+import type { PersonaResult } from '../types.js';
 
-const FLEET_MANAGER_SYSTEM = `You are the Fleet Manager persona inside AgentBuilder. You own the health of the agent fleet.
-
-On every turn, you can be asked to:
-- Audit registry/agents.json for accuracy against the actual apps/* directories
-- Diff purposes + non-goals across agents and flag any overlap
-- Scan apps/* for duplicated code, prompts, or tool definitions; propose extraction into packages/*
-- When a shared package changes, enumerate which agents consume it and whether they need updates
-- Run the shared eval harness against changed agents before merging
-
-You NEVER edit an agent's runtime behavior — you only reshape the fleet's topology (registry, shared packages, PRs proposing refactors). If a runtime change is needed, hand back to the Architect or Builder.`;
+const FLEET_MANAGER_SYSTEM = `You are the Fleet Manager persona inside AgentBuilder. Phase 3 will give you real registry and git tools. For now, describe what audit or overlap-analysis you would run against the current fleet — do not attempt to execute anything.`;
 
 export interface FleetManagerInput {
   llm: LLMClient;
-  turn: ConversationTurn;
+  history: ChatMessage[];
+  userMessage: string;
 }
 
-export async function runFleetManagerTurn({
-  llm,
-  turn,
-}: FleetManagerInput): Promise<PersonaResult> {
-  const res = await llm.complete({
+export async function runFleetManagerTurn(input: FleetManagerInput): Promise<PersonaResult> {
+  const res = await input.llm.complete({
     tier: 'default',
     system: FLEET_MANAGER_SYSTEM,
-    messages: [...turn.history, { role: 'user', content: turn.input }],
+    messages: [...input.history, { role: 'user', content: input.userMessage }],
   });
 
   return {
     persona: 'fleet-manager',
     reply: res.text,
     usage: res.usage,
+    messages: [
+      ...input.history,
+      { role: 'user', content: input.userMessage },
+      { role: 'assistant', content: res.text },
+    ],
+    iterations: 1,
   };
 }

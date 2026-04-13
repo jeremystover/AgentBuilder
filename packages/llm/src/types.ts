@@ -1,8 +1,41 @@
 import type { ModelTier } from './models.js';
 
+/**
+ * Content blocks. Messages can hold structured content when tool use is
+ * involved — this lets us reconstruct the conversation on subsequent turns
+ * without losing tool_use ids.
+ */
+
+export interface TextBlock {
+  type: 'text';
+  text: string;
+}
+
+export interface ToolUseBlock {
+  type: 'tool_use';
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+}
+
+export interface ToolResultBlock {
+  type: 'tool_result';
+  tool_use_id: string;
+  content: string;
+  is_error?: boolean;
+}
+
+export type ContentBlock = TextBlock | ToolUseBlock | ToolResultBlock;
+
 export interface ChatMessage {
   role: 'user' | 'assistant';
-  content: string;
+  /**
+   * Plain text for simple turns, or an array of blocks when tool use is
+   * involved. The `role` determines which block types are valid:
+   *   - 'user'      can have text + tool_result blocks
+   *   - 'assistant' can have text + tool_use blocks
+   */
+  content: string | ContentBlock[];
 }
 
 export interface ToolDefinition {

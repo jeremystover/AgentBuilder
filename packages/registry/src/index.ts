@@ -7,8 +7,10 @@
  * reads it to decide whether a new agent is needed vs. extending an
  * existing one, and to flag overlaps.
  *
- * Kept as plain JSON so it's reviewable in PRs and diffable by humans.
+ * The default entry point is Worker-safe (no node:fs). Node callers that
+ * need the file-backed store should import `@agentbuilder/registry/node`.
  */
 
 export * from './schema.js';
 export * from './reader.js';
+export * from './memory-store.js';

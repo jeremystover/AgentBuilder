@@ -96,10 +96,46 @@ wrangler d1 execute agentbuilder-core --remote \
   --command "$(node -e 'import(\"./packages/auth-google/src/schema.js\").then(m => console.log(m.GOOGLE_TOKEN_VAULT_SCHEMA))')"
 ```
 
+## Testing the Architect persona (phase 2)
+
+The Architect is the first persona implemented with a real tool loop.
+It has read-only access to the registry via three tools: `list_agents`,
+`describe_agent`, and `check_overlap`. You can test it end-to-end once
+`ANTHROPIC_API_KEY` is configured:
+
+```bash
+# 1. Put your Anthropic key in a local .dev.vars file (wrangler reads it for dev)
+echo 'ANTHROPIC_API_KEY = "sk-ant-..."' > apps/agent-builder/.dev.vars
+
+# 2. Start the Worker locally
+pnpm --filter @agentbuilder/app-agent-builder dev
+# → wrangler prints a URL like http://localhost:8787
+
+# 3. In another terminal, drive a conversation with the chat harness
+./tools/chat.sh "I want an agent that drafts sales follow-up emails."
+# → prints the Architect's reply + a session id
+
+# 4. Continue the same session (pass the session id back)
+./tools/chat.sh "Yes, I want it to handle LinkedIn too." <session-id>
+
+# 5. Or hit the /chat endpoint directly
+curl -X POST http://localhost:8787/chat \
+  -H 'content-type: application/json' \
+  -d '{"message": "List everything in the fleet", "persona": "architect"}'
+```
+
+Expected behavior: the Architect will call `list_agents` on most turns
+and `check_overlap` when you propose something new. Watch the `iterations`
+field in the response — > 1 means it made at least one tool call.
+
+The Builder and Fleet Manager personas are still phase-2 stubs
+(single-turn, no tools). They'll get real tool loops in phase 3.
+
 ## Phase status
 
-- ✅ **Phase 1 (this commit)** — monorepo skeleton, shared packages, agent-builder skeleton with three persona stubs, templates, create-agent CLI, registry seed.
-- ⏳ **Phase 2** — implement the three persona loops with real tool use, wire GitHub App, implement token vault encryption + the Google OAuth dance, add the shared eval harness, provision Cloudflare resources.
-- ⏳ **Phase 3** — use AgentBuilder to scaffold the first real agent end-to-end (dogfood test).
+- ✅ **Phase 1** — monorepo skeleton, shared packages, persona stubs, templates, CLI, registry seed.
+- ✅ **Phase 2 (this commit)** — Architect persona with a real tool loop, structured-content support in the LLM client, DO-backed conversation sessions, registry tools (list/describe/check_overlap), `/chat` endpoint, chat test harness.
+- ⏳ **Phase 3** — Builder persona with fs/git/wrangler/github-app tools (opens real PRs), Fleet Manager persona with registry write + overlap propagation, shared eval harness, first dogfood agent scaffolded end-to-end.
+- ⏳ **Phase 4** — Google OAuth dance + token vault encryption, GitHub App JWT signing, production secrets wiring.
 
 See `AGENTS.md` for working-in-repo conventions.

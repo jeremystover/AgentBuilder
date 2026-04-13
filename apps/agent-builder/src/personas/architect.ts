@@ -1,51 +1,77 @@
 /**
- * Architect persona.
+ * Architect persona — now with real tool use.
  *
- * Job: brainstorm with the user, decide whether a new agent is warranted or
- * an existing one should be extended, and produce a SKILL.md + registry
- * stub for the Builder persona to implement.
+ * Job: brainstorm with the user, check the registry for existing agents
+ * that could be extended, and produce a design spec for the Builder
+ * persona to implement.
  *
- * Tools (phase 2): registry.list, registry.describe, web.search.
- * Deliberately has NO write tools — Architect can't scaffold, only design.
+ * Tools: list_agents, describe_agent, check_overlap. Read-only by design.
  * Model tier: 'deep' (Opus) — this is where reasoning quality matters most.
+ *
+ * The persona never writes code. When it's ready to hand off, it emits
+ * the literal string "HANDOFF: builder" followed by a structured design
+ * spec the Builder can consume on the next turn.
  */
 
+import { type ChatMessage, runToolLoop } from '@agentbuilder/llm';
 import type { LLMClient } from '@agentbuilder/llm';
-import type { ConversationTurn, PersonaResult } from '../types.js';
+import type { MemoryRegistryStore } from '@agentbuilder/registry';
+import { buildRegistryTools } from '../tools/registry-tools.js';
+import type { PersonaResult } from '../types.js';
 
-const ARCHITECT_SYSTEM = `You are the Architect persona inside AgentBuilder, a meta-agent that designs and manages a fleet of specialized agents deployed on Cloudflare.
+const ARCHITECT_SYSTEM = `You are the Architect persona inside AgentBuilder, a meta-agent that designs and manages a fleet of specialized agents deployed on Cloudflare Workers.
 
 Your job on every turn:
-1. Understand what the user wants to build.
-2. Check whether an existing agent in the registry already does it (or could with a small extension). Prefer extension over new agents.
-3. If a new agent is warranted, propose:
-   - a one-sentence purpose
-   - 3-5 concrete example prompts it would handle
-   - explicit non-goals (what it should NOT do)
-   - the minimum tool surface it needs (<= 10 tools)
-   - what shared packages it will reuse
-4. Never write code. When you're ready to hand off, say "HANDOFF: builder" and summarize the design.
 
-Be concise. Agent proliferation is the #1 risk — push back on "just spin up another agent" when a shared package or an existing agent's new skill would do.`;
+1. Understand what the user wants to build.
+2. ALWAYS start by calling list_agents — you cannot design intelligently without knowing what already exists. If a user's request is vague, ask clarifying questions BEFORE proposing anything.
+3. For anything that sounds adjacent to existing agents, call check_overlap and describe_agent on the candidates. Prefer extending an existing agent (new skill, new tool) over creating a new one.
+4. If a new agent is clearly warranted, propose:
+   - id: short kebab-case identifier
+   - name: display name
+   - purpose: ONE sentence, no filler
+   - kind: "headless" (API-only) or "app" (has a UI)
+   - examples: 3-5 concrete user prompts it would handle
+   - nonGoals: explicit things it should NOT do — this is the anti-drift field, be concrete
+   - tools: <= 10 tools, listed by name
+   - sharedPackages: which @agentbuilder/* packages it should reuse
+   - oauthScopes: Google/GitHub scopes if any
+5. Push back when the user asks for "just another agent" if a shared package or existing-agent extension would do. Agent proliferation is the #1 failure mode of the fleet.
+
+When you have a proposal the user has approved, emit the literal line:
+HANDOFF: builder
+followed by the complete design spec as YAML. Do not write any code yourself.
+
+Keep responses tight. Bullet lists over prose. Ask clarifying questions when intent is unclear — do not guess.`;
 
 export interface ArchitectInput {
   llm: LLMClient;
-  turn: ConversationTurn;
+  registry: MemoryRegistryStore;
+  history: ChatMessage[];
+  userMessage: string;
 }
 
-export async function runArchitectTurn({ llm, turn }: ArchitectInput): Promise<PersonaResult> {
-  const res = await llm.complete({
+export async function runArchitectTurn(input: ArchitectInput): Promise<PersonaResult> {
+  const { tools, handlers } = buildRegistryTools(input.registry);
+
+  const result = await runToolLoop({
+    llm: input.llm,
     tier: 'deep',
     system: ARCHITECT_SYSTEM,
-    messages: [...turn.history, { role: 'user', content: turn.input }],
+    initialMessages: [...input.history, { role: 'user', content: input.userMessage }],
+    tools,
+    handlers,
+    maxIterations: 8,
   });
 
-  const handoff = res.text.includes('HANDOFF: builder') ? ('builder' as const) : undefined;
+  const handoff = result.text.includes('HANDOFF: builder') ? ('builder' as const) : undefined;
 
   return {
     persona: 'architect',
-    reply: res.text,
+    reply: result.text,
     handoffTo: handoff,
-    usage: res.usage,
+    usage: result.usage,
+    messages: result.messages,
+    iterations: result.iterations,
   };
 }

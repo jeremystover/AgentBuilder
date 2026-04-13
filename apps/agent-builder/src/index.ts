@@ -1,13 +1,14 @@
 /**
  * AgentBuilder — the meta-agent.
  *
- * Entrypoint Worker delegates to a single Durable Object per session. The
- * DO runs a three-persona loop (Architect / Builder / Fleet Manager) and
- * persists conversation state between turns.
+ * Routes:
+ *   GET  /health         → { status: 'ok', ... }
+ *   POST /chat           → { message, sessionId?, persona? }
+ *                          → delegates to a Durable Object keyed by sessionId
  *
- * Phase 1: the Worker routes requests, the DO is stubbed with the persona
- * skeleton and a minimal tool surface. The persona loops are implemented
- * in phase 2.
+ * Each session pins to a single Durable Object instance so conversation
+ * history (including tool_use / tool_result blocks) stays consistent
+ * across turns without needing external storage.
  */
 
 import type { Env } from '../worker-configuration';
@@ -18,13 +19,31 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === '/health') {
-      return Response.json({ status: 'ok', agent: 'agent-builder', phase: 1 });
+      return Response.json({
+        status: 'ok',
+        agent: 'agent-builder',
+        phase: 2,
+        personas: ['architect', 'builder', 'fleet-manager'],
+      });
     }
 
-    // Route everything else into a named Durable Object instance. For now
-    // we use a single global instance; later we'll key by user/session.
-    if (url.pathname.startsWith('/chat')) {
-      const id = env.AGENT_BUILDER_DO.idFromName('global');
+    if (url.pathname === '/chat' && request.method === 'POST') {
+      // Peek at sessionId to route consistently to the same DO. If the
+      // client doesn't provide one, the DO will mint a fresh UUID and
+      // return it — the client should echo it on subsequent turns.
+      let sessionId = url.searchParams.get('sessionId');
+      if (!sessionId) {
+        const cloned = request.clone();
+        try {
+          const body = (await cloned.json()) as { sessionId?: string };
+          sessionId = body.sessionId ?? null;
+        } catch {
+          // fall through — DO will return 400 for malformed bodies
+        }
+      }
+
+      const doKey = sessionId ?? crypto.randomUUID();
+      const id = env.AGENT_BUILDER_DO.idFromName(doKey);
       const stub = env.AGENT_BUILDER_DO.get(id);
       return stub.fetch(request);
     }
