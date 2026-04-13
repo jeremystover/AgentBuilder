@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Booking Sync Manager</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Booking Sync Manager</div>
+    <nav>
+      <a href="#/dashboard"  data-nav="dashboard">Dashboard</a>
+      <a href="#/calendar"   data-nav="calendar">Calendar</a>
+      <a href="#/properties" data-nav="properties">Properties</a>
+      <a href="#/units"      data-nav="units">Units</a>
+      <a href="#/listings"   data-nav="listings">Listings</a>
+      <a href="#/bookings"   data-nav="bookings">Bookings</a>
+      <a href="#/reviews"    data-nav="reviews">Reviews</a>
+      <a href="#/photos"     data-nav="photos">Photos</a>
+      <a href="#/sync-log"   data-nav="sync-log">Sync log</a>
+    </nav>
+    <div class="auth">
+      <input id="adminToken" placeholder="admin token" />
+    </div>
+  </header>
+  <main id="view"></main>
+  <template id="tpl-dashboard">
+    <section class="panel">
+      <h1>Dashboard</h1>
+      <div class="cards">
+        <div class="card"><div class="k">Properties</div><div class="v" data-stat="properties">-</div></div>
+        <div class="card"><div class="k">Units</div><div class="v" data-stat="units">-</div></div>
+        <div class="card"><div class="k">Listings</div><div class="v" data-stat="listings">-</div></div>
+        <div class="card"><div class="k">Active bookings</div><div class="v" data-stat="bookings">-</div></div>
+      </div>
+      <div class="actions">
+        <button id="pullAll">Pull all calendars now</button>
+      </div>
+      <p class="hint">
+        Each listing has an outbound iCal feed you paste into Airbnb / VRBO /
+        Booking.com so they'll see everything that blocks that unit
+        - including bookings from the other sites. Inbound feeds pull back
+        into this database so we block the outgoing calendars automatically.
+      </p>
+    </section>
+  </template>
+</body>
+<script src="/app.js" type="module"></script>
+</html>
