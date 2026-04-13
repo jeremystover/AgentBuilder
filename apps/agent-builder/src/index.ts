@@ -18,13 +18,27 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
+    // CORS headers for custom tool integrations
+    const corsHeaders = {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'content-type',
+    };
+
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { headers: corsHeaders });
+    }
+
     if (url.pathname === '/health') {
-      return Response.json({
-        status: 'ok',
-        agent: 'agent-builder',
-        phase: 2,
-        personas: ['architect', 'builder', 'fleet-manager'],
-      });
+      return Response.json(
+        {
+          status: 'ok',
+          agent: 'agent-builder',
+          phase: 2,
+          personas: ['architect', 'builder', 'fleet-manager'],
+        },
+        { headers: corsHeaders }
+      );
     }
 
     if (url.pathname === '/chat' && request.method === 'POST') {
@@ -45,9 +59,16 @@ export default {
       const doKey = sessionId ?? crypto.randomUUID();
       const id = env.AGENT_BUILDER_DO.idFromName(doKey);
       const stub = env.AGENT_BUILDER_DO.get(id);
-      return stub.fetch(request);
+      const response = await stub.fetch(request);
+
+      // Add CORS headers to the DO response
+      const newResponse = new Response(response.body, response);
+      for (const [key, value] of Object.entries(corsHeaders)) {
+        newResponse.headers.set(key, value);
+      }
+      return newResponse;
     }
 
-    return new Response('Not found', { status: 404 });
+    return new Response('Not found', { status: 404, headers: corsHeaders });
   },
 } satisfies ExportedHandler<Env>;
