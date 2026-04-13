@@ -1,0 +1,30 @@
+name = "agent-builder"
+main = "src/index.ts"
+compatibility_date = "2025-04-01"
+compatibility_flags = ["nodejs_compat"]
+
+# One Durable Object hosts the meta-agent's state (conversation, in-flight
+# builds, registry edits).
+[[durable_objects.bindings]]
+name = "AGENT_BUILDER_DO"
+class_name = "AgentBuilderDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["AgentBuilderDO"]
+
+# Workers AI for cheap 'edge' tier inference (embeddings, classification).
+[ai]
+binding = "AI"
+
+# Shared D1 database for the fleet: token vault, registry cache, eval runs.
+# Created via `wrangler d1 create agentbuilder-core` — see README.
+[[d1_databases]]
+binding = "DB"
+database_name = "agentbuilder-core"
+database_id = "REPLACE_WITH_DB_ID"
+
+# Secrets pulled from Cloudflare Secrets Store:
+#   wrangler secret put ANTHROPIC_API_KEY
+#   wrangler secret put GITHUB_APP_PRIVATE_KEY
+#   wrangler secret put GOOGLE_OAUTH_CLIENT_SECRET

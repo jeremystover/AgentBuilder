@@ -1,0 +1,24 @@
+{
+  "name": "@agentbuilder/app-agent-builder",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "build": "wrangler deploy --dry-run --outdir=dist",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@agentbuilder/auth-github": "workspace:*",
+    "@agentbuilder/core": "workspace:*",
+    "@agentbuilder/llm": "workspace:*",
+    "@agentbuilder/registry": "workspace:*",
+    "agents": "^0.0.95"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250410.0",
+    "typescript": "^5.6.3",
+    "wrangler": "^3.90.0"
+  }
+}

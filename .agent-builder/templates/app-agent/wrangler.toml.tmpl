@@ -1,0 +1,19 @@
+name = "__AGENT_ID__"
+main = "src/index.ts"
+compatibility_date = "2025-04-01"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+[[durable_objects.bindings]]
+name = "AGENT_DO"
+class_name = "__AGENT_CLASS__DO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["__AGENT_CLASS__DO"]
+
+[ai]
+binding = "AI"

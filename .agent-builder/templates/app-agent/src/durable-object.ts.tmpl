@@ -1,0 +1,40 @@
+import { DurableObject } from 'cloudflare:workers';
+import { createLogger } from '@agentbuilder/core';
+import { LLMClient } from '@agentbuilder/llm';
+import type { Env } from '../worker-configuration';
+
+const SYSTEM_PROMPT = `You are __AGENT_NAME__.
+
+Purpose: __AGENT_PURPOSE__
+
+See SKILL.md for your non-goals and tool surface.`;
+
+export class __AGENT_CLASS__DO extends DurableObject<Env> {
+  private readonly llm: LLMClient;
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    this.llm = new LLMClient({
+      anthropicApiKey: env.ANTHROPIC_API_KEY,
+      workersAi: env.AI,
+    });
+  }
+
+  override async fetch(request: Request): Promise<Response> {
+    const logger = createLogger({ base: { agent: '__AGENT_ID__' } });
+    const url = new URL(request.url);
+
+    if (url.pathname === '/api/chat' && request.method === 'POST') {
+      const { message } = (await request.json()) as { message: string };
+      logger.info('chat.turn');
+      const res = await this.llm.complete({
+        tier: 'default',
+        system: SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: message }],
+      });
+      return Response.json({ reply: res.text, usage: res.usage });
+    }
+
+    return new Response('Not found', { status: 404 });
+  }
+}

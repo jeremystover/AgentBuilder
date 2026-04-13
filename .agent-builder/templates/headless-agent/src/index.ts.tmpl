@@ -1,0 +1,24 @@
+/**
+ * __AGENT_NAME__ — headless agent Worker entrypoint.
+ *
+ * Purpose: __AGENT_PURPOSE__
+ *
+ * See ./SKILL.md for the full persona, tools, and non-goals.
+ */
+
+import type { Env } from '../worker-configuration';
+export { __AGENT_CLASS__DO } from './durable-object.js';
+
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const url = new URL(request.url);
+
+    if (url.pathname === '/health') {
+      return Response.json({ status: 'ok', agent: '__AGENT_ID__' });
+    }
+
+    const id = env.AGENT_DO.idFromName('global');
+    const stub = env.AGENT_DO.get(id);
+    return stub.fetch(request);
+  },
+} satisfies ExportedHandler<Env>;

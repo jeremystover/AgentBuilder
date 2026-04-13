@@ -1,0 +1,53 @@
+{
+  "$schemaVersion": 1,
+  "updatedAt": "2026-04-13T00:00:00.000Z",
+  "agents": [
+    {
+      "id": "agent-builder",
+      "name": "Agent Builder",
+      "purpose": "Meta-agent that designs, scaffolds, deploys, and maintains every other agent in the fleet.",
+      "owner": "jeremystover",
+      "status": "draft",
+      "kind": "headless",
+      "skills": ["scaffold-agent", "register-agent", "flag-overlap", "propagate-shared-changes"],
+      "tools": ["file-system", "wrangler", "pnpm", "git", "github-app", "registry-rw"],
+      "mcpServers": ["github"],
+      "sharedPackages": [
+        "@agentbuilder/core",
+        "@agentbuilder/llm",
+        "@agentbuilder/registry",
+        "@agentbuilder/auth-github"
+      ],
+      "oauthScopes": [],
+      "cloudflare": {
+        "workerName": "agent-builder",
+        "durableObjects": ["AgentBuilderDO"],
+        "d1": ["agentbuilder_core"],
+        "kv": [],
+        "r2": [],
+        "queues": [],
+        "hasAssets": false
+      },
+      "routing": {
+        "triggerPhrases": [
+          "build a new agent",
+          "scaffold an agent",
+          "add an agent",
+          "update all agents",
+          "check agent overlap"
+        ],
+        "examples": [
+          "I want an agent that drafts sales follow-up emails",
+          "Refactor the shared Google OAuth helper and update all agents that use it",
+          "Is there already an agent that does calendar triage?"
+        ],
+        "nonGoals": [
+          "Running the actual work an individual agent does at runtime",
+          "End-user conversations that are not about building or managing agents",
+          "Handling production traffic for consumer apps"
+        ]
+      },
+      "version": "0.0.1"
+    }
+  ]
+}
