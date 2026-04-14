@@ -1,6 +1,6 @@
 {
   "$schemaVersion": 1,
-  "updatedAt": "2026-04-13T00:00:00.000Z",
+  "updatedAt": "2026-04-14T00:00:00.000Z",
   "agents": [
     {
       "id": "agent-builder",
@@ -223,22 +223,39 @@
     {
       "id": "guest-booking",
       "name": "Guest Booking",
-      "purpose": "Manages guest bookings across multiple hosting platforms (Airbnb, VRBO, etc.) as a Guesty-style property operations system. Agent layer is greenfield and will be built fresh in apps/guest-booking/ in the AgentBuilder monorepo; the existing booking-sync UI worker is legacy and will eventually be absorbed.",
+      "purpose": "Manages guest bookings across Airbnb, VRBO, and Booking.com — audits listing consistency across platforms (price, terms, photos, descriptions, titles) and manages overlapping-inventory availability using a graph-based containment/conflict model so that nested listing configurations (whole-house, partial-house, individual rooms) block each other correctly. Guesty is the current source of truth; the legacy booking-sync UI worker stays running until this agent reaches parity and will then be sunset.",
       "owner": "jeremystover",
       "status": "draft",
       "kind": "app",
-      "skills": [],
-      "tools": [],
+      "skills": [
+        "listing-consistency-audit",
+        "availability-sync",
+        "inventory-graph-management",
+        "booking-event-processing",
+        "platform-api-integration"
+      ],
+      "tools": [
+        "guesty-api-client",
+        "listing-diff-engine",
+        "inventory-graph-resolver",
+        "availability-block-writer",
+        "booking-event-listener",
+        "platform-calendar-sync",
+        "audit-report-generator"
+      ],
       "mcpServers": [],
-      "sharedPackages": [],
+      "sharedPackages": [
+        "@agentbuilder/core",
+        "@agentbuilder/llm"
+      ],
       "oauthScopes": [],
       "cloudflare": {
         "workerName": "guest-booking",
-        "durableObjects": [],
-        "d1": [],
-        "kv": [],
+        "durableObjects": ["GuestBookingDO"],
+        "d1": ["guest-booking-db"],
+        "kv": ["guest-booking-cache"],
         "r2": [],
-        "queues": [],
+        "queues": ["guest-booking-sync-queue"],
         "hasAssets": true
       },
       "routing": {
@@ -256,13 +273,16 @@
           "What bookings are checking in this week?",
           "Sync my Airbnb calendar with VRBO",
           "Block off next weekend across all platforms",
-          "Draft a check-in message for tomorrow's guest"
+          "Draft a check-in message for tomorrow's guest",
+          "Audit my listings for price and description divergence across platforms",
+          "Someone booked a single room — make sure the whole-house listing is blocked"
         ],
         "nonGoals": [
           "Personal calendar, tasks, or stakeholder management (that's Chief of Staff)",
           "Bookkeeping, budgeting, or tax work (that's CFO)",
           "Building or modifying other agents",
-          "Host coaching or general hospitality advice"
+          "Host coaching or general hospitality advice",
+          "Dynamic pricing — this agent audits price consistency, it does not set prices"
         ]
       },
       "version": "0.0.1"
