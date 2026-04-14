@@ -249,11 +249,13 @@ export async function handleBudgetStatus(request: Request, env: Env): Promise<Re
      WHERE ${targetConds.join(' AND ')}`,
   ).bind(...targetVals).all<{ category_slug: string; cadence: Cadence; amount: number }>();
 
-  // Pull spend per budget category inside the period. `amount > 0` is an
-  // expense in this codebase (positive = debit).
+  // Pull spend per budget category inside the period. DB convention:
+  // expenses are stored as negative amounts (Teller-native; Chase/Venmo
+  // importers normalize to match). Flip sign so `spent` is a positive
+  // dollar amount for easier comparison against the target.
   const spendConds = [
     't.user_id = ?',
-    't.amount > 0',
+    't.amount < 0',
     't.posted_date BETWEEN ? AND ?',
   ];
   const spendVals: unknown[] = [userId, period.start, period.end];
@@ -264,7 +266,7 @@ export async function handleBudgetStatus(request: Request, env: Env): Promise<Re
 
   const spendRows = await env.DB.prepare(
     `SELECT c.category_budget AS category_slug,
-            SUM(t.amount) AS spent,
+            SUM(-t.amount) AS spent,
             COUNT(*) AS tx_count
      FROM transactions t
      JOIN classifications c ON c.transaction_id = t.id

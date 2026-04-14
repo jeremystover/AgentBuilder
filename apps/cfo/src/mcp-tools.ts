@@ -38,6 +38,7 @@ import {
   handleUpsertBudgetTarget,
   handleBudgetStatus,
 } from './routes/budget';
+import { handlePnL, handlePnLAll, handlePnLTrend } from './routes/pnl';
 
 export interface JsonRpcMessage {
   jsonrpc?: string;
@@ -243,6 +244,65 @@ export const MCP_TOOLS = [
     },
   },
   {
+    name: 'pnl_for_entity',
+    description:
+      "Income statement (P&L) for a single entity over a period. Entities are 'coaching_business' (Schedule C), 'airbnb_activity' (Schedule E), or 'family_personal'. Returns income and expenses grouped by tax category, plus net income and a count of still-unreviewed transactions in the window. Use when the user asks 'how's the business doing', 'what did I spend on the airbnb last month', or 'am I profitable this quarter'. Period defaults to this_month; accepts the same presets as budget_status.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        entity: {
+          type: 'string' as const,
+          enum: ['coaching_business', 'airbnb_activity', 'family_personal'],
+        },
+        preset: {
+          type: 'string' as const,
+          enum: ['this_week', 'this_month', 'last_month', 'ytd', 'trailing_30d', 'trailing_90d'],
+        },
+        start: { type: 'string' as const, description: 'YYYY-MM-DD, overrides preset' },
+        end: { type: 'string' as const, description: 'YYYY-MM-DD, overrides preset' },
+      },
+      required: ['entity'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'pnl_all_entities',
+    description:
+      "Consolidated income statement covering all three entities (coaching_business, airbnb_activity, family_personal) at once, plus a rollup total. Use for 'how did the household do this month' or 'give me a snapshot of everything'. Period defaults to this_month.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        preset: {
+          type: 'string' as const,
+          enum: ['this_week', 'this_month', 'last_month', 'ytd', 'trailing_30d', 'trailing_90d'],
+        },
+        start: { type: 'string' as const, description: 'YYYY-MM-DD, overrides preset' },
+        end: { type: 'string' as const, description: 'YYYY-MM-DD, overrides preset' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'pnl_monthly_trend',
+    description:
+      "Month-by-month income, expenses, and net income for an entity across the last N months (default 6, max 36). Use for run-rate questions: 'how has the coaching business trended', 'what's my monthly burn', 'are expenses creeping up'. Also returns monthly averages across the window.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        entity: {
+          type: 'string' as const,
+          enum: ['coaching_business', 'airbnb_activity', 'family_personal'],
+        },
+        months: {
+          type: 'number' as const,
+          description: 'Number of months to include (1-36, default 6)',
+        },
+      },
+      required: ['entity'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'budget_status',
     description:
       "Spend-vs-target report for a period. Target amounts are pro-rated across cadence mismatches so a weekly query against a $600/mo grocery target yields ~$138 expected, not $600. Use when the user asks 'how am I doing on X this month' or 'am I over budget'. Period defaults to this_month; accepts preset (this_week|this_month|last_month|ytd|trailing_30d|trailing_90d) or explicit start+end. Pass category_slug to drill into one bucket.",
@@ -403,6 +463,24 @@ async function dispatchTool(
       const url = withQuery('https://cfo.invalid/budget/status', args);
       const req = jsonRequest('GET', url);
       return respondText(await handleBudgetStatus(req, env));
+    }
+
+    case 'pnl_for_entity': {
+      const url = withQuery('https://cfo.invalid/pnl', args);
+      const req = jsonRequest('GET', url);
+      return respondText(await handlePnL(req, env));
+    }
+
+    case 'pnl_all_entities': {
+      const url = withQuery('https://cfo.invalid/pnl/all', args);
+      const req = jsonRequest('GET', url);
+      return respondText(await handlePnLAll(req, env));
+    }
+
+    case 'pnl_monthly_trend': {
+      const url = withQuery('https://cfo.invalid/pnl/trend', args);
+      const req = jsonRequest('GET', url);
+      return respondText(await handlePnLTrend(req, env));
     }
 
     default:
