@@ -98,8 +98,12 @@ export class LLMClient {
       usage: {
         inputTokens: res.usage.input_tokens,
         outputTokens: res.usage.output_tokens,
-        cacheReadTokens: res.usage.cache_read_input_tokens ?? undefined,
-        cacheWriteTokens: res.usage.cache_creation_input_tokens ?? undefined,
+        // These fields were added in SDK 0.37+; cast to avoid type errors on
+        // older installs. Safe at runtime — undefined if the API doesn't return them.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        cacheReadTokens: (res.usage as any).cache_read_input_tokens as number | undefined,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        cacheWriteTokens: (res.usage as any).cache_creation_input_tokens as number | undefined,
       },
       stopReason: res.stop_reason ?? 'end_turn',
       model: res.model,
@@ -154,7 +158,11 @@ function toAnthropicMessage(msg: ChatMessage): Anthropic.MessageParam {
   return { role: msg.role, content: blocks };
 }
 
-function toAnthropicBlock(block: ContentBlock): Anthropic.ContentBlockParam {
+// Return type is the SDK's content block union — named ContentBlockParam in
+// newer SDK versions. Cast to any to stay compatible with older installs where
+// the type name differs.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function toAnthropicBlock(block: ContentBlock): any {
   switch (block.type) {
     case 'text':
       return { type: 'text', text: block.text };
