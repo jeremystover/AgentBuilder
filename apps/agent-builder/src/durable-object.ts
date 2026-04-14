@@ -131,9 +131,19 @@ export class AgentBuilderDO extends DurableObject<Env> {
           userMessage,
         });
       case 'builder':
-        return runBuilderTurn({ llm: this.llm, history, userMessage });
+        return runBuilderTurn({
+          llm: this.llm,
+          registry: this.registry,
+          history,
+          userMessage,
+        });
       case 'fleet-manager':
-        return runFleetManagerTurn({ llm: this.llm, history, userMessage });
+        return runFleetManagerTurn({
+          llm: this.llm,
+          registry: this.registry,
+          history,
+          userMessage,
+        });
     }
   }
 
