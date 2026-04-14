@@ -1,3 +1,11 @@
+/**
+ * Bank-connect dispatch. Post-migration this is Teller-only — Plaid was
+ * dropped when the agent moved into the AgentBuilder monorepo. The
+ * dispatch layer is kept (rather than collapsing straight into teller.ts)
+ * because the front-end still speaks the bank/* API and reworking it is
+ * out of scope for this migration.
+ */
+
 import { z } from 'zod';
 import type { BankProvider, Env } from '../types';
 import { getUserId, jsonError, jsonOk } from '../types';
@@ -8,25 +16,16 @@ import {
   reconcileChecklistAccountLinks,
 } from '../lib/tax-year';
 import {
-  createPlaidLinkTokenForUser,
-  exchangePlaidPublicTokenForUser,
-  syncPlaidTransactionsForUser,
-} from './plaid';
-import {
   connectTellerEnrollmentForUser,
   getTellerBankConfig,
   syncTellerTransactionsForUser,
 } from './teller';
 
-const ProviderSchema = z.enum(['plaid', 'teller']);
+const ProviderSchema = z.enum(['teller']);
 const SyncSchema = z.object({
   provider: ProviderSchema.optional(),
   account_ids: z.array(z.string().min(1)).min(1).optional(),
 });
-
-function isPlaidConfigured(env: Env): boolean {
-  return Boolean(env.PLAID_CLIENT_ID && env.PLAID_SECRET);
-}
 
 function isTellerConfigured(env: Env): boolean {
   return Boolean(env.TELLER_APPLICATION_ID);
@@ -34,25 +33,19 @@ function isTellerConfigured(env: Env): boolean {
 
 function getAvailableProviders(env: Env): BankProvider[] {
   const providers: BankProvider[] = [];
-  if (isPlaidConfigured(env)) providers.push('plaid');
   if (isTellerConfigured(env)) providers.push('teller');
   return providers;
 }
 
-function getDefaultProvider(env: Env): BankProvider {
-  const configured = getAvailableProviders(env);
-  const fallback = configured[0] ?? 'plaid';
-  const parsed = ProviderSchema.safeParse(env.DEFAULT_BANK_PROVIDER ?? fallback);
-  if (!parsed.success) return fallback;
-  if (configured.length > 0 && !configured.includes(parsed.data)) return fallback;
-  return parsed.data;
+function getDefaultProvider(_env: Env): BankProvider {
+  return 'teller';
 }
 
 function resolveProvider(env: Env, requested?: string | null): BankProvider {
   const provider = requested ?? getDefaultProvider(env);
   const parsed = ProviderSchema.safeParse(provider);
   if (!parsed.success) {
-    throw new Error(`Unsupported bank provider "${requested ?? ''}".`);
+    throw new Error(`Unsupported bank provider "${requested ?? ''}". Only "teller" is supported post-migration.`);
   }
 
   const available = getAvailableProviders(env);
@@ -73,11 +66,6 @@ export async function handleGetBankConfig(request: Request, env: Env): Promise<R
       current_provider: provider,
       available_providers: getAvailableProviders(env),
       providers: {
-        plaid: {
-          configured: isPlaidConfigured(env),
-          environment: env.PLAID_ENV,
-          sandbox_shortcut: env.PLAID_ENV === 'sandbox',
-        },
         teller: {
           configured: isTellerConfigured(env),
           environment: env.TELLER_ENV ?? 'sandbox',
@@ -92,26 +80,15 @@ export async function handleGetBankConfig(request: Request, env: Env): Promise<R
 
 // ── POST /bank/connect/start ─────────────────────────────────────────────────
 export async function handleStartBankConnect(request: Request, env: Env): Promise<Response> {
-  const userId = getUserId(request);
-
-  let body: { provider?: string } = {};
+  // Body is optional, we don't currently need anything from it.
   try {
-    body = await request.json() as { provider?: string };
+    await request.json();
   } catch {
-    // Body is optional.
+    // No body is fine.
   }
 
   try {
-    const provider = resolveProvider(env, body.provider);
-    if (provider === 'plaid') {
-      const result = await createPlaidLinkTokenForUser(env, userId);
-      return jsonOk({
-        provider,
-        environment: env.PLAID_ENV,
-        ...result,
-      });
-    }
-
+    resolveProvider(env, 'teller');
     return jsonOk(getTellerBankConfig(env));
   } catch (err) {
     return jsonError(String(err), 400);
@@ -131,12 +108,6 @@ export async function handleCompleteBankConnect(request: Request, env: Env): Pro
 
   try {
     const provider = resolveProvider(env, typeof body.provider === 'string' ? body.provider : null);
-
-    if (provider === 'plaid') {
-      const publicToken = z.string().min(1).parse(body.public_token);
-      const result = await exchangePlaidPublicTokenForUser(env, userId, publicToken);
-      return jsonOk({ provider, ...result }, 201);
-    }
 
     const nestedEnrollment = typeof body.enrollment === 'object' && body.enrollment
       ? body.enrollment as Record<string, unknown>
@@ -194,9 +165,13 @@ export async function handleBankSync(request: Request, env: Env): Promise<Respon
     const workflow = await getActiveTaxYearOrThrow(env, userId);
     const { dateFrom, dateTo } = getTaxYearDateRange(workflow.tax_year);
 
-    const result = provider === 'plaid'
-      ? await syncPlaidTransactionsForUser(env, userId, dateFrom, dateTo)
-      : await syncTellerTransactionsForUser(env, userId, dateFrom, dateTo, parsed.data.account_ids);
+    const result = await syncTellerTransactionsForUser(
+      env,
+      userId,
+      dateFrom,
+      dateTo,
+      parsed.data.account_ids,
+    );
 
     await reconcileChecklistAccountLinks(env, userId, workflow.id);
     await markChecklistItemsCompleteForAccounts(

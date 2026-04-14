@@ -24,7 +24,7 @@ function describeApiKey(value: string | undefined): {
 
 export function getClaudeDiagnostics(env: Env) {
   return {
-    anthropic_api_key: describeApiKey(env.ANTHROPIC_API_KEY_2),
+    anthropic_api_key: describeApiKey(env.ANTHROPIC_API_KEY),
     model: 'claude-opus-4-6',
   };
 }

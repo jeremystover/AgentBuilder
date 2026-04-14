@@ -10,3 +10,7 @@ dist
 .DS_Store
 coverage
 .tsbuildinfo
+
+# Migration staging — legacy-repo source cloned locally for porting.
+# Should never land in a commit. Deleted post-migration.
+.migration-staging/

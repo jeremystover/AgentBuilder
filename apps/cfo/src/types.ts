@@ -1,18 +1,21 @@
+/**
+ * Env for the CFO worker. Dropped Plaid bindings on migration from
+ * tax-prep — Teller is the only bank provider now. MCP_HTTP_KEY gates
+ * the /mcp JSON-RPC surface (unset => open, dev only).
+ */
 export interface Env {
   DB: D1Database;
   BUCKET: R2Bucket;
   ASSETS: Fetcher;
-  PLAID_CLIENT_ID: string;
-  PLAID_SECRET: string;
-  PLAID_ENV: string;
   TELLER_APPLICATION_ID?: string;
   TELLER_ENV?: string;
   TELLER_MTLS?: Fetcher;
   DEFAULT_BANK_PROVIDER?: string;
   ANTHROPIC_API_KEY: string;
+  MCP_HTTP_KEY?: string;
 }
 
-export type BankProvider = 'plaid' | 'teller';
+export type BankProvider = 'teller';
 
 export type Entity = 'coaching_business' | 'airbnb_activity' | 'family_personal';
 export type ClassificationMethod = 'rule' | 'ai' | 'manual' | 'historical';

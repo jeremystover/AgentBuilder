@@ -135,10 +135,10 @@
     {
       "id": "cfo",
       "name": "CFO",
-      "purpose": "Owns bookkeeping, budgeting, cash-flow, retirement and financial planning, and tax prep/advice. Currently implemented as a tax-prep agent and being extended into a full CFO.",
+      "purpose": "Owns bookkeeping, budgeting, cash-flow, retirement and financial planning, and tax prep/advice. Hybrid agent: SPA + REST for bulk ops (imports, review, reports) and MCP tools for conversational use from Claude.ai.",
       "owner": "jeremystover",
       "status": "active",
-      "kind": "headless",
+      "kind": "app",
       "skills": [
         "transaction-ingest",
         "transaction-categorization",
@@ -154,23 +154,32 @@
       "tools": [
         "teller-sync",
         "csv-import",
-        "transaction-categorizer",
-        "tax-category-mapping"
+        "amazon-import",
+        "tiller-import",
+        "classify-transactions",
+        "list-review-queue",
+        "resolve-review",
+        "schedule-c-report",
+        "schedule-e-report",
+        "transactions-summary"
       ],
       "mcpServers": [],
-      "sharedPackages": [],
+      "sharedPackages": [
+        "@agentbuilder/core",
+        "@agentbuilder/llm"
+      ],
       "oauthScopes": [
         "teller:transactions:read",
         "teller:accounts:read"
       ],
       "cloudflare": {
-        "workerName": "tax-prep",
+        "workerName": "cfo",
         "durableObjects": [],
-        "d1": [],
+        "d1": ["cfo-db"],
         "kv": [],
-        "r2": [],
+        "r2": ["cfo-files"],
         "queues": [],
-        "hasAssets": false
+        "hasAssets": true
       },
       "routing": {
         "triggerPhrases": [

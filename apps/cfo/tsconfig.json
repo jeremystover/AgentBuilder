@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "types": ["@cloudflare/workers-types"],
+    // Migration carry-over from the tax-prep source — the legacy code was
+    // written under `strict` without noUncheckedIndexedAccess, and tightening
+    // it across 6k LOC is a separate cleanup task. Tracked in
+    // docs/migrations/cfo.md.
+    "noUncheckedIndexedAccess": false
+  },
+  "include": ["src/**/*", "worker-configuration.d.ts"]
+}
