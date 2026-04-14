@@ -17,7 +17,7 @@ binding = "ASSETS"
 [[d1_databases]]
 binding = "DB"
 database_name = "cfo-db"
-database_id = "REPLACE_WITH_CFO_DB_ID"
+database_id = "7a8081f3-8ae5-4344-8902-5cbd7992670f"
 
 # Snapshot-and-copy R2 during migration. Create with:
 #   wrangler r2 bucket create cfo-files
