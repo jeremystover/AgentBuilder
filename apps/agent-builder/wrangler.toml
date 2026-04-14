@@ -22,7 +22,7 @@ binding = "AI"
 [[d1_databases]]
 binding = "DB"
 database_name = "agentbuilder-core"
-database_id = "REPLACE_WITH_DB_ID"
+database_id = "51a422d2-e9ea-46e8-b6c8-233229434eca"
 
 # Secrets pulled from Cloudflare Secrets Store:
 #   wrangler secret put ANTHROPIC_API_KEY
