@@ -48,6 +48,7 @@ import {
   handleDeleteBudgetTarget,
   handleBudgetStatus,
 } from './routes/budget';
+import { handlePnL, handlePnLAll, handlePnLTrend } from './routes/pnl';
 import { handleCreateTaxYearWorkflow, handleGetTaxYearWorkflow } from './routes/workflow';
 import { handleClaudeHealth } from './routes/health';
 
@@ -127,6 +128,11 @@ const ROUTES: Route[] = [
   { method: 'PUT',    pattern: /^\/budget\/targets$/,                    handler: (req, env) => handleUpsertBudgetTarget(req, env) },
   { method: 'DELETE', pattern: /^\/budget\/targets\/([^/]+)$/,           handler: (req, env, id) => handleDeleteBudgetTarget(req, env, id) },
   { method: 'GET',    pattern: /^\/budget\/status$/,                     handler: (req, env) => handleBudgetStatus(req, env) },
+
+  // P&L / light bookkeeping
+  { method: 'GET',    pattern: /^\/pnl$/,                                handler: (req, env) => handlePnL(req, env) },
+  { method: 'GET',    pattern: /^\/pnl\/all$/,                           handler: (req, env) => handlePnLAll(req, env) },
+  { method: 'GET',    pattern: /^\/pnl\/trend$/,                         handler: (req, env) => handlePnLTrend(req, env) },
 
   // Cron triggers — manual entry points for testing/debugging the scheduled handler
   { method: 'POST',   pattern: /^\/cron\/nightly-sync$/,                 handler: async (_req, env) => Response.json(await runNightlyTellerSync(env)) },

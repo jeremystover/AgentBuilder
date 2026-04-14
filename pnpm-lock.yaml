@@ -81,6 +81,17 @@ importers:
         version: 3.114.17(@cloudflare/workers-types@4.20260413.1)
 
   apps/chief-of-staff:
+  apps/guest-booking:
+    dependencies:
+      '@agentbuilder/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@agentbuilder/llm':
+        specifier: workspace:*
+        version: link:../../packages/llm
+      agents:
+        specifier: ^0.0.95
+        version: 0.0.95(@cloudflare/workers-types@4.20260413.1)(react@19.2.5)
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250410.0

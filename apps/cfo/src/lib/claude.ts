@@ -113,7 +113,9 @@ export async function classifyTransaction(
   historicalExamples: Array<{ merchant: string; entity: string; category_tax: string }>,
   amazonContext?: AmazonContext | null,
 ): Promise<AIClassification> {
-  const isExpense = transaction.amount > 0;
+  // DB convention: expenses stored as negative, income as positive
+  // (Teller-native, and Chase/Venmo importers normalize to match).
+  const isExpense = transaction.amount < 0;
   const amountStr = `$${Math.abs(transaction.amount).toFixed(2)} (${isExpense ? 'expense/debit' : 'income/credit'})`;
 
   const exampleBlock =
