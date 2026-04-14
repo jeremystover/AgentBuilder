@@ -30,8 +30,15 @@ import { handleCsvImport } from './routes/imports';
 import { handleAmazonImport } from './routes/amazon';
 import { handleTillerImport } from './routes/tiller';
 import { handleRunClassification } from './routes/classify';
-import { handleListReview, handleResolveReview } from './routes/review';
+import { handleListReview, handleResolveReview, handleNextReviewItem } from './routes/review';
 import { handleScheduleC, handleScheduleE, handleSummary } from './routes/reports';
+import {
+  handleListBudgetCategories,
+  handleCreateBudgetCategory,
+  handleUpsertBudgetTarget,
+  handleBudgetStatus,
+} from './routes/budget';
+import { handlePnL, handlePnLAll, handlePnLTrend } from './routes/pnl';
 
 export interface JsonRpcMessage {
   jsonrpc?: string;
@@ -125,21 +132,37 @@ export const MCP_TOOLS = [
     },
   },
   {
+    name: 'next_review_item',
+    description:
+      "Interview mode: pulls the next single pending review item and returns it with full context — transaction details, the current AI suggestion, the user's historical classifications for the same merchant, any active rules that match, and similar merchants. Use this when the user says 'walk me through categorization' or 'let's categorize some transactions'. Present ONE item at a time, show the user the precedent, recommend a classification, and wait for their decision. Then call resolve_review with action='classify' (or 'accept' to keep the AI suggestion, 'skip' to defer). Loop until queue_remaining is 0 or the user stops. Every classify decision feeds the learning loop — after 3+ consistent manual decisions for the same merchant, a rule is auto-created so future transactions get categorized without a prompt.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'resolve_review',
     description:
-      'Resolve a single review queue item. Requires review_id and decision (accept | reclassify | split | flag). For reclassify, also pass entity + category_tax.',
+      "Resolve a single review queue item. Pass action='classify' with entity + category_tax (and optional category_budget) to set a fresh classification — this also feeds the learning loop. Use action='accept' to keep the existing AI suggestion, 'skip' to defer, 'reopen' to unresolve.",
     inputSchema: {
       type: 'object' as const,
       properties: {
         review_id: { type: 'string' as const },
-        decision: {
+        action: {
           type: 'string' as const,
-          enum: ['accept', 'reclassify', 'split', 'flag'],
+          enum: ['accept', 'classify', 'skip', 'reopen'],
+          description: 'What to do with this review item.',
         },
-        entity: { type: 'string' as const, description: 'Required for reclassify.' },
-        category_tax: { type: 'string' as const, description: 'Required for reclassify.' },
+        entity: {
+          type: 'string' as const,
+          enum: ['coaching_business', 'airbnb_activity', 'family_personal'],
+          description: "Required for action='classify'.",
+        },
+        category_tax: { type: 'string' as const, description: "Required for action='classify'." },
+        category_budget: { type: 'string' as const, description: "Optional budget category." },
       },
-      required: ['review_id', 'decision'],
+      required: ['review_id', 'action'],
       additionalProperties: false,
     },
   },
@@ -175,6 +198,124 @@ export const MCP_TOOLS = [
       type: 'object' as const,
       properties: {
         tax_year: { type: 'number' as const },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'list_budget_categories',
+    description:
+      "List the user's budget categories. On first use this seeds a default set (groceries, dining_out, subscriptions, etc.) from FAMILY_CATEGORIES so the budget walkthrough always has something to iterate over. Returns each category with its slug and display name. For the walkthrough flow, call this first, then for each category call set_budget_target (or create_budget_category for anything new the user invents) and finally budget_status to confirm.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'create_budget_category',
+    description:
+      "Create a new budget category mid-interview when the user names a bucket the defaults don't cover (e.g. 'kids_activities', 'coffee'). slug is lowercase_with_underscores and must be unique per user; name is the human label.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        slug: { type: 'string' as const, description: 'lowercase_with_underscores identifier' },
+        name: { type: 'string' as const, description: 'Human display name' },
+        parent_slug: { type: 'string' as const, description: 'Optional parent category for hierarchy' },
+      },
+      required: ['slug', 'name'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'set_budget_target',
+    description:
+      "Set or update the target amount for a budget category. Cadence is 'weekly', 'monthly', or 'annual' — pick whichever the user thinks about naturally (dining out is easier monthly, gifts are easier annual). Upserting creates history; the prior open-ended target is closed automatically so trendlines still work.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        category_slug: { type: 'string' as const },
+        cadence: { type: 'string' as const, enum: ['weekly', 'monthly', 'annual'] },
+        amount: { type: 'number' as const, description: 'Target amount in dollars, non-negative' },
+        notes: { type: 'string' as const, description: 'Optional free-text context' },
+      },
+      required: ['category_slug', 'cadence', 'amount'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'pnl_for_entity',
+    description:
+      "Income statement (P&L) for a single entity over a period. Entities are 'coaching_business' (Schedule C), 'airbnb_activity' (Schedule E), or 'family_personal'. Returns income and expenses grouped by tax category, plus net income and a count of still-unreviewed transactions in the window. Use when the user asks 'how's the business doing', 'what did I spend on the airbnb last month', or 'am I profitable this quarter'. Period defaults to this_month; accepts the same presets as budget_status.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        entity: {
+          type: 'string' as const,
+          enum: ['coaching_business', 'airbnb_activity', 'family_personal'],
+        },
+        preset: {
+          type: 'string' as const,
+          enum: ['this_week', 'this_month', 'last_month', 'ytd', 'trailing_30d', 'trailing_90d'],
+        },
+        start: { type: 'string' as const, description: 'YYYY-MM-DD, overrides preset' },
+        end: { type: 'string' as const, description: 'YYYY-MM-DD, overrides preset' },
+      },
+      required: ['entity'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'pnl_all_entities',
+    description:
+      "Consolidated income statement covering all three entities (coaching_business, airbnb_activity, family_personal) at once, plus a rollup total. Use for 'how did the household do this month' or 'give me a snapshot of everything'. Period defaults to this_month.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        preset: {
+          type: 'string' as const,
+          enum: ['this_week', 'this_month', 'last_month', 'ytd', 'trailing_30d', 'trailing_90d'],
+        },
+        start: { type: 'string' as const, description: 'YYYY-MM-DD, overrides preset' },
+        end: { type: 'string' as const, description: 'YYYY-MM-DD, overrides preset' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'pnl_monthly_trend',
+    description:
+      "Month-by-month income, expenses, and net income for an entity across the last N months (default 6, max 36). Use for run-rate questions: 'how has the coaching business trended', 'what's my monthly burn', 'are expenses creeping up'. Also returns monthly averages across the window.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        entity: {
+          type: 'string' as const,
+          enum: ['coaching_business', 'airbnb_activity', 'family_personal'],
+        },
+        months: {
+          type: 'number' as const,
+          description: 'Number of months to include (1-36, default 6)',
+        },
+      },
+      required: ['entity'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'budget_status',
+    description:
+      "Spend-vs-target report for a period. Target amounts are pro-rated across cadence mismatches so a weekly query against a $600/mo grocery target yields ~$138 expected, not $600. Use when the user asks 'how am I doing on X this month' or 'am I over budget'. Period defaults to this_month; accepts preset (this_week|this_month|last_month|ytd|trailing_30d|trailing_90d) or explicit start+end. Pass category_slug to drill into one bucket.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        preset: {
+          type: 'string' as const,
+          enum: ['this_week', 'this_month', 'last_month', 'ytd', 'trailing_30d', 'trailing_90d'],
+        },
+        start: { type: 'string' as const, description: 'YYYY-MM-DD, overrides preset' },
+        end: { type: 'string' as const, description: 'YYYY-MM-DD, overrides preset' },
+        category_slug: { type: 'string' as const, description: 'Filter to a single category' },
       },
       additionalProperties: false,
     },
@@ -273,6 +414,11 @@ async function dispatchTool(
       return respondText(await handleListReview(req, env));
     }
 
+    case 'next_review_item': {
+      const req = jsonRequest('GET', 'https://cfo.invalid/review/next');
+      return respondText(await handleNextReviewItem(req, env));
+    }
+
     case 'resolve_review': {
       const reviewId = String(args.review_id ?? '');
       if (!reviewId) throw new Error('review_id is required');
@@ -296,6 +442,45 @@ async function dispatchTool(
       const url = withQuery('https://cfo.invalid/reports/summary', args);
       const req = jsonRequest('GET', url);
       return respondText(await handleSummary(req, env));
+    }
+
+    case 'list_budget_categories': {
+      const req = jsonRequest('GET', 'https://cfo.invalid/budget/categories');
+      return respondText(await handleListBudgetCategories(req, env));
+    }
+
+    case 'create_budget_category': {
+      const req = jsonRequest('POST', 'https://cfo.invalid/budget/categories', args);
+      return respondText(await handleCreateBudgetCategory(req, env));
+    }
+
+    case 'set_budget_target': {
+      const req = jsonRequest('PUT', 'https://cfo.invalid/budget/targets', args);
+      return respondText(await handleUpsertBudgetTarget(req, env));
+    }
+
+    case 'budget_status': {
+      const url = withQuery('https://cfo.invalid/budget/status', args);
+      const req = jsonRequest('GET', url);
+      return respondText(await handleBudgetStatus(req, env));
+    }
+
+    case 'pnl_for_entity': {
+      const url = withQuery('https://cfo.invalid/pnl', args);
+      const req = jsonRequest('GET', url);
+      return respondText(await handlePnL(req, env));
+    }
+
+    case 'pnl_all_entities': {
+      const url = withQuery('https://cfo.invalid/pnl/all', args);
+      const req = jsonRequest('GET', url);
+      return respondText(await handlePnLAll(req, env));
+    }
+
+    case 'pnl_monthly_trend': {
+      const url = withQuery('https://cfo.invalid/pnl/trend', args);
+      const req = jsonRequest('GET', url);
+      return respondText(await handlePnLTrend(req, env));
     }
 
     default:

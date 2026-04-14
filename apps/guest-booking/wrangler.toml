@@ -1,0 +1,41 @@
+name = "guest-booking"
+main = "src/index.ts"
+compatibility_date = "2025-04-01"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+[[durable_objects.bindings]]
+name = "AGENT_DO"
+class_name = "GuestBookingDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["GuestBookingDO"]
+
+[ai]
+binding = "AI"
+
+# Shared per-property D1 database — inventory graph, listing snapshots,
+# audit history, and the booking event log all live here.
+[[d1_databases]]
+binding = "DB"
+database_name = "guest-booking-db"
+database_id = "TBD_after_wrangler_d1_create"
+
+# KV cache for Guesty / iCal responses (respect platform rate limits).
+[[kv_namespaces]]
+binding = "CACHE"
+id = "TBD_after_wrangler_kv_create"
+
+# Async fan-out for booking events: one event → N platform block writes.
+[[queues.producers]]
+binding = "SYNC_QUEUE"
+queue = "guest-booking-sync-queue"
+
+[[queues.consumers]]
+queue = "guest-booking-sync-queue"
+max_batch_size = 10
+max_batch_timeout = 5

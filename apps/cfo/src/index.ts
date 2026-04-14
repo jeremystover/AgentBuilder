@@ -33,17 +33,30 @@ import { handleGetBankConfig, handleStartBankConnect, handleCompleteBankConnect,
 import { handleListAccounts, handleUpdateAccount } from './routes/accounts';
 import { handleListTransactions, handleGetTransaction, handleDeleteTransaction, handleManualClassify, handleSplitTransaction } from './routes/transactions';
 import { handleRunClassification, handleClassifySingle } from './routes/classify';
-import { handleListReview, handleResolveReview, handleBulkResolveReview } from './routes/review';
+import { handleListReview, handleResolveReview, handleBulkResolveReview, handleNextReviewItem } from './routes/review';
 import { handleScheduleC, handleScheduleE, handleSummary, handleExport, handleSnapshot } from './routes/reports';
 import { handleListImports, handleDeleteAllImports, handleDeleteImport, handleCsvImport } from './routes/imports';
 import { handleTillerImport } from './routes/tiller';
 import { handleListRules, handleCreateRule, handleUpdateRule, handleDeleteRule, handleAutoCatImport } from './routes/rules';
 import { handleAmazonImport } from './routes/amazon';
+import {
+  handleListBudgetCategories,
+  handleCreateBudgetCategory,
+  handleUpdateBudgetCategory,
+  handleListBudgetTargets,
+  handleUpsertBudgetTarget,
+  handleDeleteBudgetTarget,
+  handleBudgetStatus,
+} from './routes/budget';
+import { handlePnL, handlePnLAll, handlePnLTrend } from './routes/pnl';
 import { handleCreateTaxYearWorkflow, handleGetTaxYearWorkflow } from './routes/workflow';
 import { handleClaudeHealth } from './routes/health';
 
 // MCP
 import { handleMcp, type JsonRpcMessage } from './mcp-tools';
+
+// Scheduled jobs
+import { runNightlyTellerSync } from './lib/nightly-sync';
 
 // ── Simple regex router ───────────────────────────────────────────────────────
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -88,6 +101,7 @@ const ROUTES: Route[] = [
 
   // Review queue
   { method: 'GET',    pattern: /^\/review$/,                             handler: (req, env) => handleListReview(req, env) },
+  { method: 'GET',    pattern: /^\/review\/next$/,                       handler: (req, env) => handleNextReviewItem(req, env) },
   { method: 'PATCH',  pattern: /^\/review\/bulk$/,                       handler: (req, env) => handleBulkResolveReview(req, env) },
   { method: 'PATCH',  pattern: /^\/review\/([^/]+)$/,                    handler: (req, env, id) => handleResolveReview(req, env, id) },
 
@@ -105,6 +119,23 @@ const ROUTES: Route[] = [
   { method: 'POST',   pattern: /^\/imports\/csv$/,                       handler: (req, env) => handleCsvImport(req, env) },
   { method: 'POST',   pattern: /^\/imports\/amazon$/,                    handler: (req, env) => handleAmazonImport(req, env) },
   { method: 'POST',   pattern: /^\/imports\/tiller$/,                    handler: (req, env) => handleTillerImport(req, env) },
+
+  // Budget
+  { method: 'GET',    pattern: /^\/budget\/categories$/,                 handler: (req, env) => handleListBudgetCategories(req, env) },
+  { method: 'POST',   pattern: /^\/budget\/categories$/,                 handler: (req, env) => handleCreateBudgetCategory(req, env) },
+  { method: 'PATCH',  pattern: /^\/budget\/categories\/([^/]+)$/,        handler: (req, env, slug) => handleUpdateBudgetCategory(req, env, slug) },
+  { method: 'GET',    pattern: /^\/budget\/targets$/,                    handler: (req, env) => handleListBudgetTargets(req, env) },
+  { method: 'PUT',    pattern: /^\/budget\/targets$/,                    handler: (req, env) => handleUpsertBudgetTarget(req, env) },
+  { method: 'DELETE', pattern: /^\/budget\/targets\/([^/]+)$/,           handler: (req, env, id) => handleDeleteBudgetTarget(req, env, id) },
+  { method: 'GET',    pattern: /^\/budget\/status$/,                     handler: (req, env) => handleBudgetStatus(req, env) },
+
+  // P&L / light bookkeeping
+  { method: 'GET',    pattern: /^\/pnl$/,                                handler: (req, env) => handlePnL(req, env) },
+  { method: 'GET',    pattern: /^\/pnl\/all$/,                           handler: (req, env) => handlePnLAll(req, env) },
+  { method: 'GET',    pattern: /^\/pnl\/trend$/,                         handler: (req, env) => handlePnLTrend(req, env) },
+
+  // Cron triggers — manual entry points for testing/debugging the scheduled handler
+  { method: 'POST',   pattern: /^\/cron\/nightly-sync$/,                 handler: async (_req, env) => Response.json(await runNightlyTellerSync(env)) },
 
   // Rules
   { method: 'GET',    pattern: /^\/rules$/,                              handler: (req, env) => handleListRules(req, env) },
@@ -194,5 +225,17 @@ export default {
     }
 
     return jsonError('Not found', 404);
+  },
+
+  // Cloudflare Cron Trigger entrypoint. Gated to the nightly-sync cron
+  // today, but the scheduled() hook is the right place to add other
+  // periodic tasks later (snapshots, classification passes, digests).
+  async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    console.log('[scheduled] cron fired', { cron: event.cron, scheduledTime: event.scheduledTime });
+    ctx.waitUntil(
+      runNightlyTellerSync(env).catch((err) => {
+        console.error('[scheduled] nightly sync failed', err);
+      }),
+    );
   },
 } satisfies ExportedHandler<Env>;
