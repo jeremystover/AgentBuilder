@@ -39,6 +39,15 @@ import { handleListImports, handleDeleteAllImports, handleDeleteImport, handleCs
 import { handleTillerImport } from './routes/tiller';
 import { handleListRules, handleCreateRule, handleUpdateRule, handleDeleteRule, handleAutoCatImport } from './routes/rules';
 import { handleAmazonImport } from './routes/amazon';
+import {
+  handleListBudgetCategories,
+  handleCreateBudgetCategory,
+  handleUpdateBudgetCategory,
+  handleListBudgetTargets,
+  handleUpsertBudgetTarget,
+  handleDeleteBudgetTarget,
+  handleBudgetStatus,
+} from './routes/budget';
 import { handleCreateTaxYearWorkflow, handleGetTaxYearWorkflow } from './routes/workflow';
 import { handleClaudeHealth } from './routes/health';
 
@@ -109,6 +118,15 @@ const ROUTES: Route[] = [
   { method: 'POST',   pattern: /^\/imports\/csv$/,                       handler: (req, env) => handleCsvImport(req, env) },
   { method: 'POST',   pattern: /^\/imports\/amazon$/,                    handler: (req, env) => handleAmazonImport(req, env) },
   { method: 'POST',   pattern: /^\/imports\/tiller$/,                    handler: (req, env) => handleTillerImport(req, env) },
+
+  // Budget
+  { method: 'GET',    pattern: /^\/budget\/categories$/,                 handler: (req, env) => handleListBudgetCategories(req, env) },
+  { method: 'POST',   pattern: /^\/budget\/categories$/,                 handler: (req, env) => handleCreateBudgetCategory(req, env) },
+  { method: 'PATCH',  pattern: /^\/budget\/categories\/([^/]+)$/,        handler: (req, env, slug) => handleUpdateBudgetCategory(req, env, slug) },
+  { method: 'GET',    pattern: /^\/budget\/targets$/,                    handler: (req, env) => handleListBudgetTargets(req, env) },
+  { method: 'PUT',    pattern: /^\/budget\/targets$/,                    handler: (req, env) => handleUpsertBudgetTarget(req, env) },
+  { method: 'DELETE', pattern: /^\/budget\/targets\/([^/]+)$/,           handler: (req, env, id) => handleDeleteBudgetTarget(req, env, id) },
+  { method: 'GET',    pattern: /^\/budget\/status$/,                     handler: (req, env) => handleBudgetStatus(req, env) },
 
   // Cron triggers — manual entry points for testing/debugging the scheduled handler
   { method: 'POST',   pattern: /^\/cron\/nightly-sync$/,                 handler: async (_req, env) => Response.json(await runNightlyTellerSync(env)) },

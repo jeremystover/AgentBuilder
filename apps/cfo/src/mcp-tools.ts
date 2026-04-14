@@ -32,6 +32,12 @@ import { handleTillerImport } from './routes/tiller';
 import { handleRunClassification } from './routes/classify';
 import { handleListReview, handleResolveReview, handleNextReviewItem } from './routes/review';
 import { handleScheduleC, handleScheduleE, handleSummary } from './routes/reports';
+import {
+  handleListBudgetCategories,
+  handleCreateBudgetCategory,
+  handleUpsertBudgetTarget,
+  handleBudgetStatus,
+} from './routes/budget';
 
 export interface JsonRpcMessage {
   jsonrpc?: string;
@@ -195,6 +201,65 @@ export const MCP_TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'list_budget_categories',
+    description:
+      "List the user's budget categories. On first use this seeds a default set (groceries, dining_out, subscriptions, etc.) from FAMILY_CATEGORIES so the budget walkthrough always has something to iterate over. Returns each category with its slug and display name. For the walkthrough flow, call this first, then for each category call set_budget_target (or create_budget_category for anything new the user invents) and finally budget_status to confirm.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'create_budget_category',
+    description:
+      "Create a new budget category mid-interview when the user names a bucket the defaults don't cover (e.g. 'kids_activities', 'coffee'). slug is lowercase_with_underscores and must be unique per user; name is the human label.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        slug: { type: 'string' as const, description: 'lowercase_with_underscores identifier' },
+        name: { type: 'string' as const, description: 'Human display name' },
+        parent_slug: { type: 'string' as const, description: 'Optional parent category for hierarchy' },
+      },
+      required: ['slug', 'name'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'set_budget_target',
+    description:
+      "Set or update the target amount for a budget category. Cadence is 'weekly', 'monthly', or 'annual' — pick whichever the user thinks about naturally (dining out is easier monthly, gifts are easier annual). Upserting creates history; the prior open-ended target is closed automatically so trendlines still work.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        category_slug: { type: 'string' as const },
+        cadence: { type: 'string' as const, enum: ['weekly', 'monthly', 'annual'] },
+        amount: { type: 'number' as const, description: 'Target amount in dollars, non-negative' },
+        notes: { type: 'string' as const, description: 'Optional free-text context' },
+      },
+      required: ['category_slug', 'cadence', 'amount'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'budget_status',
+    description:
+      "Spend-vs-target report for a period. Target amounts are pro-rated across cadence mismatches so a weekly query against a $600/mo grocery target yields ~$138 expected, not $600. Use when the user asks 'how am I doing on X this month' or 'am I over budget'. Period defaults to this_month; accepts preset (this_week|this_month|last_month|ytd|trailing_30d|trailing_90d) or explicit start+end. Pass category_slug to drill into one bucket.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        preset: {
+          type: 'string' as const,
+          enum: ['this_week', 'this_month', 'last_month', 'ytd', 'trailing_30d', 'trailing_90d'],
+        },
+        start: { type: 'string' as const, description: 'YYYY-MM-DD, overrides preset' },
+        end: { type: 'string' as const, description: 'YYYY-MM-DD, overrides preset' },
+        category_slug: { type: 'string' as const, description: 'Filter to a single category' },
+      },
+      additionalProperties: false,
+    },
+  },
 ];
 
 // ── Dispatch ──────────────────────────────────────────────────────────────────
@@ -317,6 +382,27 @@ async function dispatchTool(
       const url = withQuery('https://cfo.invalid/reports/summary', args);
       const req = jsonRequest('GET', url);
       return respondText(await handleSummary(req, env));
+    }
+
+    case 'list_budget_categories': {
+      const req = jsonRequest('GET', 'https://cfo.invalid/budget/categories');
+      return respondText(await handleListBudgetCategories(req, env));
+    }
+
+    case 'create_budget_category': {
+      const req = jsonRequest('POST', 'https://cfo.invalid/budget/categories', args);
+      return respondText(await handleCreateBudgetCategory(req, env));
+    }
+
+    case 'set_budget_target': {
+      const req = jsonRequest('PUT', 'https://cfo.invalid/budget/targets', args);
+      return respondText(await handleUpsertBudgetTarget(req, env));
+    }
+
+    case 'budget_status': {
+      const url = withQuery('https://cfo.invalid/budget/status', args);
+      const req = jsonRequest('GET', url);
+      return respondText(await handleBudgetStatus(req, env));
     }
 
     default:

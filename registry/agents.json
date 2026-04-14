@@ -162,7 +162,11 @@
         "resolve-review",
         "schedule-c-report",
         "schedule-e-report",
-        "transactions-summary"
+        "transactions-summary",
+        "list-budget-categories",
+        "create-budget-category",
+        "set-budget-target",
+        "budget-status"
       ],
       "mcpServers": [],
       "sharedPackages": [
