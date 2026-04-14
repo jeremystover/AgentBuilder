@@ -158,6 +158,7 @@
         "tiller-import",
         "classify-transactions",
         "list-review-queue",
+        "next-review-item",
         "resolve-review",
         "schedule-c-report",
         "schedule-e-report",

@@ -30,7 +30,7 @@ import { handleCsvImport } from './routes/imports';
 import { handleAmazonImport } from './routes/amazon';
 import { handleTillerImport } from './routes/tiller';
 import { handleRunClassification } from './routes/classify';
-import { handleListReview, handleResolveReview } from './routes/review';
+import { handleListReview, handleResolveReview, handleNextReviewItem } from './routes/review';
 import { handleScheduleC, handleScheduleE, handleSummary } from './routes/reports';
 
 export interface JsonRpcMessage {
@@ -125,21 +125,37 @@ export const MCP_TOOLS = [
     },
   },
   {
+    name: 'next_review_item',
+    description:
+      "Interview mode: pulls the next single pending review item and returns it with full context — transaction details, the current AI suggestion, the user's historical classifications for the same merchant, any active rules that match, and similar merchants. Use this when the user says 'walk me through categorization' or 'let's categorize some transactions'. Present ONE item at a time, show the user the precedent, recommend a classification, and wait for their decision. Then call resolve_review with action='classify' (or 'accept' to keep the AI suggestion, 'skip' to defer). Loop until queue_remaining is 0 or the user stops. Every classify decision feeds the learning loop — after 3+ consistent manual decisions for the same merchant, a rule is auto-created so future transactions get categorized without a prompt.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'resolve_review',
     description:
-      'Resolve a single review queue item. Requires review_id and decision (accept | reclassify | split | flag). For reclassify, also pass entity + category_tax.',
+      "Resolve a single review queue item. Pass action='classify' with entity + category_tax (and optional category_budget) to set a fresh classification — this also feeds the learning loop. Use action='accept' to keep the existing AI suggestion, 'skip' to defer, 'reopen' to unresolve.",
     inputSchema: {
       type: 'object' as const,
       properties: {
         review_id: { type: 'string' as const },
-        decision: {
+        action: {
           type: 'string' as const,
-          enum: ['accept', 'reclassify', 'split', 'flag'],
+          enum: ['accept', 'classify', 'skip', 'reopen'],
+          description: 'What to do with this review item.',
         },
-        entity: { type: 'string' as const, description: 'Required for reclassify.' },
-        category_tax: { type: 'string' as const, description: 'Required for reclassify.' },
+        entity: {
+          type: 'string' as const,
+          enum: ['coaching_business', 'airbnb_activity', 'family_personal'],
+          description: "Required for action='classify'.",
+        },
+        category_tax: { type: 'string' as const, description: "Required for action='classify'." },
+        category_budget: { type: 'string' as const, description: "Optional budget category." },
       },
-      required: ['review_id', 'decision'],
+      required: ['review_id', 'action'],
       additionalProperties: false,
     },
   },
@@ -271,6 +287,11 @@ async function dispatchTool(
     case 'list_review_queue': {
       const req = jsonRequest('GET', 'https://cfo.invalid/review');
       return respondText(await handleListReview(req, env));
+    }
+
+    case 'next_review_item': {
+      const req = jsonRequest('GET', 'https://cfo.invalid/review/next');
+      return respondText(await handleNextReviewItem(req, env));
     }
 
     case 'resolve_review': {
