@@ -1,0 +1,2023 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tax Prep</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    [data-section] { display: none; }
+    [data-section].active { display: block; }
+    .nav-link { @apply flex items-center gap-3 px-4 py-2.5 rounded-lg text-slate-300 hover:bg-slate-700 hover:text-white transition-colors text-sm font-medium cursor-pointer; }
+    .nav-link.active { background-color: #4f46e5; color: white; }
+    .confidence-high { color: #059669; }
+    .confidence-mid  { color: #d97706; }
+    .confidence-low  { color: #dc2626; }
+    .btn { @apply inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer; }
+    .btn-primary  { @apply bg-indigo-600 text-white hover:bg-indigo-700; }
+    .btn-success  { @apply bg-emerald-600 text-white hover:bg-emerald-700; }
+    .btn-danger   { @apply bg-red-600 text-white hover:bg-red-700; }
+    .btn-ghost    { @apply border border-slate-300 text-slate-700 hover:bg-slate-50; }
+    .card { @apply bg-white rounded-xl shadow-sm border border-slate-200 p-6; }
+    .badge-coaching { @apply inline-block px-2 py-0.5 rounded text-xs font-medium bg-indigo-100 text-indigo-700; }
+    .badge-airbnb   { @apply inline-block px-2 py-0.5 rounded text-xs font-medium bg-emerald-100 text-emerald-700; }
+    .badge-family   { @apply inline-block px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-600; }
+    input[type="text"], input[type="email"], input[type="number"], input[type="date"], select, textarea {
+      @apply w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500;
+    }
+    label { @apply block text-sm font-medium text-slate-700 mb-1; }
+    table { @apply w-full text-sm; }
+    thead th { @apply text-left text-xs font-semibold text-slate-500 uppercase tracking-wide pb-2 border-b border-slate-200; }
+    tbody td { @apply py-3 border-b border-slate-100 align-top; }
+    .stat-card { @apply bg-white rounded-xl border border-slate-200 p-5; }
+  </style>
+</head>
+<body class="bg-slate-100 flex h-screen overflow-hidden text-slate-800 font-sans antialiased">
+
+<!-- ── Toast container ─────────────────────────────────────────────────────── -->
+<div id="toasts" class="fixed top-4 right-4 z-50 flex flex-col gap-2 w-80"></div>
+
+<!-- ── Sidebar ─────────────────────────────────────────────────────────────── -->
+<aside class="w-60 bg-slate-900 flex flex-col shrink-0">
+  <div class="px-5 py-5 border-b border-slate-700">
+    <div class="text-white font-bold text-lg tracking-tight">💼 Tax Prep</div>
+    <div id="user-badge" class="text-slate-400 text-xs mt-1 truncate"></div>
+  </div>
+  <nav id="sidebar-nav" class="flex-1 p-3 flex flex-col gap-1 overflow-y-auto">
+    <div class="nav-link active" data-nav="accounts"  onclick="nav('accounts')">🗂 Tax Year</div>
+    <div class="nav-link" data-nav="sync"      onclick="nav('sync')">1️⃣ Import Accounts</div>
+    <div class="nav-link" data-nav="review"    onclick="nav('review')">2️⃣ Classify</div>
+    <div class="nav-link" data-nav="rules"     onclick="nav('rules')">📋 Rules</div>
+    <div class="nav-link" data-nav="tiller"    onclick="nav('tiller')">🌱 Tiller Import</div>
+    <div class="nav-link" data-nav="import"    onclick="nav('import')">📥 CSV Imports</div>
+    <div class="nav-link" data-nav="reports"   onclick="nav('reports')">3️⃣ Reports</div>
+    <div class="mt-auto pt-4 border-t border-slate-700">
+      <div class="nav-link text-slate-400" onclick="doLogout()">⬅ Switch User</div>
+    </div>
+  </nav>
+</aside>
+
+<!-- ── Main ────────────────────────────────────────────────────────────────── -->
+<main class="flex-1 overflow-y-auto">
+
+  <!-- ── Setup ──────────────────────────────────────────────────────────── -->
+  <section data-section="setup" class="max-w-md mx-auto py-24 px-4">
+    <div class="card">
+      <div class="text-2xl font-bold mb-1">Welcome to Tax Prep</div>
+      <p class="text-slate-500 text-sm mb-6">Enter your details to create or load your profile.</p>
+      <form id="setup-form" onsubmit="doSetup(event)">
+        <div class="mb-4">
+          <label>Full name</label>
+          <input type="text" id="setup-name" placeholder="Jane Smith" required>
+        </div>
+        <div class="mb-6">
+          <label>Email address</label>
+          <input type="email" id="setup-email" placeholder="jane@example.com" required>
+        </div>
+        <button type="submit" class="btn btn-primary w-full justify-center">Get Started</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- ── Accounts ───────────────────────────────────────────────────────── -->
+  <section data-section="accounts" class="p-8 max-w-5xl mx-auto">
+    <div class="flex items-center justify-between mb-6">
+      <div>
+        <h2 class="text-xl font-bold">Tax Year Workflow</h2>
+        <p class="text-slate-500 text-sm mt-0.5">Create the tax year, import every account for the full year, then move into classification and reports.</p>
+        <div class="flex items-center gap-2 mt-3">
+          <label for="bank-provider" class="text-xs text-slate-400 uppercase tracking-wide">Provider</label>
+          <select id="bank-provider" class="w-32 text-xs" onchange="setBankProvider(this.value)">
+            <option value="plaid">Plaid</option>
+            <option value="teller">Teller</option>
+          </select>
+          <span id="bank-provider-hint" class="text-xs text-slate-400">Loading provider config…</span>
+        </div>
+      </div>
+      <div class="flex gap-2">
+        <button id="bank-sandbox-btn" class="btn btn-ghost" onclick="connectSandboxBank()">🧪 Add Sandbox Account</button>
+        <button class="btn btn-primary" onclick="connectBank()">+ Connect Bank</button>
+      </div>
+    </div>
+    <div class="grid grid-cols-3 gap-4 mb-6">
+      <div class="stat-card">
+        <div class="text-sm text-slate-500 mb-1">Active tax year</div>
+        <div class="text-2xl font-bold text-slate-900" id="tax-year-label">—</div>
+        <div class="text-xs text-slate-500 mt-2" id="tax-year-status">Create a tax year to start Step 1.</div>
+      </div>
+      <div class="stat-card">
+        <div class="text-sm text-slate-500 mb-1">Step 1 progress</div>
+        <div class="text-2xl font-bold text-indigo-600" id="tax-year-progress">0 / 0</div>
+        <div class="text-xs text-slate-500 mt-2" id="tax-year-progress-note">No checklist yet.</div>
+      </div>
+      <div class="stat-card">
+        <div class="text-sm text-slate-500 mb-1">Next unlock</div>
+        <div class="text-2xl font-bold text-emerald-600" id="tax-year-next-step">Step 1</div>
+        <div class="text-xs text-slate-500 mt-2" id="tax-year-next-step-note">Import every account for the full year.</div>
+      </div>
+    </div>
+    <div class="card mb-6">
+      <div class="flex items-end gap-3 flex-wrap">
+        <div>
+          <label>Create new tax year</label>
+          <input type="number" id="new-tax-year" min="2000" max="2100">
+        </div>
+        <button class="btn btn-primary" onclick="createTaxYear()">Start Fresh Year</button>
+      </div>
+      <p class="text-xs text-slate-500 mt-3">This resets the year checklist and makes that year the active workflow. Existing historical data is preserved.</p>
+    </div>
+    <div class="card mb-6">
+      <div class="flex items-center justify-between mb-4 gap-4">
+        <div>
+          <h3 class="font-semibold">Step 1 Checklist</h3>
+          <p class="text-sm text-slate-500" id="checklist-subtitle">Create a tax year to generate the import checklist.</p>
+        </div>
+        <div class="text-sm text-slate-500" id="checklist-summary">0 complete</div>
+      </div>
+      <div id="checklist-empty" class="text-sm text-slate-400">No checklist yet.</div>
+      <div id="checklist-list" class="space-y-2 hidden"></div>
+    </div>
+    <div class="card mb-6 p-0 overflow-hidden">
+      <div class="px-6 pt-6 pb-2">
+        <h3 class="font-semibold">Connected Accounts</h3>
+        <p class="text-sm text-slate-500 mt-1">This includes linked bank/card accounts plus manual CSV accounts like Venmo.</p>
+      </div>
+      <table>
+        <thead><tr class="px-6">
+          <th class="pl-6 py-3">Institution</th>
+          <th>Account</th>
+          <th>Type</th>
+          <th>Mask</th>
+          <th>Owner Tag</th>
+          <th class="pr-6"></th>
+        </tr></thead>
+        <tbody id="accounts-body">
+          <tr><td colspan="6" class="text-center py-12 text-slate-400 pl-6">No accounts connected yet.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── Sync ───────────────────────────────────────────────────────────── -->
+  <section data-section="sync" class="p-8 max-w-3xl mx-auto">
+    <h2 class="text-xl font-bold mb-1">Step 1: Import Accounts</h2>
+    <p class="text-slate-500 text-sm mb-6" id="sync-subtitle">Pull the full tax year from all connected accounts.</p>
+    <div class="card mb-6">
+      <div class="text-sm text-slate-500 mb-4" id="sync-year-note">Create a tax year first.</div>
+      <button class="btn btn-primary" onclick="doSync()">🔄 Import Full Tax Year From Connected Accounts</button>
+      <div id="sync-result" class="mt-4 hidden"></div>
+    </div>
+    <div class="flex items-center justify-between mb-3 gap-3">
+      <h3 class="font-semibold">Import History</h3>
+      <button class="btn btn-danger text-xs px-3 py-1.5" onclick="clearImportedTransactions()">Remove All Imported</button>
+    </div>
+    <div class="card p-0 overflow-hidden">
+      <table>
+        <thead><tr>
+          <th class="pl-6 py-3">Date</th>
+          <th>Source</th>
+          <th>Account</th>
+          <th>Status</th>
+          <th>Imported</th>
+          <th>Dupes</th>
+          <th class="pr-6">Actions</th>
+        </tr></thead>
+        <tbody id="imports-body">
+          <tr><td colspan="7" class="text-center py-10 text-slate-400 pl-6">No imports yet.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── Review ─────────────────────────────────────────────────────────── -->
+  <section data-section="review" class="p-8 max-w-6xl mx-auto">
+    <div class="flex items-center justify-between mb-6">
+      <div>
+        <h2 class="text-xl font-bold">Step 2: Classify</h2>
+        <p class="text-slate-500 text-sm mt-0.5" id="review-subtitle">Transactions waiting to be classified or reviewed for the active tax year.</p>
+      </div>
+      <div class="flex gap-2">
+        <button class="btn btn-primary" onclick="doClassify()">🤖 Classify Unclassified</button>
+        <select class="w-52" id="review-category-filter" onchange="resetReviewPage()"></select>
+        <select class="w-40" id="review-status-filter" onchange="resetReviewPage()">
+          <option value="pending">Pending</option>
+          <option value="resolved">Resolved</option>
+          <option value="skipped">Skipped</option>
+        </select>
+      </div>
+    </div>
+    <div id="classify-result" class="grid grid-cols-2 gap-4 hidden mb-6">
+      <div class="stat-card"><div class="text-2xl font-bold text-indigo-600" id="cr-total">—</div><div class="text-sm text-slate-500 mt-1">Transactions processed</div></div>
+      <div class="stat-card"><div class="text-2xl font-bold text-emerald-600" id="cr-rules">—</div><div class="text-sm text-slate-500 mt-1">Matched by rules</div></div>
+      <div class="stat-card"><div class="text-2xl font-bold text-indigo-600" id="cr-ai">—</div><div class="text-sm text-slate-500 mt-1">Classified by AI</div></div>
+      <div class="stat-card"><div class="text-2xl font-bold text-amber-500" id="cr-review">—</div><div class="text-sm text-slate-500 mt-1">Still pending review</div></div>
+    </div>
+    <div id="classify-none" class="card hidden text-center py-10 text-slate-400 mb-6">There are no unclassified review items to process.</div>
+    <div class="card mb-4">
+      <div class="flex items-center justify-between gap-4 flex-wrap">
+        <div>
+          <div class="font-semibold">Bulk actions</div>
+          <div class="text-sm text-slate-500" id="review-bulk-summary">Select rows on this page or apply an action to everything in the current filter.</div>
+        </div>
+        <div class="flex items-center gap-2 flex-wrap">
+          <button class="btn btn-ghost" onclick="toggleSelectAllVisibleReview()">Select visible</button>
+          <button class="btn btn-ghost" onclick="selectAllFilteredReview()">Select filtered</button>
+          <button class="btn btn-ghost" onclick="clearReviewSelection()">Clear</button>
+          <button class="btn btn-success" id="review-bulk-accept-btn" onclick="bulkResolveReview('accept')">Accept selected</button>
+          <button class="btn btn-ghost" id="review-bulk-reopen-btn" onclick="bulkResolveReview('reopen')">Reopen selected</button>
+        </div>
+      </div>
+      <div class="flex items-end gap-2 flex-wrap mt-4">
+        <div>
+          <label>Bulk entity</label>
+          <select id="review-bulk-entity" onchange="refreshBulkReviewCats()">
+            <option value="coaching_business">Coaching</option>
+            <option value="airbnb_activity">Whitford House</option>
+            <option value="family_personal">Family</option>
+          </select>
+        </div>
+        <div>
+          <label>Bulk category</label>
+          <select id="review-bulk-category"></select>
+        </div>
+        <button class="btn btn-primary" id="review-bulk-reclassify-btn" onclick="bulkResolveReview('classify')">Reclassify selected</button>
+        <button class="btn btn-ghost" id="review-bulk-accept-filtered-btn" onclick="bulkResolveReview('accept', true)">Accept filtered</button>
+        <button class="btn btn-ghost" id="review-bulk-reclassify-filtered-btn" onclick="bulkResolveReview('classify', true)">Reclassify filtered</button>
+        <button class="btn btn-ghost" id="review-bulk-reopen-filtered-btn" onclick="bulkResolveReview('reopen', true)">Reopen filtered</button>
+      </div>
+    </div>
+    <div class="card p-0 overflow-hidden">
+      <table>
+        <thead><tr>
+          <th class="pl-6 py-3 w-10"><input type="checkbox" id="review-select-all" onchange="setSelectAllVisibleReview(this.checked)"></th>
+          <th class="pl-6 py-3">Date</th>
+          <th>Merchant / Description</th>
+          <th>Amount</th>
+          <th>Account</th>
+          <th>Suggested</th>
+          <th>Confidence</th>
+          <th class="pr-6">Actions</th>
+        </tr></thead>
+        <tbody id="review-body">
+          <tr><td colspan="8" class="text-center py-12 text-slate-400 pl-6">Nothing pending.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="flex justify-between items-center mt-4">
+      <div id="review-pagination" class="text-sm text-slate-500"></div>
+      <div class="flex gap-2">
+        <button class="btn btn-ghost" onclick="reviewPage(-1)">← Prev</button>
+        <button class="btn btn-ghost" onclick="reviewPage(1)">Next →</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Rules ──────────────────────────────────────────────────────────── -->
+  <section data-section="rules" class="p-8 max-w-5xl mx-auto">
+    <div class="flex items-center justify-between mb-6">
+      <div>
+        <h2 class="text-xl font-bold">Classification Rules</h2>
+        <p class="text-slate-500 text-sm mt-0.5">Deterministic rules run before AI — high priority rules win.</p>
+      </div>
+      <div class="flex gap-2">
+        <button class="btn btn-ghost" onclick="showAutoCatForm()">Import AutoCat</button>
+        <button class="btn btn-primary" onclick="showRuleForm()">+ Add Rule</button>
+      </div>
+    </div>
+
+    <!-- AutoCat import form -->
+    <div id="autocat-form-card" class="card mb-6 hidden">
+      <h3 class="font-semibold mb-1">Import Tiller AutoCat Rules</h3>
+      <p class="text-sm text-slate-500 mb-4">Upload your AutoCat sheet (exported as CSV). Each row with a <em>Description Contains</em> value becomes a rule. Categories are mapped using the same logic as the Tiller transaction import.</p>
+      <div class="border-2 border-dashed border-slate-300 rounded-lg p-6 text-center mb-4">
+        <input type="file" id="autocat-file" accept=".csv" class="hidden" onchange="handleAutoCatFileSelect(this)">
+        <div class="text-slate-400 mb-2 text-sm">Drop your AutoCat CSV here or</div>
+        <button class="btn btn-ghost" onclick="document.getElementById('autocat-file').click()">Choose file</button>
+        <div id="autocat-filename" class="text-sm text-slate-500 mt-2"></div>
+      </div>
+      <div id="autocat-result" class="hidden bg-emerald-50 border border-emerald-200 rounded-lg p-4 text-sm mb-4"></div>
+      <div class="flex gap-2">
+        <button class="btn btn-success" onclick="importAutoCat()">Import Rules</button>
+        <button class="btn btn-ghost" onclick="hideAutoCatForm()">Cancel</button>
+      </div>
+    </div>
+
+    <!-- Add / Edit form -->
+    <div id="rule-form-card" class="card mb-6 hidden">
+      <h3 class="font-semibold mb-4" id="rule-form-title">New Rule</h3>
+      <div class="grid grid-cols-2 gap-4">
+        <div class="col-span-2"><label>Rule name</label><input type="text" id="rf-name" placeholder="e.g. Stripe income → coaching"></div>
+        <div>
+          <label>Match field</label>
+          <select id="rf-field">
+            <option value="merchant_name">Merchant name</option>
+            <option value="description">Description</option>
+            <option value="account_id">Account ID</option>
+            <option value="amount">Amount</option>
+          </select>
+        </div>
+        <div>
+          <label>Operator</label>
+          <select id="rf-operator">
+            <option value="contains">contains</option>
+            <option value="equals">equals</option>
+            <option value="starts_with">starts with</option>
+            <option value="ends_with">ends with</option>
+            <option value="regex">regex</option>
+          </select>
+        </div>
+        <div class="col-span-2"><label>Match value</label><input type="text" id="rf-value" placeholder="e.g. Stripe, Whitford House, zoom.us"></div>
+        <div>
+          <label>Assign to entity</label>
+          <select id="rf-entity" onchange="refreshRuleCategoryOptions()">
+            <option value="coaching_business">Coaching Business</option>
+            <option value="airbnb_activity">Whitford House</option>
+            <option value="family_personal">Family / Personal</option>
+          </select>
+        </div>
+        <div>
+          <label>Tax category</label>
+          <select id="rf-category"></select>
+        </div>
+        <div>
+          <label>Priority (higher = first)</label>
+          <input type="number" id="rf-priority" value="0" min="0" max="100">
+        </div>
+        <div class="flex items-end gap-4">
+          <button class="btn btn-primary" onclick="saveRule()">Save Rule</button>
+          <button class="btn btn-ghost" onclick="hideRuleForm()">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card p-0 overflow-hidden">
+      <table>
+        <thead><tr>
+          <th class="pl-6 py-3">Name</th>
+          <th>Match</th>
+          <th>Entity</th>
+          <th>Category</th>
+          <th>Priority</th>
+          <th>Active</th>
+          <th class="pr-6">Actions</th>
+        </tr></thead>
+        <tbody id="rules-body">
+          <tr><td colspan="7" class="text-center py-10 text-slate-400 pl-6">No rules yet. Rules run before AI — they are fast and 100% reliable.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── Tiller Import ─────────────────────────────────────────────────── -->
+  <section data-section="tiller" class="p-8 max-w-3xl mx-auto">
+    <h2 class="text-xl font-bold mb-1">🌱 Import from Tiller</h2>
+    <p class="text-slate-500 text-sm mb-6">Upload your Tiller transaction export so we can learn from the categories you already assigned and turn repeated patterns into future-ready rules.</p>
+
+    <div class="bg-indigo-50 border border-indigo-200 rounded-xl p-4 mb-6 text-sm text-indigo-800">
+      <div class="font-semibold mb-2">How this works</div>
+      <ul class="space-y-1 list-disc list-inside text-indigo-700">
+        <li>Column D categories are treated as your ground-truth labels</li>
+        <li>Repeated labeled merchants are turned into reusable rules for future imports and syncs</li>
+        <li>Imported transactions are also stored as historical examples for the AI classifier</li>
+        <li>Transactions with <code class="bg-indigo-100 px-1 rounded">c -</code> prefix → Coaching Business (Schedule C)</li>
+        <li>Transactions with <code class="bg-indigo-100 px-1 rounded">m -</code> or <code class="bg-indigo-100 px-1 rounded">w -</code> prefix → Whitford House / Rental Activity</li>
+        <li>All other categorized transactions → Family / Personal</li>
+        <li>Transfers, payments, and uncategorized rows are skipped</li>
+      </ul>
+    </div>
+
+    <div class="card mb-4">
+      <h3 class="font-semibold mb-4">Upload Tiller Export</h3>
+      <p class="text-sm text-slate-500 mb-4">Export from Tiller: <em>Transactions</em> sheet → File → Download → CSV</p>
+      <div class="border-2 border-dashed border-slate-300 rounded-lg p-8 text-center mb-4">
+        <input type="file" id="tiller-file" accept=".csv" class="hidden" onchange="handleTillerFileSelect(this)">
+        <div class="text-slate-400 mb-2">🌱 Drop your Tiller CSV here or</div>
+        <button class="btn btn-ghost" onclick="document.getElementById('tiller-file').click()">Choose file</button>
+        <div id="tiller-filename" class="mt-2 text-sm text-indigo-600 font-medium"></div>
+      </div>
+      <button class="btn btn-primary" onclick="doTillerImport()">🌱 Import Tiller Data</button>
+      <div id="tiller-result" class="mt-4 hidden"></div>
+    </div>
+
+    <details class="card">
+      <summary class="font-semibold cursor-pointer">Category mapping reference</summary>
+      <div class="mt-4 grid grid-cols-2 gap-6 text-sm">
+        <div>
+          <div class="font-medium text-indigo-700 mb-2">c - prefix → Coaching (Schedule C)</div>
+          <div class="space-y-0.5 text-slate-600 text-xs">
+            <div>c - advertising → Advertising</div>
+            <div>c - gross receipts → Income</div>
+            <div>c - contract labor → Contract Labor</div>
+            <div>c - commissions & fees → Commissions</div>
+            <div>c - office expenses → Office Expense</div>
+            <div>c - supplies → Supplies</div>
+            <div>c - travel → Travel</div>
+            <div>c - meals & entertainment → Meals</div>
+            <div>c - utilities → Utilities</div>
+            <div>c - legal & professional svcs → Legal</div>
+            <div>c - dues & subscriptions → Office Expense</div>
+            <div>c - rent or lease → Rent/Lease</div>
+            <div>c - car & truck expenses → Car & Truck</div>
+            <div>… and 10 more</div>
+          </div>
+        </div>
+        <div>
+          <div class="font-medium text-emerald-700 mb-2">m - / w - prefix → Whitford House / Rental</div>
+          <div class="space-y-0.5 text-slate-600 text-xs">
+            <div>m - rental income → Rental Income</div>
+            <div>w - rental income - main house → Rental Income</div>
+            <div>w - rental income - guest house → Rental Income</div>
+            <div>m - mortgage → Mortgage Interest</div>
+            <div>m - repairs and maintenance → Repairs</div>
+            <div>w - insurance → Insurance</div>
+            <div>w - property tax → Taxes</div>
+            <div>w - utilities → Utilities</div>
+            <div>w - depreciation (furniture) → Depreciation</div>
+            <div>… and more</div>
+          </div>
+          <div class="font-medium text-slate-600 mt-3 mb-2">Skipped automatically</div>
+          <div class="text-xs text-slate-500">Transfer, Credit Card Payment, Paycheck, Check, Reimbursement, Returned Purchase, Investments, and other non-expense rows</div>
+        </div>
+      </div>
+    </details>
+  </section>
+
+  <!-- ── Import ─────────────────────────────────────────────────────────── -->
+  <section data-section="import" class="p-8 max-w-3xl mx-auto">
+    <h2 class="text-xl font-bold mb-1">Step 1: CSV Imports</h2>
+    <p class="text-slate-500 text-sm mb-6" id="import-subtitle">Upload CSV exports for the active tax year. Venmo and Amazon imports update the Step 1 checklist automatically.</p>
+
+    <div class="card mb-4">
+      <h3 class="font-semibold mb-4">Upload CSV File</h3>
+      <div class="grid grid-cols-2 gap-4 mb-4">
+        <div>
+          <label>Format</label>
+          <select id="import-format">
+            <option value="auto">Auto-detect</option>
+            <option value="chase">Chase</option>
+            <option value="venmo">Venmo</option>
+            <option value="amex">American Express</option>
+            <option value="amazon">Amazon order history</option>
+            <option value="generic">Generic (date, amount, description)</option>
+          </select>
+        </div>
+        <div>
+          <label>Link to account (optional)</label>
+          <select id="import-account">
+            <option value="">— None —</option>
+          </select>
+        </div>
+      </div>
+      <div class="border-2 border-dashed border-slate-300 rounded-lg p-8 text-center mb-4">
+        <input type="file" id="import-file" accept=".csv" class="hidden" onchange="handleFileSelect(this)">
+        <div class="text-slate-400 mb-2">📄 Drop CSV file here or</div>
+        <button class="btn btn-ghost" onclick="document.getElementById('import-file').click()">Choose file</button>
+        <div id="import-filename" class="mt-2 text-sm text-indigo-600 font-medium"></div>
+      </div>
+      <button class="btn btn-primary" onclick="doImport()">📥 Import</button>
+      <div id="import-result" class="mt-4 hidden"></div>
+    </div>
+
+    <details class="card">
+      <summary class="font-semibold cursor-pointer">CSV Format Guide</summary>
+      <div class="mt-4 space-y-4 text-sm">
+        <div>
+          <div class="font-medium text-slate-700 mb-1">Chase Bank Export</div>
+          <code class="block bg-slate-50 p-3 rounded text-xs text-slate-600">Transaction Date, Post Date, Description, Category, Type, Amount, Memo</code>
+        </div>
+        <div>
+          <div class="font-medium text-slate-700 mb-1">Venmo Export</div>
+          <code class="block bg-slate-50 p-3 rounded text-xs text-slate-600">ID, Datetime, Type, Status, Note, From, To, Amount (total), Amount (fee), Tax Amount, ...</code>
+        </div>
+        <div>
+          <div class="font-medium text-slate-700 mb-1">American Express Export</div>
+          <code class="block bg-slate-50 p-3 rounded text-xs text-slate-600">Date, Description, Amount, Extended Details, Appears On Statement As, ...</code>
+        </div>
+        <div>
+          <div class="font-medium text-slate-700 mb-1">Amazon order history</div>
+          <code class="block bg-slate-50 p-3 rounded text-xs text-slate-600">Order Date, Order ID, Shipment Date, Product Name, Total Owed, Ship To, Shipping Address, Seller, ...</code>
+        </div>
+        <div>
+          <div class="font-medium text-slate-700 mb-1">Generic (any bank)</div>
+          <code class="block bg-slate-50 p-3 rounded text-xs text-slate-600">date, amount, description  (minimum required columns — auto-detected)</code>
+        </div>
+        <div class="bg-indigo-50 p-3 rounded text-indigo-700">
+          <strong>Tip:</strong> Importing pre-classified transactions improves AI accuracy. After importing, classify transactions manually via the Review Queue — the AI will use your decisions as examples for future transactions from the same merchants.
+        </div>
+      </div>
+    </details>
+  </section>
+
+  <!-- ── Reports ────────────────────────────────────────────────────────── -->
+  <section data-section="reports" class="p-8 max-w-5xl mx-auto">
+    <div class="flex items-center justify-between mb-6">
+      <div>
+        <h2 class="text-xl font-bold">Step 3: Reports</h2>
+        <p class="text-slate-500 text-sm mt-0.5">Schedule C, Schedule E, and full transaction export for the active tax year.</p>
+      </div>
+      <div class="flex items-center gap-3">
+        <label class="mb-0 text-slate-500 text-sm">Tax year</label>
+        <select id="report-year" class="w-32" onchange="loadReports()"></select>
+      </div>
+    </div>
+
+    <!-- Summary stats -->
+    <div class="grid grid-cols-3 gap-4 mb-6" id="report-summary-cards">
+      <div class="stat-card"><div class="text-2xl font-bold text-indigo-600" id="rs-coaching">—</div><div class="text-sm text-slate-500 mt-1">Coaching net profit</div></div>
+      <div class="stat-card"><div class="text-2xl font-bold text-emerald-600" id="rs-airbnb">—</div><div class="text-sm text-slate-500 mt-1">Whitford House net income</div></div>
+      <div class="stat-card"><div class="text-2xl font-bold text-slate-600" id="rs-review">—</div><div class="text-sm text-slate-500 mt-1">Pending review items</div></div>
+    </div>
+
+    <!-- Schedule C -->
+    <div class="card mb-4">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="font-semibold">Schedule C — Coaching Business</h3>
+        <button class="btn btn-ghost text-xs" onclick="exportCSV('coaching_business')">⬇ Export CSV</button>
+      </div>
+      <table id="schc-table">
+        <thead><tr><th class="pl-0">Category</th><th>Form Line</th><th class="text-right pr-0">Total</th></tr></thead>
+        <tbody id="schc-body"><tr><td colspan="3" class="text-center py-8 text-slate-400">Load reports to view data.</td></tr></tbody>
+        <tfoot id="schc-foot"></tfoot>
+      </table>
+    </div>
+
+    <!-- Schedule E -->
+    <div class="card mb-4">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="font-semibold">Schedule E — Whitford House</h3>
+        <button class="btn btn-ghost text-xs" onclick="exportCSV('airbnb_activity')">⬇ Export CSV</button>
+      </div>
+      <table id="sche-table">
+        <thead><tr><th class="pl-0">Category</th><th>Form Line</th><th class="text-right pr-0">Total</th></tr></thead>
+        <tbody id="sche-body"><tr><td colspan="3" class="text-center py-8 text-slate-400">Load reports to view data.</td></tr></tbody>
+        <tfoot id="sche-foot"></tfoot>
+      </table>
+    </div>
+
+    <!-- Export + Snapshot -->
+    <div class="flex gap-3">
+      <button class="btn btn-ghost" onclick="exportCSV()">⬇ Export All Transactions (CSV)</button>
+      <button class="btn btn-success" onclick="doSnapshot()">🔒 Create Filing Snapshot</button>
+    </div>
+  </section>
+
+</main>
+
+<script>
+// ── State ────────────────────────────────────────────────────────────────────
+const S = {
+  userId:       localStorage.getItem('tax_user_id'),
+  userName:     localStorage.getItem('tax_user_name'),
+  bankProvider: localStorage.getItem('tax_bank_provider'),
+  bankConfig:   null,
+  workflow:     null,
+  section:      'accounts',
+  reviewOffset: 0,
+  reviewTotal:  0,
+  reviewLimit:  20,
+  reviewItems: [],
+  reviewSelectedIds: new Set(),
+  reviewSelectedAllFiltered: false,
+  editingRuleId: null,
+};
+
+// ── Category maps (mirrors src/types.ts) ─────────────────────────────────────
+const CATEGORIES = {
+  coaching_business: {
+    income: 'Gross receipts / income',
+    advertising: 'Advertising',
+    car_and_truck: 'Car and truck',
+    commissions_and_fees: 'Commissions and fees',
+    contract_labor: 'Contract labor',
+    depreciation: 'Depreciation',
+    insurance: 'Insurance',
+    interest_mortgage: 'Interest – mortgage',
+    interest_other: 'Interest – other',
+    legal_professional: 'Legal and professional',
+    office_expense: 'Office expense',
+    rent_lease_vehicle: 'Rent/lease – vehicles',
+    rent_lease_property: 'Rent/lease – property',
+    repairs_maintenance: 'Repairs and maintenance',
+    supplies: 'Supplies',
+    taxes_licenses: 'Taxes and licenses',
+    travel: 'Travel',
+    meals: 'Meals (50%)',
+    utilities: 'Utilities',
+    wages: 'Wages',
+    other_expenses: 'Other expenses',
+  },
+  airbnb_activity: {
+    rental_income: 'Rental income',
+    advertising_rental: 'Advertising',
+    auto_travel: 'Auto and travel',
+    cleaning_maintenance: 'Cleaning and maintenance',
+    commissions: 'Commissions (platform fees)',
+    insurance_rental: 'Insurance',
+    legal_professional_r: 'Legal and professional',
+    management_fees: 'Management fees',
+    mortgage_interest: 'Mortgage interest',
+    other_interest: 'Other interest',
+    repairs_rental: 'Repairs',
+    supplies_rental: 'Supplies',
+    taxes_rental: 'Taxes',
+    utilities_rental: 'Utilities',
+    depreciation_rental: 'Depreciation',
+    other_rental: 'Other expenses',
+  },
+  family_personal: {
+    groceries: 'Groceries',
+    dining_out: 'Dining out',
+    entertainment: 'Entertainment',
+    healthcare: 'Healthcare',
+    housing: 'Housing',
+    transportation: 'Transportation',
+    education: 'Education',
+    personal_care: 'Personal care',
+    shopping: 'Shopping',
+    subscriptions: 'Subscriptions',
+    charitable_giving: 'Charitable giving',
+    potentially_deductible: 'Potentially deductible',
+    other_personal: 'Other personal',
+  },
+};
+
+const ENTITY_LABELS = {
+  coaching_business: 'Coaching',
+  airbnb_activity: 'Whitford House',
+  family_personal: 'Family',
+};
+
+const UNCATEGORIZED_FILTER = '__uncategorized__';
+const DEFAULT_TAX_YEAR_TEMPLATE = [
+  { item_key: 'elyse-venmo', label: 'Elyse Venmo', source_type: 'csv', provider: 'manual', account_name: 'Elyse Venmo', create_manual_account: true, manual_account_subtype: 'venmo', sort_order: 1 },
+  { item_key: 'jeremy-venmo', label: 'Jeremy Venmo', source_type: 'csv', provider: 'manual', account_name: 'Jeremy Venmo', create_manual_account: true, manual_account_subtype: 'venmo', sort_order: 2 },
+  { item_key: 'wf-whitford', label: 'Wells Fargo Whitford Checking', source_type: 'teller', provider: 'teller', account_name: 'Wells Fargo Whitford Checking', sort_order: 3 },
+  { item_key: 'wf-elyse', label: 'Wells Fargo Elyse Checking', source_type: 'teller', provider: 'teller', account_name: 'Wells Fargo Elyse Checking', sort_order: 4 },
+  { item_key: 'wf-joint', label: 'Wells Fargo Joint Checking 3567', source_type: 'teller', provider: 'teller', account_name: 'Wells Fargo Joint Checking 3567', sort_order: 5 },
+  { item_key: 'wf-jeremy', label: 'Wells Fargo Jeremy Checking 0502', source_type: 'teller', provider: 'teller', account_name: 'Wells Fargo Jeremy Checking 0502', sort_order: 6 },
+  { item_key: 'chase-whitford', label: 'Chase 9026 Card - Whitford', source_type: 'teller', provider: 'teller', account_name: 'Chase 9026 Card - Whitford', sort_order: 7 },
+  { item_key: 'chase-jeremy', label: 'Chase 4804 Card - Jeremy', source_type: 'teller', provider: 'teller', account_name: 'Chase 4804 Card - Jeremy', sort_order: 8 },
+  { item_key: 'chase-united', label: 'Chase United MP Card - Family', source_type: 'teller', provider: 'teller', account_name: 'Chase United MP Card - Family', sort_order: 9 },
+  { item_key: 'delta-skymiles', label: 'Delta SkyMiles - Elyse Coaching', source_type: 'teller', provider: 'teller', account_name: 'Delta SkyMiles - Elyse Coaching', sort_order: 10 },
+  { item_key: 'amazon', label: 'Amazon - to fill in info on credit card charges', source_type: 'amazon', provider: 'manual', account_name: null, sort_order: 11 },
+  { item_key: 'patelco', label: 'Patelco - Edna Mortgage + HELOC', source_type: 'teller', provider: 'teller', account_name: 'Patelco - Edna Mortgage + HELOC', sort_order: 12 },
+  { item_key: 'fidelity', label: 'Fidelity - 401k Plans + Stock Account', source_type: 'teller', provider: 'teller', account_name: 'Fidelity - 401k Plans + Stock Account', sort_order: 13 },
+  { item_key: 'nw-mutual', label: 'NW Mutual - IRAs', source_type: 'teller', provider: 'teller', account_name: 'NW Mutual - IRAs', sort_order: 14 },
+];
+
+// ── API helper ────────────────────────────────────────────────────────────────
+async function api(method, path, body, isForm = false) {
+  const headers = {};
+  if (S.userId) headers['X-User-Id'] = S.userId;
+  if (body && !isForm) headers['Content-Type'] = 'application/json';
+  const res = await fetch(path, {
+    method,
+    headers,
+    body: isForm ? body : (body ? JSON.stringify(body) : undefined),
+  });
+  const ct = res.headers.get('Content-Type') || '';
+  if (ct.includes('text/csv')) return res.blob();
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+function toast(msg, type = 'success') {
+  const colors = { success: 'bg-emerald-600', error: 'bg-red-600', info: 'bg-indigo-600' };
+  const t = document.createElement('div');
+  t.className = `${colors[type] || colors.info} text-white text-sm px-4 py-3 rounded-lg shadow-lg flex items-center gap-2`;
+  t.innerHTML = `<span class="flex-1">${escHtml(msg)}</span><button onclick="this.parentElement.remove()" class="opacity-70 hover:opacity-100">✕</button>`;
+  document.getElementById('toasts').prepend(t);
+  setTimeout(() => t.remove(), 5000);
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function populateReviewCategoryFilter() {
+  const sel = document.getElementById('review-category-filter');
+  const current = sel.value;
+
+  const options = ['<option value="">All categories</option>', `<option value="${UNCATEGORIZED_FILTER}">Uncategorized</option>`];
+  Object.entries(CATEGORIES).forEach(([entity, categories]) => {
+    const group = Object.entries(categories)
+      .map(([key, label]) => `<option value="${key}">${escHtml(ENTITY_LABELS[entity])}: ${escHtml(label)}</option>`)
+      .join('');
+    options.push(`<optgroup label="${escHtml(ENTITY_LABELS[entity])}">${group}</optgroup>`);
+  });
+
+  sel.innerHTML = options.join('');
+  sel.value = Array.from(sel.options).some(option => option.value === current) ? current : '';
+}
+
+function labelForCategoryFilter(category) {
+  if (category === UNCATEGORIZED_FILTER) return 'Uncategorized';
+  for (const [entity, categories] of Object.entries(CATEGORIES)) {
+    if (categories[category]) return `${ENTITY_LABELS[entity]}: ${categories[category]}`;
+  }
+  return category;
+}
+
+function requiresActiveWorkflow(section) {
+  return ['sync', 'review', 'import', 'reports'].includes(section);
+}
+
+function isSectionUnlocked(section) {
+  if (!S.workflow?.workflow) return false;
+  if (section === 'review') return Boolean(S.workflow.steps?.classify_unlocked);
+  if (section === 'reports') return Boolean(S.workflow.steps?.reports_unlocked);
+  return true;
+}
+
+function sectionLockedMessage(section) {
+  if (!S.workflow?.workflow) return 'Create a tax year first.';
+  if (section === 'review') return 'Finish Step 1 by importing every account on the checklist first.';
+  if (section === 'reports') return 'Finish classification for the active tax year before opening reports.';
+  return 'Create a tax year first.';
+}
+
+async function loadTaxWorkflow() {
+  if (!S.userId) return;
+  try {
+    const res = await api('GET', '/workflow/tax-year');
+    S.workflow = res;
+    renderTaxWorkflow();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+function renderTaxWorkflow() {
+  const workflow = S.workflow?.workflow || null;
+  const progress = S.workflow?.progress || {};
+  const checklistItems = S.workflow?.checklist_items || [];
+  const hasWorkflow = Boolean(workflow);
+  const completed = progress.completed_items || 0;
+  const total = progress.total_items || 0;
+  const pendingReview = progress.pending_review_count || 0;
+
+  document.getElementById('tax-year-label').textContent = hasWorkflow ? workflow.tax_year : '—';
+  document.getElementById('tax-year-status').textContent = hasWorkflow
+    ? `Active workflow for ${workflow.tax_year}.`
+    : 'Create a tax year to start Step 1.';
+  document.getElementById('tax-year-progress').textContent = `${completed} / ${total}`;
+  document.getElementById('tax-year-progress-note').textContent = hasWorkflow
+    ? `${progress.pending_items || 0} checklist item(s) left.`
+    : 'No checklist yet.';
+  document.getElementById('tax-year-next-step').textContent = !hasWorkflow
+    ? 'Step 1'
+    : (S.workflow.steps?.reports_unlocked ? 'Reports ready' : S.workflow.steps?.classify_unlocked ? 'Step 2' : 'Step 1');
+  document.getElementById('tax-year-next-step-note').textContent = !hasWorkflow
+    ? 'Import every account for the full year.'
+    : (S.workflow.steps?.reports_unlocked
+      ? 'Reports are unlocked for this tax year.'
+      : S.workflow.steps?.classify_unlocked
+        ? `${pendingReview} review item(s) still pending for Step 2.`
+        : 'Complete every Step 1 import item to unlock classification.');
+
+  document.getElementById('checklist-subtitle').textContent = hasWorkflow
+    ? `Everything below should be imported for tax year ${workflow.tax_year}.`
+    : 'Create a tax year to generate the import checklist.';
+  document.getElementById('checklist-summary').textContent = `${completed} complete · ${Math.max(0, total - completed)} remaining`;
+  document.getElementById('sync-subtitle').textContent = hasWorkflow
+    ? `Pull the full ${workflow.tax_year} tax year from all connected Teller or Plaid accounts.`
+    : 'Pull the full tax year from all connected accounts.';
+  document.getElementById('sync-year-note').textContent = hasWorkflow
+    ? `This sync always pulls the full year: ${workflow.tax_year}-01-01 through ${workflow.tax_year}-12-31.`
+    : 'Create a tax year first.';
+  document.getElementById('import-subtitle').textContent = hasWorkflow
+    ? `Upload CSV exports for ${workflow.tax_year}. Venmo and Amazon imports will check off Step 1 automatically.`
+    : 'Upload CSV exports for the active tax year.';
+  document.getElementById('review-subtitle').textContent = hasWorkflow
+    ? `Transactions waiting to be classified or reviewed for tax year ${workflow.tax_year}.`
+    : 'Transactions waiting to be classified or reviewed for the active tax year.';
+
+  const reportYear = document.getElementById('report-year');
+  if (hasWorkflow) reportYear.value = String(workflow.tax_year);
+  document.getElementById('new-tax-year').value = hasWorkflow ? workflow.tax_year : (S.workflow?.recommended_tax_year || '');
+
+  const emptyEl = document.getElementById('checklist-empty');
+  const listEl = document.getElementById('checklist-list');
+  if (!checklistItems.length) {
+    emptyEl.classList.remove('hidden');
+    listEl.classList.add('hidden');
+    listEl.innerHTML = '';
+  } else {
+    emptyEl.classList.add('hidden');
+    listEl.classList.remove('hidden');
+    listEl.innerHTML = checklistItems.map(item => `
+      <div class="flex items-center justify-between rounded-lg border ${item.is_completed ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-slate-50'} px-4 py-3">
+        <div class="flex items-center gap-3">
+          <div class="h-5 w-5 rounded-full ${item.is_completed ? 'bg-emerald-600' : 'bg-slate-300'}"></div>
+          <div>
+            <div class="font-medium text-slate-800">${escHtml(item.label)}</div>
+            <div class="text-xs text-slate-500 uppercase tracking-wide">${escHtml(item.source_type)}${item.provider ? ` · ${escHtml(item.provider)}` : ''}${item.account_name ? ` · ${escHtml(item.account_name)}` : ''}</div>
+          </div>
+        </div>
+        <div class="text-xs font-medium ${item.is_completed ? 'text-emerald-700' : 'text-slate-500'}">
+          ${item.is_completed ? 'Imported' : 'Waiting'}
+        </div>
+      </div>`).join('');
+  }
+
+  updateNavLocks();
+}
+
+function updateNavLocks() {
+  document.querySelectorAll('[data-nav]').forEach(el => {
+    const section = el.dataset.nav;
+    const locked = requiresActiveWorkflow(section) && !isSectionUnlocked(section);
+    el.classList.toggle('opacity-50', locked);
+  });
+}
+
+// ── Navigation ────────────────────────────────────────────────────────────────
+function nav(section) {
+  if (!S.userId && section !== 'setup') { nav('setup'); return; }
+  if (requiresActiveWorkflow(section) && !isSectionUnlocked(section)) {
+    toast(sectionLockedMessage(section), 'info');
+    section = 'accounts';
+  }
+  S.section = section;
+  document.querySelectorAll('[data-section]').forEach(el =>
+    el.classList.toggle('active', el.dataset.section === section));
+  document.querySelectorAll('[data-nav]').forEach(el =>
+    el.classList.toggle('active', el.dataset.nav === section));
+  const loaders = { accounts: loadAccounts, sync: loadImports, review: loadReview, rules: loadRules, reports: loadReports, import: loadImportAccounts, tiller: () => {} };
+  loaders[section]?.();
+}
+
+function doLogout() {
+  localStorage.removeItem('tax_user_id');
+  localStorage.removeItem('tax_user_name');
+  S.userId = null; S.userName = null; S.workflow = null; S.bankConfig = null;
+  nav('setup');
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+(async function init() {
+  // Populate year selector
+  const yearSel = document.getElementById('report-year');
+  const cy = new Date().getFullYear();
+  for (let y = cy; y >= cy - 4; y--) {
+    const o = document.createElement('option');
+    o.value = y; o.textContent = y;
+    if (y === cy - 1) o.selected = true;
+    yearSel.appendChild(o);
+  }
+
+  // Default rule category dropdown
+  refreshRuleCategoryOptions();
+  populateReviewCategoryFilter();
+  refreshBulkReviewCats();
+  document.getElementById('new-tax-year').value = new Date().getFullYear() - 1;
+
+  if (S.userId) {
+    document.getElementById('user-badge').textContent = S.userName || S.userId.slice(0, 8);
+    try {
+      await ensureBankConfig();
+      await loadTaxWorkflow();
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+    nav('accounts');
+  } else {
+    // Hide nav, show setup
+    document.getElementById('sidebar-nav').classList.add('opacity-30', 'pointer-events-none');
+    nav('setup');
+  }
+})();
+
+// ── Setup ─────────────────────────────────────────────────────────────────────
+async function doSetup(e) {
+  e.preventDefault();
+  const name  = document.getElementById('setup-name').value.trim();
+  const email = document.getElementById('setup-email').value.trim();
+  try {
+    const res = await api('POST', '/setup', { name, email });
+    S.userId   = res.user.id;
+    S.userName = res.user.name;
+    localStorage.setItem('tax_user_id', S.userId);
+    localStorage.setItem('tax_user_name', S.userName);
+    document.getElementById('user-badge').textContent = S.userName;
+    document.getElementById('sidebar-nav').classList.remove('opacity-30', 'pointer-events-none');
+    toast('Profile created! Connect your accounts to get started.');
+    await loadTaxWorkflow();
+    nav('accounts');
+  } catch(err) { toast(err.message, 'error'); }
+}
+
+async function createTaxYear() {
+  const taxYear = parseInt(document.getElementById('new-tax-year').value, 10);
+  if (!taxYear) {
+    toast('Choose a tax year first.', 'error');
+    return;
+  }
+
+  try {
+    const res = await api('POST', '/workflow/tax-year', {
+      tax_year: taxYear,
+      checklist_items: DEFAULT_TAX_YEAR_TEMPLATE,
+    });
+    S.workflow = res;
+    renderTaxWorkflow();
+    await Promise.all([loadAccounts(), loadImportAccounts(), loadImports()]);
+    toast(res.message || `Tax year ${taxYear} is ready.`);
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+// ── Accounts ──────────────────────────────────────────────────────────────────
+async function ensureBankConfig(preferredProvider = S.bankProvider) {
+  const path = preferredProvider
+    ? `/bank/config?provider=${encodeURIComponent(preferredProvider)}`
+    : '/bank/config';
+
+  try {
+    const res = await api('GET', path);
+    S.bankConfig = res;
+    S.bankProvider = res.current_provider;
+    localStorage.setItem('tax_bank_provider', S.bankProvider);
+    renderBankProviderControls();
+    return res;
+  } catch (err) {
+    if (preferredProvider) {
+      localStorage.removeItem('tax_bank_provider');
+      S.bankProvider = null;
+      return ensureBankConfig(null);
+    }
+    throw err;
+  }
+}
+
+function renderBankProviderControls() {
+  if (!S.bankConfig) return;
+
+  const select = document.getElementById('bank-provider');
+  const hint = document.getElementById('bank-provider-hint');
+  const sandboxBtn = document.getElementById('bank-sandbox-btn');
+  const provider = S.bankProvider || S.bankConfig.current_provider || S.bankConfig.default_provider || 'plaid';
+  const providerInfo = S.bankConfig.providers?.[provider];
+  const available = new Set(S.bankConfig.available_providers || []);
+
+  Array.from(select.options).forEach(option => {
+    option.disabled = !available.has(option.value);
+  });
+  select.value = provider;
+
+  if (provider === 'teller') {
+    hint.textContent = `Teller ${providerInfo?.environment || 'sandbox'} via Teller Connect`;
+    sandboxBtn.textContent = '🧪 Teller Sandbox';
+  } else {
+    hint.textContent = `Plaid ${providerInfo?.environment || 'sandbox'} connection`;
+    sandboxBtn.textContent = '🧪 Add Sandbox Account';
+  }
+
+  sandboxBtn.disabled = !providerInfo?.sandbox_shortcut;
+}
+
+async function setBankProvider(provider) {
+  S.bankProvider = provider;
+  localStorage.setItem('tax_bank_provider', provider);
+  try {
+    await ensureBankConfig(provider);
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+async function loadAccounts() {
+  try {
+    await ensureBankConfig();
+    await loadTaxWorkflow();
+    const res = await api('GET', '/accounts');
+    renderAccounts(res.accounts);
+  } catch(err) { toast(err.message, 'error'); }
+}
+
+function renderAccounts(accounts) {
+  const tbody = document.getElementById('accounts-body');
+  if (!accounts.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="text-center py-12 text-slate-400 pl-6">No accounts connected yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = accounts.map(a => `
+    <tr>
+      <td class="pl-6 font-medium">
+        <div>${escHtml(a.institution_name || '—')}</div>
+        <div class="text-xs text-slate-400 uppercase tracking-wide">${escHtml(a.provider || 'plaid')}</div>
+      </td>
+      <td>${escHtml(a.name)}</td>
+      <td class="text-slate-500">${escHtml(a.subtype || a.type || '—')}</td>
+      <td class="text-slate-500">••${escHtml(a.mask || '—')}</td>
+      <td>
+        <select class="w-40 text-xs" onchange="updateAccount('${a.id}', 'owner_tag', this.value)">
+          <option value="" ${!a.owner_tag?'selected':''}>— Unassigned —</option>
+          <option value="coaching_business" ${a.owner_tag==='coaching_business'?'selected':''}>Coaching</option>
+          <option value="airbnb_activity"   ${a.owner_tag==='airbnb_activity'?'selected':''}>Whitford House</option>
+          <option value="family_personal"   ${a.owner_tag==='family_personal'?'selected':''}>Family</option>
+        </select>
+      </td>
+      <td class="pr-6">
+        <button class="text-xs text-red-500 hover:text-red-700" onclick="updateAccount('${a.id}','is_active',false)">Remove</button>
+      </td>
+    </tr>`).join('');
+}
+
+async function updateAccount(id, field, value) {
+  try {
+    await api('PATCH', `/accounts/${id}`, { [field]: value });
+    if (field !== 'owner_tag') loadAccounts();
+  } catch(err) { toast(err.message, 'error'); }
+}
+
+async function connectBank() {
+  try {
+    const config = await ensureBankConfig();
+    if (config.current_provider === 'teller') {
+      await connectTeller();
+      return;
+    }
+
+    await connectPlaid();
+  } catch(err) { toast(err.message, 'error'); }
+}
+
+async function connectPlaid() {
+  try {
+    await loadPlaidScript();
+    const { link_token } = await api('POST', '/bank/connect/start', { provider: 'plaid' });
+    const handler = window.Plaid.create({
+      token: link_token,
+      onSuccess: async (public_token) => {
+        const res = await api('POST', '/bank/connect/complete', { provider: 'plaid', public_token });
+        toast(`Connected ${res.accounts_linked} account(s) from ${res.institution || 'your bank'}.`);
+        loadAccounts();
+      },
+      onExit: (err) => { if (err) toast(err.display_message || 'Plaid closed.', 'info'); },
+    });
+    handler.open();
+  } catch(err) { toast(err.message, 'error'); }
+}
+
+async function connectTeller(showSandboxHint = false) {
+  try {
+    await loadTellerScript();
+    const config = await api('POST', '/bank/connect/start', { provider: 'teller' });
+    if (showSandboxHint && config.environment === 'sandbox') {
+      toast('Teller sandbox is active. Use your Teller sandbox test credentials when prompted.', 'info');
+    }
+
+    const tellerConnect = window.TellerConnect.setup({
+      applicationId: config.application_id,
+      environment: config.environment,
+      products: config.products,
+      selectAccount: config.select_account,
+      onSuccess: async (enrollment) => {
+        try {
+          const accessToken = enrollment?.accessToken || enrollment?.access_token;
+          const enrollmentId = enrollment?.enrollment?.id || enrollment?.enrollmentId || enrollment?.enrollment_id;
+          const institutionName = enrollment?.enrollment?.institution?.name || enrollment?.institution?.name || null;
+          const institutionId = enrollment?.enrollment?.institution?.id || enrollment?.institution?.id || null;
+
+          if (!accessToken || !enrollmentId) {
+            throw new Error('Teller returned an unexpected enrollment payload. Please try again.');
+          }
+
+          const res = await api('POST', '/bank/connect/complete', {
+            provider: 'teller',
+            access_token: accessToken,
+            enrollment_id: enrollmentId,
+            institution_name: institutionName,
+            institution_id: institutionId,
+          });
+          toast(`Connected ${res.accounts_linked} account(s) from ${res.institution || 'your bank'}.`);
+          loadAccounts();
+        } catch (err) {
+          toast(err.message || 'Teller connection could not be saved.', 'error');
+          console.error('Teller connect completion failed:', err, enrollment);
+        }
+      },
+      onExit: () => {},
+      onFailure: (failure) => {
+        if (failure?.message) toast(failure.message, 'error');
+      },
+    });
+
+    tellerConnect.open();
+  } catch(err) { toast(err.message, 'error'); }
+}
+
+async function connectSandboxBank() {
+  try {
+    const config = await ensureBankConfig();
+    if (config.current_provider === 'teller') {
+      await connectTeller(true);
+      return;
+    }
+
+    const institutions = [
+      { id: 'ins_109508', name: 'Chase' },
+      { id: 'ins_109510', name: 'Bank of America' },
+      { id: 'ins_115616', name: 'American Express' },
+    ];
+    const choice = institutions[Math.floor(Math.random() * institutions.length)];
+    const { public_token } = await api('POST', '/plaid/sandbox/public-token', { institution_id: choice.id });
+    const res = await api('POST', '/plaid/exchange-token', { public_token });
+    toast(`Sandbox: connected ${res.accounts_linked} account(s) from ${choice.name}.`);
+    loadAccounts();
+  } catch(err) { toast(err.message, 'error'); }
+}
+
+function loadPlaidScript() {
+  return new Promise((resolve, reject) => {
+    if (window.Plaid) return resolve();
+    const s = document.createElement('script');
+    s.src = 'https://cdn.plaid.com/link/v2/stable/link-initialize.js';
+    s.onload = resolve; s.onerror = () => reject(new Error('Could not load Plaid SDK'));
+    document.head.appendChild(s);
+  });
+}
+
+function loadTellerScript() {
+  return new Promise((resolve, reject) => {
+    if (window.TellerConnect) return resolve();
+    const s = document.createElement('script');
+    s.src = 'https://cdn.teller.io/connect/connect.js';
+    s.onload = resolve; s.onerror = () => reject(new Error('Could not load Teller Connect SDK'));
+    document.head.appendChild(s);
+  });
+}
+
+// ── Sync ──────────────────────────────────────────────────────────────────────
+async function doSync() {
+  if (!S.workflow?.workflow) {
+    toast('Create a tax year first.', 'error');
+    nav('accounts');
+    return;
+  }
+  const resultDiv = document.getElementById('sync-result');
+  resultDiv.className = 'mt-4';
+  resultDiv.innerHTML = '<div class="flex items-center gap-2 text-slate-500"><div class="animate-spin">⏳</div> Syncing — this may take a moment…</div>';
+  try {
+    const config = await ensureBankConfig();
+    let res;
+    let totalImported = 0;
+    let totalDupes = 0;
+    let accountsSynced = 0;
+
+    if (config.current_provider === 'teller') {
+      const accountsRes = await api('GET', '/accounts');
+      const tellerAccountIds = (accountsRes.accounts || [])
+        .filter(account => account.provider === 'teller' && Number(account.is_active) === 1)
+        .map(account => account.id);
+
+      if (!tellerAccountIds.length) {
+        throw new Error('No linked Teller accounts found. Connect an account first.');
+      }
+
+      for (let index = 0; index < tellerAccountIds.length; index++) {
+        resultDiv.innerHTML = `
+          <div class="flex items-center gap-2 text-slate-500">
+            <div class="animate-spin">⏳</div>
+            Syncing Teller account ${index + 1} of ${tellerAccountIds.length}…
+          </div>`;
+
+        const batchRes = await api('POST', '/bank/sync', {
+          provider: 'teller',
+          account_ids: [tellerAccountIds[index]],
+        });
+        totalImported += batchRes.transactions_imported || 0;
+        totalDupes += batchRes.duplicates_skipped || 0;
+        accountsSynced += (batchRes.account_ids_synced || []).length;
+      }
+
+      res = {
+        provider: 'teller',
+        transactions_imported: totalImported,
+        duplicates_skipped: totalDupes,
+        accounts_synced: accountsSynced,
+      };
+    } else {
+      res = await api('POST', '/bank/sync', {
+        provider: config.current_provider,
+      });
+    }
+
+    resultDiv.innerHTML = `
+      <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-4 text-sm">
+        <div class="font-medium text-emerald-800 mb-2">✅ Sync complete</div>
+        <div class="text-emerald-700 capitalize">Provider: <strong>${escHtml(res.provider)}</strong></div>
+        <div class="text-emerald-700">Imported: <strong>${res.transactions_imported}</strong> · Duplicates skipped: <strong>${res.duplicates_skipped}</strong></div>
+        ${res.accounts_synced ? `<div class="text-emerald-700">Accounts synced: <strong>${res.accounts_synced}</strong></div>` : ''}
+        <div class="mt-2 text-emerald-600">Next: <span class="cursor-pointer underline" onclick="nav('review')">Open the review queue →</span></div>
+      </div>`;
+    await Promise.all([loadAccounts(), loadImports(), loadTaxWorkflow()]);
+  } catch(err) {
+    resultDiv.innerHTML = `<div class="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">${escHtml(err.message)}</div>`;
+  }
+}
+
+async function loadImports() {
+  try {
+    const res = await api('GET', '/imports');
+    const tbody = document.getElementById('imports-body');
+    if (!res.imports.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="text-center py-10 text-slate-400 pl-6">No imports yet.</td></tr>';
+      return;
+    }
+    const statusBadge = s => ({
+      completed: '<span class="text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded">Completed</span>',
+      failed:    '<span class="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded">Failed</span>',
+      running:   '<span class="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded">Running</span>',
+      pending:   '<span class="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded">Pending</span>',
+    }[s] || s);
+    tbody.innerHTML = res.imports.map(i => `
+      <tr>
+        <td class="pl-6 text-slate-500 text-xs">${i.created_at.slice(0,16).replace('T',' ')}</td>
+        <td class="capitalize">${i.source}</td>
+        <td class="text-slate-500">${escHtml(i.account_name || '—')}</td>
+        <td>${statusBadge(i.status)}</td>
+        <td class="text-emerald-700 font-medium">${i.transactions_imported}</td>
+        <td class="text-slate-400">${(i.transactions_found - i.transactions_imported) || 0}</td>
+        <td class="pr-6">
+          <button class="btn btn-danger text-xs px-2 py-1" onclick="deleteImport('${i.id}')">Remove</button>
+        </td>
+      </tr>`).join('');
+  } catch(err) { toast(err.message, 'error'); }
+}
+
+async function deleteImport(importId) {
+  if (!confirm('Remove transactions from this import that are not locked in a filing snapshot?')) return;
+  try {
+    const res = await api('DELETE', `/imports/${importId}`);
+    await Promise.all([loadImports(), loadReview()]);
+    const lockedNote = res.locked_transactions_skipped
+      ? ` ${res.locked_transactions_skipped} locked transaction${res.locked_transactions_skipped === 1 ? ' was' : 's were'} kept.`
+      : '';
+    toast(`Removed ${res.transactions_deleted} transaction${res.transactions_deleted === 1 ? '' : 's'} from that import.${lockedNote}`);
+  } catch(err) { toast(err.message, 'error'); }
+}
+
+async function clearImportedTransactions() {
+  if (!confirm('Remove all imported transactions that are not locked in a filing snapshot?')) return;
+  try {
+    const res = await api('DELETE', '/imports');
+    await Promise.all([loadImports(), loadReview()]);
+
+    if (res.transactions_deleted === 0 && res.locked_transactions_skipped === 0) {
+      toast('There were no imported transactions to remove.', 'info');
+      return;
+    }
+
+    const lockedNote = res.locked_transactions_skipped
+      ? ` ${res.locked_transactions_skipped} locked transaction${res.locked_transactions_skipped === 1 ? ' was' : 's were'} kept.`
+      : '';
+    toast(`Removed ${res.transactions_deleted} imported transaction${res.transactions_deleted === 1 ? '' : 's'}.${lockedNote}`);
+  } catch(err) { toast(err.message, 'error'); }
+}
+
+// ── Classify ──────────────────────────────────────────────────────────────────
+async function doClassify() {
+  const resultGrid = document.getElementById('classify-result');
+  const noneDiv    = document.getElementById('classify-none');
+  resultGrid.classList.add('hidden'); noneDiv.classList.add('hidden');
+  toast('Classifying pending unclassified review items.', 'info');
+  try {
+    const res = await api('POST', '/classify/run');
+    if (res.total_processed === 0) {
+      noneDiv.classList.remove('hidden');
+      toast('There are no unclassified review items to classify.', 'info');
+    } else {
+      document.getElementById('cr-total').textContent  = res.total_processed;
+      document.getElementById('cr-rules').textContent  = res.classified_by_rules;
+      document.getElementById('cr-ai').textContent     = res.classified_by_ai;
+      document.getElementById('cr-review').textContent = res.queued_for_review;
+      resultGrid.classList.remove('hidden');
+      await loadReview();
+      if (res.queued_for_review > 0) {
+        toast(`${res.queued_for_review} transactions still need review.`, 'info');
+      } else {
+        toast(`All ${res.total_processed} transactions classified.`);
+      }
+    }
+  } catch(err) { toast(err.message, 'error'); }
+}
+
+// ── Review ────────────────────────────────────────────────────────────────────
+async function loadReview() {
+  const status = document.getElementById('review-status-filter').value;
+  const category = document.getElementById('review-category-filter').value;
+  try {
+    const params = new URLSearchParams({
+      status,
+      limit: String(S.reviewLimit),
+      offset: String(S.reviewOffset),
+    });
+    if (category) params.set('category_tax', category);
+
+    const res = await api('GET', `/review?${params.toString()}`);
+    if (res.total > 0 && S.reviewOffset >= res.total) {
+      S.reviewOffset = Math.max(0, Math.floor((res.total - 1) / S.reviewLimit) * S.reviewLimit);
+      return loadReview();
+    }
+    S.reviewTotal = res.total;
+    S.reviewItems = res.items;
+    syncReviewSelectionWithVisibleItems();
+    document.getElementById('review-subtitle').textContent =
+      `${res.total} ${status} item${res.total !== 1 ? 's' : ''}${category === UNCATEGORIZED_FILTER ? ' in Uncategorized' : ''}`;
+    document.getElementById('review-pagination').textContent =
+      res.total ? `Showing ${S.reviewOffset + 1}–${Math.min(S.reviewOffset + S.reviewLimit, res.total)} of ${res.total}` : 'No items';
+    renderReview(res.items);
+    updateReviewBulkSummary();
+  } catch(err) { toast(err.message, 'error'); }
+}
+
+function resetReviewPage() {
+  S.reviewOffset = 0;
+  S.reviewSelectedIds = new Set();
+  S.reviewSelectedAllFiltered = false;
+  loadReview();
+}
+
+function reviewPage(dir) {
+  const newOff = S.reviewOffset + dir * S.reviewLimit;
+  if (newOff < 0 || newOff >= S.reviewTotal) return;
+  S.reviewOffset = newOff;
+  loadReview();
+}
+
+function usesBankStyleAmounts(item) {
+  const accountType = (item.account_type || '').toLowerCase();
+  const accountSubtype = (item.account_subtype || '').toLowerCase();
+  return accountType === 'depository'
+    || accountSubtype === 'checking'
+    || accountSubtype === 'savings';
+}
+
+function formatReviewAmount(item) {
+  if (item.amount == null) return { text: '—', className: 'text-slate-400' };
+
+  const bankStyle = usesBankStyleAmounts(item);
+  const isPositiveDisplay = bankStyle ? item.amount > 0 : item.amount < 0;
+  return {
+    text: `${isPositiveDisplay ? '+' : '-'}$${Math.abs(item.amount).toFixed(2)}`,
+    className: isPositiveDisplay ? 'text-emerald-600' : 'text-red-600',
+  };
+}
+
+function getVisibleReviewIds() {
+  return (S.reviewItems || []).map(item => item.id);
+}
+
+function syncReviewSelectionWithVisibleItems() {
+  const visibleIds = new Set(getVisibleReviewIds());
+  S.reviewSelectedIds = new Set(Array.from(S.reviewSelectedIds).filter(id => visibleIds.has(id)));
+  updateReviewSelectAllState();
+}
+
+function updateReviewSelectAllState() {
+  const selectAll = document.getElementById('review-select-all');
+  if (!selectAll) return;
+  const visibleIds = getVisibleReviewIds();
+  const selectedVisible = visibleIds.filter(id => S.reviewSelectedIds.has(id)).length;
+  selectAll.checked = visibleIds.length > 0 && selectedVisible === visibleIds.length;
+  selectAll.indeterminate = selectedVisible > 0 && selectedVisible < visibleIds.length;
+}
+
+function updateReviewBulkSummary() {
+  const summary = document.getElementById('review-bulk-summary');
+  const status = document.getElementById('review-status-filter').value;
+  const category = document.getElementById('review-category-filter').value;
+  const selectedCount = S.reviewSelectedIds.size;
+  const selectedScope = S.reviewSelectedAllFiltered
+    ? `All ${S.reviewTotal} filtered ${status} item${S.reviewTotal !== 1 ? 's' : ''} will be targeted.`
+    : `${selectedCount} visible item${selectedCount !== 1 ? 's' : ''} selected.`;
+  const categoryScope = category === UNCATEGORIZED_FILTER
+    ? ' Filter is set to Uncategorized.'
+    : category ? ` Filter is set to ${labelForCategoryFilter(category)}.` : '';
+  summary.textContent = `${selectedScope}${categoryScope}`;
+
+  const pendingOnly = status === 'pending';
+  const reopenable = status === 'resolved' || status === 'skipped';
+  const hasTarget = S.reviewSelectedAllFiltered || selectedCount > 0;
+  document.getElementById('review-bulk-accept-btn').disabled = !pendingOnly || !hasTarget;
+  document.getElementById('review-bulk-reclassify-btn').disabled = !pendingOnly || !hasTarget;
+  document.getElementById('review-bulk-accept-filtered-btn').disabled = !pendingOnly || S.reviewTotal === 0;
+  document.getElementById('review-bulk-reclassify-filtered-btn').disabled = !pendingOnly || S.reviewTotal === 0;
+  document.getElementById('review-bulk-reopen-btn').disabled = !reopenable || !hasTarget;
+  document.getElementById('review-bulk-reopen-filtered-btn').disabled = !reopenable || S.reviewTotal === 0;
+}
+
+function toggleReviewSelection(id, checked) {
+  if (checked) S.reviewSelectedIds.add(id);
+  else S.reviewSelectedIds.delete(id);
+  S.reviewSelectedAllFiltered = false;
+  updateReviewSelectAllState();
+  updateReviewBulkSummary();
+}
+
+function setSelectAllVisibleReview(checked) {
+  getVisibleReviewIds().forEach(id => {
+    if (checked) S.reviewSelectedIds.add(id);
+    else S.reviewSelectedIds.delete(id);
+  });
+  S.reviewSelectedAllFiltered = false;
+  renderReview(S.reviewItems || []);
+  updateReviewBulkSummary();
+}
+
+function toggleSelectAllVisibleReview() {
+  const visibleIds = getVisibleReviewIds();
+  const allSelected = visibleIds.length > 0 && visibleIds.every(id => S.reviewSelectedIds.has(id));
+  setSelectAllVisibleReview(!allSelected);
+}
+
+function selectAllFilteredReview() {
+  S.reviewSelectedIds = new Set(getVisibleReviewIds());
+  S.reviewSelectedAllFiltered = true;
+  renderReview(S.reviewItems || []);
+  updateReviewBulkSummary();
+}
+
+function clearReviewSelection() {
+  S.reviewSelectedIds = new Set();
+  S.reviewSelectedAllFiltered = false;
+  renderReview(S.reviewItems || []);
+  updateReviewBulkSummary();
+}
+
+function refreshBulkReviewCats() {
+  const entity = document.getElementById('review-bulk-entity').value;
+  const sel = document.getElementById('review-bulk-category');
+  sel.innerHTML = Object.entries(CATEGORIES[entity] || {})
+    .map(([k, v]) => `<option value="${k}">${escHtml(v)}</option>`).join('');
+}
+
+function renderReview(items) {
+  const tbody = document.getElementById('review-body');
+  if (!items.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="text-center py-12 text-slate-400 pl-6">No review items match these filters.</td></tr>';
+    updateReviewSelectAllState();
+    return;
+  }
+  tbody.innerHTML = items.map(item => {
+    const isUnclassified = item.reason === 'unclassified';
+    const displayConfidence = item.confidence != null ? item.confidence : item.current_confidence;
+    const conf = displayConfidence != null ? (displayConfidence * 100).toFixed(0) + '%' : '—';
+    const confClass = displayConfidence == null
+      ? 'text-slate-400'
+      : displayConfidence >= 0.8 ? 'confidence-high' : displayConfidence >= 0.6 ? 'confidence-mid' : 'confidence-low';
+    const entity = item.suggested_entity || item.current_entity;
+    const badgeClass = entity === 'coaching_business' ? 'badge-coaching' : entity === 'airbnb_activity' ? 'badge-airbnb' : 'badge-family';
+    const amountDisplay = formatReviewAmount(item);
+    const isResolved = item.status !== 'pending';
+    const reviewContext = item.details
+      ? `<div class="mt-1 text-[11px] leading-4 text-amber-700">${escHtml(item.details)}</div>${item.needs_input ? `<div class="mt-1 text-[11px] leading-4 text-slate-500">${escHtml(item.needs_input)}</div>` : ''}`
+      : '';
+    const isChecked = S.reviewSelectedIds.has(item.id);
+    return `
+    <tr id="review-row-${item.id}">
+      <td class="pl-6 align-top pt-4"><input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleReviewSelection('${item.id}', this.checked)"></td>
+      <td class="pl-6 text-slate-500 text-xs whitespace-nowrap">${(item.posted_date||'').slice(0,10)}</td>
+      <td class="max-w-xs">
+        <div class="font-medium truncate">${escHtml(item.merchant_name || '')}</div>
+        <div class="text-xs text-slate-400 truncate">${escHtml(item.description || '')}</div>
+      </td>
+      <td class="font-mono ${amountDisplay.className} whitespace-nowrap">${amountDisplay.text}</td>
+      <td class="text-xs text-slate-500">${escHtml(item.account_name || '—')}</td>
+      <td>
+        ${entity
+          ? `<span class="${badgeClass}">${escHtml(ENTITY_LABELS[entity] || entity)}</span>`
+          : '<span class="inline-block px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-600">Unclassified</span>'}
+        <div class="text-xs text-slate-400 mt-0.5">${escHtml(item.suggested_category_tax || item.current_category_tax || (isUnclassified ? 'Needs classification' : 'Uncategorized'))}</div>
+        ${reviewContext}
+      </td>
+      <td class="${confClass} font-medium">${conf}</td>
+      <td class="pr-6">
+        ${isResolved ? `<div class="flex gap-1 flex-wrap items-center"><span class="text-xs text-slate-400 capitalize">${item.status}</span><button class="btn btn-ghost text-xs px-2 py-1" onclick="resolveReview('${item.id}','reopen')">Reopen</button></div>` : `
+        <div class="flex gap-1 flex-wrap">
+          ${isUnclassified ? '' : `<button class="btn btn-success text-xs px-2 py-1" onclick="resolveReview('${item.id}','accept')">✓ Accept</button>`}
+          <button class="btn btn-ghost text-xs px-2 py-1" onclick="showReclassify('${item.id}')">${isUnclassified ? '✏ Categorize' : '✏ Reclassify'}</button>
+          <button class="btn btn-ghost text-xs px-2 py-1 text-slate-400" onclick="resolveReview('${item.id}','skip')">Skip</button>
+          <button class="btn btn-danger text-xs px-2 py-1" onclick="deleteReviewTransaction('${item.id}','${item.transaction_id}')">Delete</button>
+        </div>
+        <div id="reclassify-${item.id}" class="hidden mt-2 space-y-1">
+          <select class="text-xs" id="re-entity-${item.id}" onchange="refreshReviewCats('${item.id}')">
+            <option value="coaching_business">Coaching</option>
+            <option value="airbnb_activity">Whitford House</option>
+            <option value="family_personal">Family</option>
+          </select>
+          <select class="text-xs" id="re-cat-${item.id}"></select>
+          <button class="btn btn-primary text-xs px-2 py-1 w-full" onclick="submitReclassify('${item.id}')">Save</button>
+        </div>`}
+        ${isResolved ? `<div class="mt-2"><button class="btn btn-danger text-xs px-2 py-1" onclick="deleteReviewTransaction('${item.id}','${item.transaction_id}')">Delete</button></div>` : ''}
+      </td>
+    </tr>`;
+  }).join('');
+  updateReviewSelectAllState();
+}
+
+function showReclassify(id) {
+  const form = document.getElementById(`reclassify-${id}`);
+  form.classList.toggle('hidden');
+  refreshReviewCats(id);
+}
+
+function refreshReviewCats(id) {
+  const entity = document.getElementById(`re-entity-${id}`).value;
+  const sel = document.getElementById(`re-cat-${id}`);
+  sel.innerHTML = Object.entries(CATEGORIES[entity] || {})
+    .map(([k,v]) => `<option value="${k}">${escHtml(v)}</option>`).join('');
+}
+
+async function resolveReview(id, action, entity, category_tax) {
+  try {
+    const body = { action };
+    if (entity) body.entity = entity;
+    if (category_tax) body.category_tax = category_tax;
+    await api('PATCH', `/review/${id}`, body);
+    await loadReview();
+    toast(
+      action === 'accept'
+        ? 'Accepted.'
+        : action === 'skip'
+          ? 'Skipped.'
+          : action === 'reopen'
+            ? 'Moved back to pending review.'
+            : 'Reclassified.',
+    );
+  } catch(err) { toast(err.message, 'error'); }
+}
+
+async function submitReclassify(id) {
+  const entity      = document.getElementById(`re-entity-${id}`).value;
+  const category_tax = document.getElementById(`re-cat-${id}`).value;
+  await resolveReview(id, 'classify', entity, category_tax);
+}
+
+async function deleteReviewTransaction(reviewId, transactionId) {
+  if (!confirm('Delete this transaction from the review queue and transaction history?')) return;
+  try {
+    await api('DELETE', `/transactions/${transactionId}`);
+    await Promise.all([loadReview(), loadImports()]);
+    toast('Transaction deleted.');
+  } catch(err) { toast(err.message, 'error'); }
+}
+
+async function bulkResolveReview(action, applyToFiltered = false) {
+  const status = document.getElementById('review-status-filter').value;
+  const pendingOnly = action === 'accept' || action === 'classify';
+  const reopenOnly = action === 'reopen';
+  if (pendingOnly && status !== 'pending') {
+    toast('Accept and reclassify bulk actions only work on pending review items.', 'error');
+    return;
+  }
+  if (reopenOnly && status === 'pending') {
+    toast('Reopen bulk actions only work on resolved or skipped review items.', 'error');
+    return;
+  }
+
+  if (!applyToFiltered && S.reviewSelectedAllFiltered) {
+    applyToFiltered = true;
+  }
+
+  const body = { action };
+  if (action === 'classify') {
+    body.entity = document.getElementById('review-bulk-entity').value;
+    body.category_tax = document.getElementById('review-bulk-category').value;
+  }
+
+  if (applyToFiltered) {
+    const category = document.getElementById('review-category-filter').value;
+    body.apply_to_filtered = true;
+    body.status = status;
+    if (category) body.filter_category_tax = category;
+  } else {
+    if (!S.reviewSelectedIds.size) {
+      toast('Select at least one review item first.', 'error');
+      return;
+    }
+    body.review_ids = Array.from(S.reviewSelectedIds);
+  }
+
+  const scopeLabel = applyToFiltered ? `all ${S.reviewTotal} filtered items` : `${S.reviewSelectedIds.size} selected item${S.reviewSelectedIds.size !== 1 ? 's' : ''}`;
+  const actionLabel = action === 'accept' ? 'accept' : action === 'reopen' ? 'reopen' : 'reclassify';
+  if (!confirm(`Bulk ${actionLabel} ${scopeLabel}?`)) return;
+
+  try {
+    const res = await api('PATCH', '/review/bulk', body);
+    S.reviewSelectedIds = new Set();
+    S.reviewSelectedAllFiltered = false;
+    await loadReview();
+    if (res.failed) {
+      toast(`${res.updated} updated, ${res.failed} skipped.`, 'error');
+      return;
+    }
+    toast(`${res.updated} review item${res.updated !== 1 ? 's' : ''} updated.`);
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+// ── Rules ─────────────────────────────────────────────────────────────────────
+async function loadRules() {
+  try {
+    const res = await api('GET', '/rules');
+    renderRules(res.rules);
+  } catch(err) { toast(err.message, 'error'); }
+}
+
+function renderRules(rules) {
+  const tbody = document.getElementById('rules-body');
+  if (!rules.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="text-center py-10 text-slate-400 pl-6">No rules yet. Rules run before AI — they are fast and 100% reliable.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rules.map(r => {
+    const badgeClass = r.entity === 'coaching_business' ? 'badge-coaching' : r.entity === 'airbnb_activity' ? 'badge-airbnb' : 'badge-family';
+    return `
+    <tr>
+      <td class="pl-6 font-medium">${escHtml(r.name)}</td>
+      <td class="text-xs text-slate-500">
+        <span class="font-mono">${escHtml(r.match_field)}</span>
+        <span class="mx-1 text-slate-300">·</span>${escHtml(r.match_operator)}
+        <span class="mx-1 text-slate-300">·</span><span class="font-mono text-slate-700">"${escHtml(r.match_value)}"</span>
+      </td>
+      <td><span class="${badgeClass}">${escHtml(ENTITY_LABELS[r.entity] || r.entity)}</span></td>
+      <td class="text-xs text-slate-500">${escHtml(r.category_tax || '—')}</td>
+      <td class="text-center">${r.priority}</td>
+      <td>
+        <button onclick="toggleRule('${r.id}', ${!r.is_active})"
+          class="w-10 h-5 rounded-full transition-colors ${r.is_active ? 'bg-indigo-600' : 'bg-slate-300'} relative">
+          <span class="absolute top-0.5 ${r.is_active ? 'right-0.5' : 'left-0.5'} w-4 h-4 bg-white rounded-full shadow transition-all"></span>
+        </button>
+      </td>
+      <td class="pr-6">
+        <button class="text-xs text-indigo-600 hover:underline mr-2" onclick="editRule(${JSON.stringify(r).replace(/"/g,'&quot;')})">Edit</button>
+        <button class="text-xs text-red-500 hover:underline" onclick="deleteRule('${r.id}')">Delete</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function refreshRuleCategoryOptions() {
+  const entity = document.getElementById('rf-entity').value;
+  const sel = document.getElementById('rf-category');
+  sel.innerHTML = Object.entries(CATEGORIES[entity] || {})
+    .map(([k,v]) => `<option value="${k}">${escHtml(v)}</option>`).join('');
+}
+
+function showRuleForm() {
+  S.editingRuleId = null;
+  document.getElementById('rule-form-title').textContent = 'New Rule';
+  document.getElementById('rf-name').value = '';
+  document.getElementById('rf-value').value = '';
+  document.getElementById('rf-priority').value = '0';
+  document.getElementById('rule-form-card').classList.remove('hidden');
+  document.getElementById('rf-name').focus();
+}
+
+function hideRuleForm() {
+  document.getElementById('rule-form-card').classList.add('hidden');
+  S.editingRuleId = null;
+}
+
+function editRule(r) {
+  S.editingRuleId = r.id;
+  document.getElementById('rule-form-title').textContent = 'Edit Rule';
+  document.getElementById('rf-name').value      = r.name;
+  document.getElementById('rf-field').value     = r.match_field;
+  document.getElementById('rf-operator').value  = r.match_operator;
+  document.getElementById('rf-value').value     = r.match_value;
+  document.getElementById('rf-entity').value    = r.entity;
+  document.getElementById('rf-priority').value  = r.priority;
+  refreshRuleCategoryOptions();
+  document.getElementById('rf-category').value  = r.category_tax || '';
+  document.getElementById('rule-form-card').classList.remove('hidden');
+  document.getElementById('rf-name').focus();
+}
+
+async function saveRule() {
+  const body = {
+    name:           document.getElementById('rf-name').value.trim(),
+    match_field:    document.getElementById('rf-field').value,
+    match_operator: document.getElementById('rf-operator').value,
+    match_value:    document.getElementById('rf-value').value.trim(),
+    entity:         document.getElementById('rf-entity').value,
+    category_tax:   document.getElementById('rf-category').value || undefined,
+    priority:       parseInt(document.getElementById('rf-priority').value) || 0,
+  };
+  if (!body.name || !body.match_value) { toast('Name and match value are required.', 'error'); return; }
+  try {
+    if (S.editingRuleId) {
+      await api('PUT', `/rules/${S.editingRuleId}`, body);
+      toast('Rule updated.');
+    } else {
+      await api('POST', '/rules', body);
+      toast('Rule created.');
+    }
+    hideRuleForm();
+    loadRules();
+  } catch(err) { toast(err.message, 'error'); }
+}
+
+async function toggleRule(id, isActive) {
+  try {
+    await api('PUT', `/rules/${id}`, { is_active: isActive });
+    loadRules();
+  } catch(err) { toast(err.message, 'error'); }
+}
+
+async function deleteRule(id) {
+  if (!confirm('Delete this rule?')) return;
+  try {
+    await api('DELETE', `/rules/${id}`);
+    toast('Rule deleted.');
+    loadRules();
+  } catch(err) { toast(err.message, 'error'); }
+}
+
+// ── AutoCat Import ────────────────────────────────────────────────────────────
+function showAutoCatForm() {
+  document.getElementById('autocat-form-card').classList.remove('hidden');
+  document.getElementById('autocat-result').classList.add('hidden');
+  document.getElementById('autocat-filename').textContent = '';
+  document.getElementById('autocat-file').value = '';
+  hideRuleForm();
+}
+
+function hideAutoCatForm() {
+  document.getElementById('autocat-form-card').classList.add('hidden');
+}
+
+function handleAutoCatFileSelect(input) {
+  const name = input.files[0]?.name || '';
+  document.getElementById('autocat-filename').textContent = name ? `Selected: ${name}` : '';
+  document.getElementById('autocat-result').classList.add('hidden');
+}
+
+async function importAutoCat() {
+  const fileInput = document.getElementById('autocat-file');
+  if (!fileInput.files[0]) { toast('Please select a CSV file first.', 'error'); return; }
+  const fd = new FormData();
+  fd.append('file', fileInput.files[0]);
+  try {
+    const data = await api('POST', '/rules/import-autocat', fd, true);
+    const resultEl = document.getElementById('autocat-result');
+    const warnings = data.warnings?.length
+      ? `<div class="mt-2 text-amber-700"><strong>Notes:</strong><ul class="list-disc list-inside mt-1">${data.warnings.map(w => `<li>${escHtml(w)}</li>`).join('')}</ul></div>`
+      : '';
+    resultEl.innerHTML = `
+      <div class="font-semibold text-emerald-800 mb-1">${escHtml(data.message)}</div>
+      <div class="text-slate-600 text-xs space-y-0.5">
+        <div>Rows in file: <strong>${data.total_rows}</strong></div>
+        <div>Rules created: <strong>${data.rules_created}</strong></div>
+        <div>Skipped (transfers/payments/duplicates): <strong>${(data.skipped || 0) + (data.skipped_transfers || 0)}</strong></div>
+      </div>${warnings}`;
+    resultEl.classList.remove('hidden');
+    if (data.rules_created > 0) loadRules();
+  } catch(err) { toast(err.message, 'error'); }
+}
+
+// ── Tiller Import ─────────────────────────────────────────────────────────────
+function handleTillerFileSelect(input) {
+  const name = input.files[0]?.name || '';
+  document.getElementById('tiller-filename').textContent = name ? `Selected: ${name}` : '';
+}
+
+async function doTillerImport() {
+  const fileInput = document.getElementById('tiller-file');
+  const file = fileInput.files[0];
+  if (!file) { toast('Please choose a Tiller CSV file first.', 'error'); return; }
+
+  const fd = new FormData();
+  fd.append('file', file);
+
+  const resultDiv = document.getElementById('tiller-result');
+  resultDiv.className = 'mt-4';
+  resultDiv.innerHTML = '<div class="text-slate-500 text-sm">⏳ Learning from labeled Tiller transactions and building reusable rules… this may take a moment for large files.</div>';
+  resultDiv.classList.remove('hidden');
+
+  try {
+    const res = await api('POST', '/imports/tiller', fd, true);
+    const unmappedHtml = res.unmapped_categories?.length
+      ? `<div class="mt-2 text-amber-700 text-xs"><strong>Unmapped categories</strong> (imported as family/other): ${res.unmapped_categories.map(c => escHtml(c)).join(', ')}</div>`
+      : '';
+    resultDiv.innerHTML = `
+      <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-4 text-sm">
+        <div class="font-medium text-emerald-800 mb-2">✅ Tiller import complete</div>
+        <div class="grid grid-cols-4 gap-3 text-center mb-3">
+          <div class="bg-white rounded p-2"><div class="text-lg font-bold text-emerald-700">${res.transactions_imported}</div><div class="text-xs text-slate-500">Imported</div></div>
+          <div class="bg-white rounded p-2"><div class="text-lg font-bold text-indigo-700">${res.learned_rules_created || 0}</div><div class="text-xs text-slate-500">Rules learned</div></div>
+          <div class="bg-white rounded p-2"><div class="text-lg font-bold text-slate-400">${res.duplicates_skipped}</div><div class="text-xs text-slate-500">Duplicates</div></div>
+          <div class="bg-white rounded p-2"><div class="text-lg font-bold text-slate-400">${res.non_transaction_skipped}</div><div class="text-xs text-slate-500">Skipped (transfers)</div></div>
+        </div>
+        <div class="text-emerald-700">${escHtml(res.message)}</div>
+        <div class="mt-1 text-xs text-emerald-700">Ambiguous merchant patterns skipped: <strong>${res.ambiguous_rule_groups_skipped || 0}</strong></div>
+        ${unmappedHtml}
+        <div class="mt-3 text-emerald-600 text-xs">
+          Next: <span class="cursor-pointer underline" onclick="nav('sync')">Sync this year's transactions →</span> then
+          <span class="cursor-pointer underline" onclick="nav('review')">open the review queue</span> — rules will fire first, and the AI will use your Tiller history as precedent when rules do not match.
+        </div>
+      </div>`;
+  } catch(err) {
+    resultDiv.innerHTML = `<div class="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">${escHtml(err.message)}</div>`;
+  }
+}
+
+// ── Import ────────────────────────────────────────────────────────────────────
+async function loadImportAccounts() {
+  try {
+    await loadTaxWorkflow();
+    const res = await api('GET', '/accounts');
+    const sel = document.getElementById('import-account');
+    const workflowItems = S.workflow?.checklist_items || [];
+    const amazonItem = workflowItems.find(item => item.item_key === 'amazon' || item.source_type === 'amazon');
+    const accountOptions = res.accounts
+      .map(a => `<option value="${a.id}">${escHtml(a.name)} (••${a.mask || '?'})</option>`)
+      .join('');
+    const amazonOption = amazonItem
+      ? `<option value="__workflow_amazon__">${escHtml(amazonItem.label)}</option>`
+      : '';
+    sel.innerHTML = '<option value="">— None —</option>' + amazonOption + accountOptions;
+  } catch { /* non-critical */ }
+}
+
+function handleFileSelect(input) {
+  const name = input.files[0]?.name || '';
+  document.getElementById('import-filename').textContent = name ? `Selected: ${name}` : '';
+}
+
+async function detectImportFormat(file, selectedFormat, selectedLink) {
+  if (selectedFormat !== 'auto') return selectedFormat;
+  if (selectedLink === '__workflow_amazon__') return 'amazon';
+
+  const text = await file.text();
+  const preview = text
+    .split(/\r?\n/)
+    .slice(0, 10)
+    .join('\n')
+    .toLowerCase();
+
+  if (
+    (preview.includes('order id') && preview.includes('order date') && preview.includes('title'))
+    || (preview.includes('payment instrument type') && preview.includes('total amount'))
+  ) {
+    return 'amazon';
+  }
+
+  return selectedFormat;
+}
+
+async function doImport() {
+  if (!S.workflow?.workflow) {
+    toast('Create a tax year first.', 'error');
+    nav('accounts');
+    return;
+  }
+  const fileInput = document.getElementById('import-file');
+  const file = fileInput.files[0];
+  if (!file) { toast('Please choose a CSV file first.', 'error'); return; }
+  const selectedFormat = document.getElementById('import-format').value;
+  const selectedLink = document.getElementById('import-account').value;
+  const accountId = selectedLink.startsWith('__') ? '' : selectedLink;
+  const format = await detectImportFormat(file, selectedFormat, selectedLink);
+  if (format === 'venmo' && !accountId) {
+    toast('Choose the matching Venmo account so the checklist can be updated correctly.', 'error');
+    return;
+  }
+  const endpoint  = format === 'amazon' ? '/imports/amazon' : '/imports/csv';
+  const fd = new FormData();
+  fd.append('file', file);
+  if (format !== 'amazon') {
+    fd.append('format', format);
+    if (accountId) fd.append('account_id', accountId);
+  }
+  const resultDiv = document.getElementById('import-result');
+  resultDiv.className = 'mt-4';
+  resultDiv.innerHTML = `<div class="text-slate-500 text-sm">⏳ ${format === 'amazon' ? 'Importing Amazon orders and matching transactions…' : 'Importing…'}</div>`;
+  resultDiv.classList.remove('hidden');
+  try {
+    const res = await api('POST', endpoint, fd, true);
+    resultDiv.innerHTML = format === 'amazon'
+      ? `
+        <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-4 text-sm">
+          <div class="font-medium text-emerald-800 mb-1">✅ Amazon import complete</div>
+          <div class="text-emerald-700">Orders imported: <strong>${res.amazon_orders_imported}</strong> · Transactions matched: <strong>${res.transactions_matched}</strong> · Reclassified: <strong>${res.transactions_reclassified}</strong></div>
+          <div class="text-slate-600 mt-1">Unmatched: <strong>${res.transactions_unmatched}</strong> · Rows skipped: <strong>${res.rows_skipped}</strong></div>
+          <div class="mt-2 text-emerald-600">${escHtml(res.message)}</div>
+        </div>`
+      : `
+        <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-4 text-sm">
+          <div class="font-medium text-emerald-800 mb-1">✅ Import complete</div>
+          <div class="text-emerald-700">Format: <strong>${escHtml(res.format)}</strong> · Imported: <strong>${res.transactions_imported}</strong> · Duplicates: <strong>${res.duplicates_skipped}</strong></div>
+          ${res.skipped_out_of_year ? `<div class="text-amber-700 mt-1 text-xs">Skipped outside ${res.tax_year}: <strong>${res.skipped_out_of_year}</strong></div>` : ''}
+          ${res.errors?.length ? `<div class="text-red-600 mt-2 text-xs">Errors: ${res.errors.join('; ')}</div>` : ''}
+          <div class="mt-2 text-emerald-600">${escHtml(res.message)}</div>
+        </div>`;
+    await Promise.all([loadImports(), loadTaxWorkflow()]);
+  } catch(err) {
+    resultDiv.innerHTML = `<div class="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">${escHtml(err.message)}</div>`;
+  }
+}
+
+// ── Reports ───────────────────────────────────────────────────────────────────
+async function loadReports() {
+  if (!S.workflow?.workflow) return;
+  const year = document.getElementById('report-year').value || String(S.workflow.workflow.tax_year);
+  try {
+    const [schC, schE, summary] = await Promise.all([
+      api('GET', `/reports/schedule-c?year=${year}`),
+      api('GET', `/reports/schedule-e?year=${year}`),
+      api('GET', `/reports/summary?year=${year}`),
+    ]);
+    renderScheduleC(schC);
+    renderScheduleE(schE);
+    renderSummary(schC, schE, summary);
+  } catch(err) { toast(err.message, 'error'); }
+}
+
+function fmt$(n) {
+  if (n == null) return '—';
+  return (n < 0 ? '-$' : '$') + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function renderScheduleC(data) {
+  const tbody = document.getElementById('schc-body');
+  const tfoot = document.getElementById('schc-foot');
+  const rows = [...(data.income?.categories || []), ...(data.expenses?.categories || [])];
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="3" class="text-center py-8 text-slate-400">No coaching transactions found for this year.</td></tr>';
+    tfoot.innerHTML = ''; return;
+  }
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td class="pl-0 font-medium">${escHtml(r.category_name || r.category_tax)}</td>
+      <td class="text-slate-400 text-xs">${escHtml(r.form_line || '')}</td>
+      <td class="text-right pr-0 font-mono ${r.total_amount < 0 ? 'text-emerald-600' : 'text-slate-700'}">${fmt$(r.total_amount)} <span class="text-slate-400 text-xs">(${r.transaction_count})</span></td>
+    </tr>`).join('');
+  tfoot.innerHTML = `
+    <tr class="border-t-2 border-slate-300">
+      <td class="pl-0 font-bold pt-3">Net Profit</td><td></td>
+      <td class="text-right pr-0 font-bold font-mono pt-3 ${data.net_profit >= 0 ? 'text-emerald-700' : 'text-red-600'}">${fmt$(data.net_profit)}</td>
+    </tr>
+    ${data.pending_review > 0 ? `<tr><td colspan="3" class="pl-0 text-xs text-amber-600 pt-1">⚠ ${data.pending_review} transactions still need review and are excluded.</td></tr>` : ''}`;
+}
+
+function renderScheduleE(data) {
+  const tbody = document.getElementById('sche-body');
+  const tfoot = document.getElementById('sche-foot');
+  const rows = [...(data.income?.categories || []), ...(data.expenses?.categories || [])];
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="3" class="text-center py-8 text-slate-400">No Whitford House transactions found for this year.</td></tr>';
+    tfoot.innerHTML = ''; return;
+  }
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td class="pl-0 font-medium">${escHtml(r.category_name || r.category_tax)}</td>
+      <td class="text-slate-400 text-xs">${escHtml(r.form_line || '')}</td>
+      <td class="text-right pr-0 font-mono ${r.total_amount < 0 ? 'text-emerald-600' : 'text-slate-700'}">${fmt$(r.total_amount)} <span class="text-slate-400 text-xs">(${r.transaction_count})</span></td>
+    </tr>`).join('');
+  const netInc = (data.income?.total || 0) - (data.expenses?.total || 0);
+  tfoot.innerHTML = `
+    <tr class="border-t-2 border-slate-300">
+      <td class="pl-0 font-bold pt-3">Net Income</td><td></td>
+      <td class="text-right pr-0 font-bold font-mono pt-3 ${netInc >= 0 ? 'text-emerald-700' : 'text-red-600'}">${fmt$(netInc)}</td>
+    </tr>`;
+}
+
+function renderSummary(schC, schE, summary) {
+  document.getElementById('rs-coaching').textContent = fmt$(schC.net_profit);
+  const airbnbNet = (schE.income?.total || 0) - (schE.expenses?.total || 0);
+  document.getElementById('rs-airbnb').textContent   = fmt$(airbnbNet);
+  const reviewRow = summary.review_queue?.find(r => r.status === 'pending');
+  document.getElementById('rs-review').textContent   = reviewRow ? reviewRow.count : '0';
+}
+
+async function exportCSV(entity) {
+  const year = document.getElementById('report-year').value;
+  const url  = `/reports/export?year=${year}${entity ? `&entity=${entity}` : ''}`;
+  try {
+    const blob = await api('GET', url);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `tax-prep-${year}${entity ? `-${entity}` : ''}.csv`;
+    a.click();
+  } catch(err) { toast(err.message, 'error'); }
+}
+
+async function doSnapshot() {
+  const year = document.getElementById('report-year').value;
+  if (!confirm(`Create an immutable filing snapshot for ${year}? This will lock all classified transactions.`)) return;
+  try {
+    const res = await api('POST', '/reports/snapshot', { year: parseInt(year) });
+    toast(`Snapshot created: ${res.snapshot.total} transactions locked.`);
+  } catch(err) { toast(err.message, 'error'); }
+}
+</script>
+</body>
+</html>
