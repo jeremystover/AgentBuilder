@@ -1,6 +1,6 @@
 {
   "$schemaVersion": 1,
-  "updatedAt": "2026-04-13T00:00:00.000Z",
+  "updatedAt": "2026-04-14T00:00:00.000Z",
   "agents": [
     {
       "id": "agent-builder",
@@ -93,7 +93,7 @@
         "zoom:recording:read"
       ],
       "cloudflare": {
-        "workerName": "personal-productivity-mcp",
+        "workerName": "chief-of-staff",
         "durableObjects": [],
         "d1": [],
         "kv": [],
