@@ -4,6 +4,7 @@ import { jsonOk, jsonError, getUserId } from '../types';
 import { maybeLearnRuleFromManualClassification } from '../lib/learned-rules';
 import { backfillUnclassifiedReviewQueue } from '../lib/review-queue';
 import { getActiveTaxYearWorkflow, getTaxYearDateRange } from '../lib/tax-year';
+import { getNextInterviewItem } from '../lib/review-interview';
 
 // ── GET /review ───────────────────────────────────────────────────────────────
 export async function handleListReview(request: Request, env: Env): Promise<Response> {
@@ -55,6 +56,20 @@ export async function handleListReview(request: Request, env: Env): Promise<Resp
   ]);
 
   return jsonOk({ items: items.results, total: countRow?.total ?? 0, limit, offset });
+}
+
+// ── GET /review/next ─────────────────────────────────────────────────────────
+// Interview mode — returns a single pending item with full context
+// (historical precedent, matching rules, similar merchants) so a model or
+// human can make a confident call without running multiple follow-up
+// queries. See lib/review-interview.ts for the enrichment logic.
+export async function handleNextReviewItem(request: Request, env: Env): Promise<Response> {
+  const userId = getUserId(request);
+  const item = await getNextInterviewItem(env, userId);
+  if (!item) {
+    return jsonOk({ empty: true, message: 'Review queue is empty — nothing to interview.' });
+  }
+  return jsonOk(item);
 }
 
 // ── PATCH /review/:id ─────────────────────────────────────────────────────────

@@ -6,6 +6,12 @@ compatibility_flags = ["nodejs_compat"]
 [limits]
 cpu_ms = 300000
 
+# Nightly Teller sync. 09:00 UTC ≈ 05:00 ET — after most banks have
+# posted the prior business day. Invokes the worker's scheduled()
+# handler which walks all users with Teller enrollments.
+[triggers]
+crons = ["0 9 * * *"]
+
 [assets]
 directory = "./public"
 binding = "ASSETS"
