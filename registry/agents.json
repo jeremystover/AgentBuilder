@@ -166,7 +166,10 @@
         "list-budget-categories",
         "create-budget-category",
         "set-budget-target",
-        "budget-status"
+        "budget-status",
+        "pnl-for-entity",
+        "pnl-all-entities",
+        "pnl-monthly-trend"
       ],
       "mcpServers": [],
       "sharedPackages": [

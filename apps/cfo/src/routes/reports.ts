@@ -31,8 +31,15 @@ export async function handleScheduleC(request: Request, env: Env): Promise<Respo
     total_amount: number; transaction_count: number;
   }>();
 
-  const income   = totals.results.filter(r => r.category_tax === 'income');
-  const expenses = totals.results.filter(r => r.category_tax !== 'income');
+  // DB convention: expenses are stored as NEGATIVE amounts (Teller-native;
+  // Chase/Venmo importers normalize to match). Schedule C wants positive
+  // dollar figures for both income and expense lines, so flip the sign on
+  // expense rows before rolling up. Using `-total_amount` (rather than Math.abs)
+  // preserves the correct direction for refund edge cases.
+  const income = totals.results.filter(r => r.category_tax === 'income');
+  const expenses = totals.results
+    .filter(r => r.category_tax !== 'income')
+    .map(r => ({ ...r, total_amount: -r.total_amount }));
   const totalIncome  = income.reduce((s, r) => s + r.total_amount, 0);
   const totalExpense = expenses.reduce((s, r) => s + r.total_amount, 0);
   const netProfit    = totalIncome - totalExpense;
@@ -84,16 +91,32 @@ export async function handleScheduleE(request: Request, env: Env): Promise<Respo
     total_amount: number; transaction_count: number;
   }>();
 
-  const income   = totals.results.filter(r => r.category_tax === 'rental_income');
-  const expenses = totals.results.filter(r => r.category_tax !== 'rental_income');
+  // Same sign-flip as Schedule C — expenses are negative in the DB and
+  // Schedule E wants positive figures. Keeping the two handlers in
+  // lockstep so the shape of their output matches.
+  const income = totals.results.filter(r => r.category_tax === 'rental_income');
+  const expenses = totals.results
+    .filter(r => r.category_tax !== 'rental_income')
+    .map(r => ({ ...r, total_amount: -r.total_amount }));
+  const totalIncome  = income.reduce((s, r) => s + r.total_amount, 0);
+  const totalExpense = expenses.reduce((s, r) => s + r.total_amount, 0);
+  const netProfit    = totalIncome - totalExpense;
+
+  const unreviewedRow = await env.DB.prepare(
+    `SELECT COUNT(*) AS cnt FROM transactions t
+     JOIN classifications c ON c.transaction_id = t.id
+     WHERE t.user_id = ? AND c.entity = 'airbnb_activity'
+       AND t.posted_date BETWEEN ? AND ? AND c.review_required = 1`,
+  ).bind(userId, dateFrom, dateTo).first<{ cnt: number }>();
 
   return jsonOk({
     tax_year: year,
     entity: 'airbnb_activity',
     schedule: 'E',
-    income: { categories: income, total: income.reduce((s, r) => s + r.total_amount, 0) },
-    expenses: { categories: expenses, total: expenses.reduce((s, r) => s + r.total_amount, 0) },
-    pending_review: 0,
+    income: { categories: income, total: totalIncome },
+    expenses: { categories: expenses, total: totalExpense },
+    net_profit: netProfit,
+    pending_review: unreviewedRow?.cnt ?? 0,
   });
 }
 

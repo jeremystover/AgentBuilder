@@ -1954,11 +1954,15 @@ function renderScheduleC(data) {
     tbody.innerHTML = '<tr><td colspan="3" class="text-center py-8 text-slate-400">No coaching transactions found for this year.</td></tr>';
     tfoot.innerHTML = ''; return;
   }
+  // Backend now returns both income and expense category totals as
+  // positive dollar figures (Schedule-style), so color by category_tax
+  // instead of by sign — income rows get the emerald "money in" tint.
+  const isIncomeRow = (r) => r.category_tax === 'income';
   tbody.innerHTML = rows.map(r => `
     <tr>
       <td class="pl-0 font-medium">${escHtml(r.category_name || r.category_tax)}</td>
       <td class="text-slate-400 text-xs">${escHtml(r.form_line || '')}</td>
-      <td class="text-right pr-0 font-mono ${r.total_amount < 0 ? 'text-emerald-600' : 'text-slate-700'}">${fmt$(r.total_amount)} <span class="text-slate-400 text-xs">(${r.transaction_count})</span></td>
+      <td class="text-right pr-0 font-mono ${isIncomeRow(r) ? 'text-emerald-600' : 'text-slate-700'}">${fmt$(r.total_amount)} <span class="text-slate-400 text-xs">(${r.transaction_count})</span></td>
     </tr>`).join('');
   tfoot.innerHTML = `
     <tr class="border-t-2 border-slate-300">
@@ -1976,24 +1980,24 @@ function renderScheduleE(data) {
     tbody.innerHTML = '<tr><td colspan="3" class="text-center py-8 text-slate-400">No Whitford House transactions found for this year.</td></tr>';
     tfoot.innerHTML = ''; return;
   }
+  const isIncomeRow = (r) => r.category_tax === 'rental_income';
   tbody.innerHTML = rows.map(r => `
     <tr>
       <td class="pl-0 font-medium">${escHtml(r.category_name || r.category_tax)}</td>
       <td class="text-slate-400 text-xs">${escHtml(r.form_line || '')}</td>
-      <td class="text-right pr-0 font-mono ${r.total_amount < 0 ? 'text-emerald-600' : 'text-slate-700'}">${fmt$(r.total_amount)} <span class="text-slate-400 text-xs">(${r.transaction_count})</span></td>
+      <td class="text-right pr-0 font-mono ${isIncomeRow(r) ? 'text-emerald-600' : 'text-slate-700'}">${fmt$(r.total_amount)} <span class="text-slate-400 text-xs">(${r.transaction_count})</span></td>
     </tr>`).join('');
-  const netInc = (data.income?.total || 0) - (data.expenses?.total || 0);
   tfoot.innerHTML = `
     <tr class="border-t-2 border-slate-300">
       <td class="pl-0 font-bold pt-3">Net Income</td><td></td>
-      <td class="text-right pr-0 font-bold font-mono pt-3 ${netInc >= 0 ? 'text-emerald-700' : 'text-red-600'}">${fmt$(netInc)}</td>
-    </tr>`;
+      <td class="text-right pr-0 font-bold font-mono pt-3 ${data.net_profit >= 0 ? 'text-emerald-700' : 'text-red-600'}">${fmt$(data.net_profit)}</td>
+    </tr>
+    ${data.pending_review > 0 ? `<tr><td colspan="3" class="pl-0 text-xs text-amber-600 pt-1">⚠ ${data.pending_review} transactions still need review and are excluded.</td></tr>` : ''}`;
 }
 
 function renderSummary(schC, schE, summary) {
   document.getElementById('rs-coaching').textContent = fmt$(schC.net_profit);
-  const airbnbNet = (schE.income?.total || 0) - (schE.expenses?.total || 0);
-  document.getElementById('rs-airbnb').textContent   = fmt$(airbnbNet);
+  document.getElementById('rs-airbnb').textContent   = fmt$(schE.net_profit);
   const reviewRow = summary.review_queue?.find(r => r.status === 'pending');
   document.getElementById('rs-review').textContent   = reviewRow ? reviewRow.count : '0';
 }
