@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "types": ["@cloudflare/workers-types"],
+    // Migration carry-over: the personal-productivity-mcp source is pure
+    // JavaScript (ESM, no build step). Keep allowJs on so tsc --noEmit
+    // participates in `turbo run typecheck`, but leave checkJs off until
+    // a dedicated TS port pass. Tracked in docs/migrations/chief-of-staff.md.
+    "allowJs": true,
+    "checkJs": false,
+    "noEmit": true,
+    "noUncheckedIndexedAccess": false
+  },
+  "include": ["src/**/*.js"],
+  "exclude": ["src/test/**", "dist"]
+}

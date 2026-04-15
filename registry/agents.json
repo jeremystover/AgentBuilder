@@ -93,7 +93,7 @@
         "zoom:recording:read"
       ],
       "cloudflare": {
-        "workerName": "personal-productivity-mcp",
+        "workerName": "chief-of-staff",
         "durableObjects": [],
         "d1": [],
         "kv": [],

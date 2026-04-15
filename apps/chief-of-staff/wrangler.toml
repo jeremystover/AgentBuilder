@@ -1,0 +1,76 @@
+name = "chief-of-staff"
+main = "src/worker.js"
+compatibility_date = "2025-04-01"
+
+# ── Cron triggers (replace GAS time-based triggers) ───────────────────────────
+# Every 10 min: Gmail + Calendar + Drive ingest + Zoom recording poll.
+# Daily state export, morning brief, and weekly commitment nudges.
+[triggers]
+crons = [
+  "*/10 * * * *",   # ingest (Gmail + Calendar + Drive → IntakeQueue) + Zoom poll
+  "0 6 * * *",      # 6am daily — regenerate Current_State.md on Drive
+  "0 7 * * *",      # 7am daily — morning brief draft
+  "0 9 * * 1",      # 9am Monday — commitment nudge drafts
+]
+
+# ── Non-sensitive config ───────────────────────────────────────────────────────
+# Set these here. They are not secrets and are safe to commit.
+# Leave empty to use the defaults coded in src/worker.js.
+
+[vars]
+PPP_MCP_DRIVE_FOLDER_ID       = "13omof1CEtghY176hL6jvlx3IpydQZeLF"   # Google Drive folder ID for markdown status files
+PPP_MCP_APPS_SHEET_ID         = "1G0EaLMbMJMmwaCmrH-bjQ95bFp_GPZxKpq-odxdQu6M"   # Sheets ID for appId -> folderId mapping (optional)
+PPP_MCP_APPS_SHEET_NAME       = "Apps"
+PPP_MCP_APP_ID                = ""   # Default app ID (optional)
+PPP_MCP_MAX_CHARS             = "12000"
+PPP_MCP_WEB_TIMEOUT_MS        = "8000"
+PPP_MCP_WEB_MAX_REDIRECTS     = "3"
+PPP_MCP_WEB_MAX_BYTES         = "1000000"
+PPP_MCP_WEB_RATE_LIMIT_PER_MIN = "30"
+PPP_MCP_WEB_ALLOWLIST         = ""   # Comma-separated hostnames to allow (empty = all)
+PPP_MCP_WEB_DENYLIST          = ""   # Comma-separated hostnames to block
+PPP_WORK_CAL_SHEET_ID         = "1joKa9hjG627uLTU9BmEBNWW2UhY4G6ZvQ2xF7-TYMaw"
+
+# ── Secrets ────────────────────────────────────────────────────────────────────
+# Set these via CLI — never commit secret values to this file.
+#
+#   wrangler secret put GOOGLE_SERVICE_ACCOUNT_JSON
+#     Paste the full contents of your service account JSON key file.
+#     The SA needs: Google Drive API (Editor on the Drive folder) +
+#                   Google Sheets API (Editor on the spreadsheet)
+#
+#   wrangler secret put PPP_SHEETS_SPREADSHEET_ID
+#     The spreadsheet ID from the URL:
+#     https://docs.google.com/spreadsheets/d/<SPREADSHEET_ID>/edit
+#
+#   wrangler secret put MCP_HTTP_KEY
+#     An arbitrary secret string. Guards the /mcp endpoint (Claude agent
+#     surface). Prefer sending it as `Authorization: Bearer <value>`; the
+#     legacy `?key=<value>` query form is still accepted during the
+#     deprecation window. Set this to the same value in your Claude MCP
+#     connector settings.
+#
+#   wrangler secret put INTERNAL_CRON_KEY
+#     Separate secret guarding the /internal/* endpoints (morning-brief,
+#     commitment-nudges, zoom-poll). If unset, /internal/* falls back to
+#     MCP_HTTP_KEY so existing deployments keep working. Generate with
+#     `openssl rand -hex 32` and store it anywhere you trigger the internal
+#     endpoints from.
+#
+#     OAuth2 credentials for Gmail (read + draft) and Calendar (read+write).
+#     Create a Desktop OAuth 2.0 Client in Google Cloud Console → Credentials.
+#     Run bin/google-auth once to get the refresh token.
+#
+#   wrangler secret put ZOOM_ACCOUNT_ID
+#   wrangler secret put ZOOM_CLIENT_ID
+#   wrangler secret put ZOOM_CLIENT_SECRET
+#     Zoom Server-to-Server OAuth credentials.
+#     Create at marketplace.zoom.us → Develop → Build App → Server-to-Server OAuth.
+#     Scopes needed: recording:read (cloud_recording:read:list_recording_files:admin,
+#     cloud_recording:read:list_user_recordings:admin)
+
+# ── Local dev ─────────────────────────────────────────────────────────────────
+# For local dev with `wrangler dev`, create .dev.vars (gitignored) with:
+#
+#   MCP_HTTP_KEY
+# The .dev.vars file is already gitignored by Wrangler convention.
