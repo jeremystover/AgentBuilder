@@ -14,6 +14,7 @@
 
 import { createGmail } from "./gmail.js";
 import { createCalendar } from "./calendar.js";
+import { DEFAULT_ACCOUNT, getUserFetch } from "./auth.js";
 
 function nowIso() { return new Date().toISOString(); }
 function generateId(prefix) {
@@ -65,7 +66,7 @@ async function writeIntakeRow(sheets, { kind, summary, payloadJson, sourceRef = 
 
 // ── Gmail ingestion ──────────────────────────────────────────────────────────
 
-async function ingestGmail({ gmail, sheets, sinceMs }) {
+async function ingestGmail({ gmail, sheets, sinceMs, account = DEFAULT_ACCOUNT }) {
   const threads = await gmail.fetchRecentThreads({
     since: sinceMs,
     query: "in:inbox -category:promotions -category:social",
@@ -88,6 +89,7 @@ async function ingestGmail({ gmail, sheets, sinceMs }) {
 
     const payload = {
       kind,
+      account,
       threadId: thread.threadId,
       subject: thread.subject,
       from: thread.messages[0].from,
@@ -98,16 +100,20 @@ async function ingestGmail({ gmail, sheets, sinceMs }) {
       messageIds: thread.messages.map((m) => m.messageId),
     };
 
+    // Tag non-personal accounts in the summary so triage can see at a glance
+    // which inbox a thread came from. Tag the sourceRef too to keep intake
+    // rows from different accounts from colliding on a shared threadId.
+    const acctTag = account === DEFAULT_ACCOUNT ? "" : `[${account}] `;
     await writeIntakeRow(sheets, {
       kind,
-      summary: `Email: ${thread.subject} — from ${thread.messages[0].from}`,
+      summary: `${acctTag}Email: ${thread.subject} — from ${thread.messages[0].from}`,
       payloadJson: JSON.stringify(payload),
-      sourceRef: thread.threadId,
+      sourceRef: account === DEFAULT_ACCOUNT ? thread.threadId : `${account}:${thread.threadId}`,
     });
     count++;
   }
 
-  return { ingested: count, source: "gmail" };
+  return { ingested: count, source: "gmail", account };
 }
 
 // ── Calendar ingestion ───────────────────────────────────────────────────────
@@ -414,54 +420,99 @@ async function ingestDrive({ gfetch, sheets, sinceMs }) {
 
 // ── Main ingest entry point ───────────────────────────────────────────────────
 
-export function createIngest({ ufetch, gfetch, sheets, workCalSheets = null }) {
-  const gmail = createGmail(ufetch);
-  const calendar = createCalendar(ufetch);
+export function createIngest({ ufetch, userFetches = null, gfetch, sheets, workCalSheets = null }) {
+  // Personal account clients stay as the default for backwards-compatible
+  // callers. Multi-account ingest builds per-account clients on the fly
+  // below so each account gets its own token/auth context.
+  const gmail = ufetch ? createGmail(ufetch) : null;
+  const calendar = ufetch ? createCalendar(ufetch) : null;
+
+  // Resolve the set of accounts to ingest Gmail from. If the caller passed a
+  // userFetches map we use every entry in it; otherwise we fall back to the
+  // single legacy ufetch keyed as "personal".
+  function listAccounts() {
+    if (userFetches && Object.keys(userFetches).length > 0) {
+      return Object.entries(userFetches).map(([name, entry]) => ({
+        name,
+        gmail: createGmail(entry.ufetch),
+        calendar: createCalendar(entry.ufetch),
+      }));
+    }
+    if (gmail && calendar) {
+      return [{ name: DEFAULT_ACCOUNT, gmail, calendar }];
+    }
+    return [];
+  }
 
   async function runIngest() {
     const now = Date.now();
-    const INGEST_KEY = "ingest_last_run_ms";
+    const DEFAULT_LAST_RUN = "ingest_last_run_ms";
 
-    // Read last-run time (default: 2 hours ago for first run)
-    const lastRunStr = await readConfigValue(sheets, INGEST_KEY);
-    const sinceMs = lastRunStr ? Number(lastRunStr) : now - 2 * 3600000;
+    const results = { startedAt: nowIso(), sources: [] };
+    const accounts = listAccounts();
 
-    const results = { startedAt: nowIso(), sinceMs, sources: [] };
-
-    // Gmail
-    try {
-      const gmailResult = await ingestGmail({ gmail, sheets, sinceMs });
-      results.sources.push(gmailResult);
-    } catch (e) {
-      results.sources.push({ source: "gmail", error: e.message });
+    // Gmail — one pass per configured account. Per-account last-run keys so
+    // an outage on one account can't skip mail on another when it recovers.
+    for (const acct of accounts) {
+      const key = acct.name === DEFAULT_ACCOUNT
+        ? DEFAULT_LAST_RUN
+        : `ingest_last_run_ms_${acct.name}`;
+      const lastRunStr = await readConfigValue(sheets, key);
+      const sinceMs = lastRunStr ? Number(lastRunStr) : now - 2 * 3600000;
+      try {
+        const gmailResult = await ingestGmail({
+          gmail: acct.gmail,
+          sheets,
+          sinceMs,
+          account: acct.name,
+        });
+        results.sources.push(gmailResult);
+      } catch (e) {
+        results.sources.push({ source: "gmail", account: acct.name, error: e.message });
+      }
+      await writeConfigValue(sheets, key, String(now));
     }
 
-    // Calendar
-    try {
-      const calResult = await ingestCalendar({ calendar, sheets, sinceMs });
-      results.sources.push(calResult);
-    } catch (e) {
-      results.sources.push({ source: "calendar", error: e.message });
+    // Calendar — still personal-only. The Meetings sheet keys off eventId and
+    // was not designed to multiplex across accounts; adding work calendar
+    // ingest here would require scoping eventIds and a schema migration.
+    // Direct tool calls with `account: "work"` on list_/create_/update_
+    // calendar_event still work against the live work calendar.
+    const personal = accounts.find((a) => a.name === DEFAULT_ACCOUNT);
+    if (personal) {
+      const lastRunStr = await readConfigValue(sheets, DEFAULT_LAST_RUN);
+      const sinceMs = lastRunStr ? Number(lastRunStr) : now - 2 * 3600000;
+      try {
+        const calResult = await ingestCalendar({ calendar: personal.calendar, sheets, sinceMs });
+        results.sources.push(calResult);
+      } catch (e) {
+        results.sources.push({ source: "calendar", error: e.message });
+      }
     }
 
     // Work Calendar (Apps Script bridge, optional)
     try {
+      const sinceMs = now - 2 * 3600000;
       const workCalResult = await ingestWorkCalendar({ sheets, workCalSheets, sinceMs });
       results.sources.push(workCalResult);
     } catch (e) {
       results.sources.push({ source: "work-calendar", error: e.message });
     }
 
-    // Drive
+    // Drive — service account, account-agnostic
     try {
+      const lastRunStr = await readConfigValue(sheets, DEFAULT_LAST_RUN);
+      const sinceMs = lastRunStr ? Number(lastRunStr) : now - 2 * 3600000;
       const driveResult = await ingestDrive({ gfetch, sheets, sinceMs });
       results.sources.push(driveResult);
     } catch (e) {
       results.sources.push({ source: "drive", error: e.message });
     }
 
-    // Update last-run timestamp
-    await writeConfigValue(sheets, INGEST_KEY, String(now));
+    // Keep the legacy single-account last-run key fresh so older tooling
+    // that still reads it (and the personal-only calendar/drive paths above)
+    // advances in lockstep with the main ingest cycle.
+    await writeConfigValue(sheets, DEFAULT_LAST_RUN, String(now));
 
     results.completedAt = nowIso();
     return results;
@@ -476,17 +527,46 @@ function formatContent(obj) {
   return { content: [{ type: "text", text: JSON.stringify(obj, null, 2) }] };
 }
 
-export function createIngestTools({ ufetch, gfetch, sheets, spreadsheetId, workCalSheets = null }) {
+export function createIngestTools({ ufetch, userFetches = null, gfetch, sheets, spreadsheetId, workCalSheets = null }) {
   if (!spreadsheetId) return {};
 
-  const { runIngest, gmail, calendar } = createIngest({ ufetch, gfetch, sheets, workCalSheets });
+  const { runIngest } = createIngest({ ufetch, userFetches, gfetch, sheets, workCalSheets });
+
+  // Resolve { gmail, calendar } clients for a named account. If userFetches
+  // was not provided (legacy single-account callers) we fall back to the
+  // personal ufetch for any account name, so existing behavior is preserved.
+  function clientsFor(accountArg) {
+    const account = accountArg || DEFAULT_ACCOUNT;
+    if (userFetches) {
+      const uf = getUserFetch(userFetches, account);
+      return { gmail: createGmail(uf), calendar: createCalendar(uf), account };
+    }
+    if (!ufetch) {
+      throw new Error("No Google OAuth credentials configured.");
+    }
+    return { gmail: createGmail(ufetch), calendar: createCalendar(ufetch), account: DEFAULT_ACCOUNT };
+  }
+
+  // Shared enum of account names for tool input schemas. Populated from the
+  // userFetches map so planners see exactly which accounts are configured.
+  const accountNames = userFetches ? Object.keys(userFetches) : [DEFAULT_ACCOUNT];
+  const accountSchema = {
+    type: "string",
+    description:
+      `Which Google OAuth account to use. Defaults to "${DEFAULT_ACCOUNT}". ` +
+      `Configured: ${accountNames.join(", ") || "(none)"}.`,
+    enum: accountNames.length > 0 ? accountNames : undefined,
+  };
 
   return {
     run_ingest: {
       description:
         "Manually trigger the ingestion loop: pull new Gmail threads and Calendar events " +
         "since the last run and write them as IntakeQueue rows. " +
-        "Normally runs automatically via cron every 10 minutes.",
+        "Normally runs automatically via cron every 10 minutes. " +
+        "Gmail is ingested from every configured OAuth account; Calendar ingest " +
+        "remains personal-only (use list_calendar_events with account:<name> for " +
+        "ad-hoc reads from other accounts).",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
       run: async () => {
         try {
@@ -499,10 +579,15 @@ export function createIngestTools({ ufetch, gfetch, sheets, spreadsheetId, workC
     },
 
     list_calendars: {
-      description: "List all Google Calendars accessible to the user.",
-      inputSchema: { type: "object", properties: {}, additionalProperties: false },
-      run: async () => {
+      description: "List all Google Calendars accessible to the user for the given account.",
+      inputSchema: {
+        type: "object",
+        properties: { account: accountSchema },
+        additionalProperties: false,
+      },
+      run: async (args = {}) => {
         try {
+          const { calendar } = clientsFor(args.account);
           const cals = await calendar.listCalendars();
           return formatContent({ calendars: cals.map((c) => ({ id: c.id, name: c.summary, primary: !!c.primary })) });
         } catch (e) {
@@ -512,10 +597,11 @@ export function createIngestTools({ ufetch, gfetch, sheets, spreadsheetId, workC
     },
 
     list_calendar_events: {
-      description: "List calendar events in a date range.",
+      description: "List calendar events in a date range for the given account.",
       inputSchema: {
         type: "object",
         properties: {
+          account: accountSchema,
           calendarId: { type: "string", description: "Calendar ID. Default: primary." },
           from: { type: "string", description: "ISO start datetime." },
           to: { type: "string", description: "ISO end datetime." },
@@ -525,6 +611,7 @@ export function createIngestTools({ ufetch, gfetch, sheets, spreadsheetId, workC
       },
       run: async (args = {}) => {
         try {
+          const { calendar } = clientsFor(args.account);
           const events = await calendar.fetchEventsInRange(args.calendarId || "primary", {
             from: args.from,
             to: args.to || new Date(Date.now() + 7 * 86400000).toISOString(),
@@ -575,10 +662,11 @@ export function createIngestTools({ ufetch, gfetch, sheets, spreadsheetId, workC
     },
 
     create_calendar_event: {
-      description: "Create a new Google Calendar event.",
+      description: "Create a new Google Calendar event on the given account.",
       inputSchema: {
         type: "object",
         properties: {
+          account: accountSchema,
           title: { type: "string" },
           startTime: { type: "string", description: "ISO datetime." },
           endTime: { type: "string", description: "ISO datetime." },
@@ -592,6 +680,7 @@ export function createIngestTools({ ufetch, gfetch, sheets, spreadsheetId, workC
       },
       run: async (args = {}) => {
         try {
+          const { calendar } = clientsFor(args.account);
           const evt = await calendar.createSimpleEvent(args.calendarId || "primary", args);
           return formatContent({ ok: true, eventId: evt.id, htmlLink: evt.htmlLink });
         } catch (e) {
@@ -601,10 +690,11 @@ export function createIngestTools({ ufetch, gfetch, sheets, spreadsheetId, workC
     },
 
     update_calendar_event: {
-      description: "Update an existing Google Calendar event.",
+      description: "Update an existing Google Calendar event on the given account.",
       inputSchema: {
         type: "object",
         properties: {
+          account: accountSchema,
           eventId: { type: "string" },
           calendarId: { type: "string", description: "Default: primary." },
           title: { type: "string" },
@@ -618,6 +708,7 @@ export function createIngestTools({ ufetch, gfetch, sheets, spreadsheetId, workC
       },
       run: async (args = {}) => {
         try {
+          const { calendar } = clientsFor(args.account);
           const calId = args.calendarId || "primary";
           const existing = await calendar.getEvent(calId, args.eventId);
           const patch = {};
@@ -636,11 +727,12 @@ export function createIngestTools({ ufetch, gfetch, sheets, spreadsheetId, workC
 
     create_gmail_draft: {
       description:
-        "Create a Gmail draft. Use for commitment nudges and meeting follow-ups. " +
-        "Never auto-sends — draft is held for user review.",
+        "Create a Gmail draft on the given account. Use for commitment nudges and " +
+        "meeting follow-ups. Never auto-sends — draft is held for user review.",
       inputSchema: {
         type: "object",
         properties: {
+          account: accountSchema,
           to: { type: "string", description: "Recipient email address." },
           subject: { type: "string" },
           body: { type: "string", description: "Plain text body." },
@@ -651,6 +743,7 @@ export function createIngestTools({ ufetch, gfetch, sheets, spreadsheetId, workC
       },
       run: async (args = {}) => {
         try {
+          const { gmail } = clientsFor(args.account);
           const draft = await gmail.createDraft(args);
           return formatContent({ ok: true, draftId: draft.id });
         } catch (e) {

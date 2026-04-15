@@ -61,6 +61,29 @@ PPP_WORK_CAL_SHEET_ID         = "1joKa9hjG627uLTU9BmEBNWW2UhY4G6ZvQ2xF7-TYMaw"
 #     Create a Desktop OAuth 2.0 Client in Google Cloud Console → Credentials.
 #     Run bin/google-auth once to get the refresh token.
 #
+#     Default (personal) account:
+#       wrangler secret put GOOGLE_OAUTH_CLIENT_ID
+#       wrangler secret put GOOGLE_OAUTH_CLIENT_SECRET
+#       wrangler secret put GOOGLE_OAUTH_REFRESH_TOKEN
+#
+#     Additional named accounts use an infix convention:
+#       GOOGLE_OAUTH_<ACCOUNT>_CLIENT_ID
+#       GOOGLE_OAUTH_<ACCOUNT>_CLIENT_SECRET
+#       GOOGLE_OAUTH_<ACCOUNT>_REFRESH_TOKEN
+#
+#     e.g. a work Google Workspace account named "gong":
+#       wrangler secret put GOOGLE_OAUTH_GONG_CLIENT_ID
+#       wrangler secret put GOOGLE_OAUTH_GONG_CLIENT_SECRET
+#       wrangler secret put GOOGLE_OAUTH_GONG_REFRESH_TOKEN
+#
+#     createUserFetches() in src/auth.js auto-discovers every configured
+#     account by scanning env. Tools that accept an `account` parameter
+#     (list_calendars, list_calendar_events, create_calendar_event,
+#     update_calendar_event, create_gmail_draft) default to "personal" and
+#     may pass any discovered account name. The ingest cron pulls Gmail
+#     from every configured account into IntakeQueue; Calendar ingest into
+#     Meetings still only pulls from personal.
+#
 #   wrangler secret put ZOOM_ACCOUNT_ID
 #   wrangler secret put ZOOM_CLIENT_ID
 #   wrangler secret put ZOOM_CLIENT_SECRET

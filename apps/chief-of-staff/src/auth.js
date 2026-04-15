@@ -169,36 +169,63 @@ export function createGfetch(env) {
 }
 
 // ── OAuth2 user token (Gmail + Calendar) ─────────────────────────────────────
-// Keyed by client_id so multiple OAuth apps coexist cleanly.
-const _userTokenCache = new Map(); // clientId -> { token, expiresAt }
+// Keyed by `${account}:${clientId}` so multiple OAuth apps / accounts coexist
+// cleanly in a single isolate.
+const _userTokenCache = new Map();
+
+// The canonical name for the default account. When account === DEFAULT_ACCOUNT
+// the env vars are read from the bare names (GOOGLE_OAUTH_CLIENT_ID, etc.) to
+// preserve backward compatibility with the original single-account setup.
+export const DEFAULT_ACCOUNT = "personal";
+
+// Named accounts use an infix convention: the account name is inserted
+// between the "GOOGLE_OAUTH_" prefix and the field suffix, e.g.
+//
+//   personal → GOOGLE_OAUTH_CLIENT_ID
+//   gong     → GOOGLE_OAUTH_GONG_CLIENT_ID
+//
+// This keeps the field names (CLIENT_ID / CLIENT_SECRET / REFRESH_TOKEN)
+// aligned across every account so it's easy to scan secrets in Cloudflare.
+function envVarForAccount(fieldSuffix, account) {
+  if (!account || account === DEFAULT_ACCOUNT) {
+    return `GOOGLE_OAUTH_${fieldSuffix}`;
+  }
+  return `GOOGLE_OAUTH_${account.toUpperCase()}_${fieldSuffix}`;
+}
 
 /**
- * createUserFetch(env) — factory that returns a user-OAuth-authenticated fetch.
+ * createUserFetch(env, account) — factory that returns a user-OAuth-
+ * authenticated fetch for the named Google account.
  *
  * Uses the offline refresh token stored in env to obtain short-lived access
  * tokens via the standard OAuth2 token endpoint. Token is cached per isolate.
  *
- * Required secrets:
- *   GOOGLE_OAUTH_CLIENT_ID
- *   GOOGLE_OAUTH_CLIENT_SECRET
- *   GOOGLE_OAUTH_REFRESH_TOKEN  (obtained once via bin/google-auth)
+ * Secret naming:
+ *   "personal" (default) — GOOGLE_OAUTH_CLIENT_ID / _CLIENT_SECRET / _REFRESH_TOKEN
+ *   any other account    — GOOGLE_OAUTH_<ACCOUNT>_CLIENT_ID / _CLIENT_SECRET / _REFRESH_TOKEN
+ *                          e.g. GOOGLE_OAUTH_GONG_CLIENT_ID
  *
- * Returns { ufetch, getUserAccessToken }.
+ * Returns { ufetch, getUserAccessToken, account }.
  */
-export function createUserFetch(env) {
-  const clientId = env.GOOGLE_OAUTH_CLIENT_ID || "";
-  const clientSecret = env.GOOGLE_OAUTH_CLIENT_SECRET || "";
-  const refreshToken = env.GOOGLE_OAUTH_REFRESH_TOKEN || "";
+export function createUserFetch(env, account = DEFAULT_ACCOUNT) {
+  const clientIdVar = envVarForAccount("CLIENT_ID", account);
+  const clientSecretVar = envVarForAccount("CLIENT_SECRET", account);
+  const refreshTokenVar = envVarForAccount("REFRESH_TOKEN", account);
+
+  const clientId = env[clientIdVar] || "";
+  const clientSecret = env[clientSecretVar] || "";
+  const refreshToken = env[refreshTokenVar] || "";
+  const cacheKey = `${account}:${clientId}`;
 
   async function getUserAccessToken() {
     const now = Math.floor(Date.now() / 1000);
-    const cached = _userTokenCache.get(clientId);
+    const cached = _userTokenCache.get(cacheKey);
     if (cached && cached.expiresAt > now + 60) return cached.token;
 
     if (!clientId || !clientSecret || !refreshToken) {
       throw new Error(
-        "OAuth2 credentials not configured. Set GOOGLE_OAUTH_CLIENT_ID, " +
-        "GOOGLE_OAUTH_CLIENT_SECRET, GOOGLE_OAUTH_REFRESH_TOKEN via wrangler secret put. " +
+        `OAuth2 credentials not configured for account '${account}'. ` +
+        `Set ${clientIdVar}, ${clientSecretVar}, ${refreshTokenVar} via wrangler secret put. ` +
         "Run bin/google-auth to obtain the refresh token."
       );
     }
@@ -216,12 +243,12 @@ export function createUserFetch(env) {
 
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      throw new Error(`OAuth2 token refresh failed: ${res.status} ${body}`);
+      throw new Error(`OAuth2 token refresh failed for '${account}': ${res.status} ${body}`);
     }
 
     const json = await res.json();
     const token = json.access_token;
-    _userTokenCache.set(clientId, { token, expiresAt: now + (json.expires_in || 3600) });
+    _userTokenCache.set(cacheKey, { token, expiresAt: now + (json.expires_in || 3600) });
     return token;
   }
 
@@ -231,10 +258,64 @@ export function createUserFetch(env) {
     const res = await fetch(url, { ...options, headers });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      throw new Error(`Google API ${res.status}: ${body}`);
+      throw new Error(`Google API ${res.status} (${account}): ${body}`);
     }
     return res;
   }
 
-  return { ufetch, getUserAccessToken };
+  return { ufetch, getUserAccessToken, account };
+}
+
+/**
+ * createUserFetches(env) — discover every configured Google OAuth account in
+ * env and return a map of { accountName -> { ufetch, getUserAccessToken } }.
+ *
+ * The default account ("personal") is included whenever GOOGLE_OAUTH_CLIENT_ID
+ * is set. Additional accounts are discovered by scanning env for env vars of
+ * the form GOOGLE_OAUTH_<ACCOUNT>_CLIENT_ID; each match becomes an entry
+ * keyed by the lowercased account name (e.g. "gong").
+ *
+ * Callers that only need the default account can simply read `.personal`.
+ * Callers that need to dispatch on an account name (tool `account` param,
+ * multi-account ingest) should use this map with getUserFetch() below.
+ */
+export function createUserFetches(env) {
+  const out = {};
+  if (env && env.GOOGLE_OAUTH_CLIENT_ID) {
+    out[DEFAULT_ACCOUNT] = createUserFetch(env, DEFAULT_ACCOUNT);
+  }
+  for (const key of Object.keys(env || {})) {
+    // Match GOOGLE_OAUTH_<ACCOUNT>_CLIENT_ID but NOT the bare
+    // GOOGLE_OAUTH_CLIENT_ID (which belongs to the default account).
+    const m = key.match(/^GOOGLE_OAUTH_(.+)_CLIENT_ID$/);
+    if (!m) continue;
+    // Reject the degenerate captures that would collide with field names
+    // (CLIENT, REFRESH, etc. as an "account"). These can only appear if the
+    // user names a suffixed variant that happens to mirror a field; skip.
+    const account = m[1].toLowerCase();
+    if (!account || account === DEFAULT_ACCOUNT) continue;
+    if (!env[key]) continue;
+    out[account] = createUserFetch(env, account);
+  }
+  return out;
+}
+
+/**
+ * getUserFetch(userFetches, account) — pick an account's ufetch with a clear
+ * error message if the caller asked for one that isn't configured. Use this
+ * inside tool handlers that accept an `account` input parameter.
+ */
+export function getUserFetch(userFetches, account = DEFAULT_ACCOUNT) {
+  const entry = userFetches && userFetches[account];
+  if (!entry) {
+    const available = Object.keys(userFetches || {}).join(", ") || "(none)";
+    const upper = account.toUpperCase();
+    throw new Error(
+      `OAuth account '${account}' not configured. Available accounts: ${available}. ` +
+      `Set GOOGLE_OAUTH_${upper}_CLIENT_ID, ` +
+      `GOOGLE_OAUTH_${upper}_CLIENT_SECRET, ` +
+      `GOOGLE_OAUTH_${upper}_REFRESH_TOKEN via wrangler secret put.`
+    );
+  }
+  return entry.ufetch;
 }

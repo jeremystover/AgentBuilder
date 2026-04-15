@@ -24,7 +24,7 @@
  *   PPP_MCP_WEB_RATE_LIMIT_PER_MIN, PPP_MCP_WEB_ALLOWLIST, PPP_MCP_WEB_DENYLIST
  */
 
-import { createGfetch, createUserFetch } from "./auth.js";
+import { createGfetch, createUserFetch, createUserFetches } from "./auth.js";
 import { createSheets } from "./sheets.js";
 import { createTools } from "./tools.js";
 import { createCrmTools } from "./crm.js";
@@ -305,7 +305,7 @@ async function handleJsonRpc(message, tools, loaders) {
 // here (and a matching cron trigger in wrangler.toml). Each handler runs
 // inside runCron() for a per-trigger CronRuns row and isolated try/catch, so
 // one schedule failing cannot break the others.
-function buildCronDispatch({ gfetch, ufetch, sheets, workCalSheets, spreadsheetId, env }) {
+function buildCronDispatch({ gfetch, ufetch, userFetches, sheets, workCalSheets, spreadsheetId, env }) {
   return {
     "0 6 * * *": {
       // 6am daily — regenerate Current_State.md on Drive so the user has a
@@ -342,7 +342,7 @@ function buildCronDispatch({ gfetch, ufetch, sheets, workCalSheets, spreadsheetI
     "*/10 * * * *": {
       trigger: "ingest-and-zoom",
       handler: async () => {
-        const { runIngest } = createIngest({ ufetch, gfetch, sheets, workCalSheets });
+        const { runIngest } = createIngest({ ufetch, userFetches, gfetch, sheets, workCalSheets });
         const ingest = await runIngest();
         // Zoom is best-effort on the same trigger; isolate its error so a Zoom
         // outage cannot mask ingest results in CronRuns.
@@ -374,13 +374,16 @@ export default {
   //    "0 9 * * 1"     — 9am Monday: commitment nudge drafts
   async scheduled(event, env, ctx) {
     const { gfetch } = createGfetch(env);
-    const { ufetch } = createUserFetch(env);
+    const userFetches = createUserFetches(env);
+    // Personal account remains the default for automation drafts / legacy
+    // single-account callers. Multi-account consumers use `userFetches`.
+    const ufetch = userFetches.personal?.ufetch;
     const spreadsheetId = env.PPP_SHEETS_SPREADSHEET_ID || "";
     const sheets = createSheets(gfetch, spreadsheetId);
     const workCalSheetId = env.PPP_WORK_CAL_SHEET_ID || "";
     const workCalSheets = workCalSheetId ? createSheets(gfetch, workCalSheetId) : null;
 
-    const dispatch = buildCronDispatch({ gfetch, ufetch, sheets, workCalSheets, spreadsheetId, env });
+    const dispatch = buildCronDispatch({ gfetch, ufetch, userFetches, sheets, workCalSheets, spreadsheetId, env });
     const entry = dispatch[event.cron];
 
     if (!entry) {
@@ -612,8 +615,9 @@ export default {
     const phase2CrmTools = createCrmTools({ spreadsheetId, sheets });
     const phase2ReviewTools = createReviewTools({ spreadsheetId, sheets });
     const phase3ZoomTools = createZoomTools({ env, gfetch, sheets, spreadsheetId });
-    const { ufetch } = createUserFetch(env);
-    const ingestTools = createIngestTools({ ufetch, gfetch, sheets, spreadsheetId, workCalSheets });
+    const userFetches = createUserFetches(env);
+    const ufetch = userFetches.personal?.ufetch;
+    const ingestTools = createIngestTools({ ufetch, userFetches, gfetch, sheets, spreadsheetId, workCalSheets });
     const phase4AutomationTools = createAutomationTools({ ufetch, sheets, spreadsheetId });
     const { tools: contentTools, loaders, drive } = createContentTools({ gfetch, config });
     const goalsTools = createGoalsTools({ spreadsheetId, sheets, storeChangeset });
