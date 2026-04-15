@@ -1,0 +1,84 @@
+:root {
+  --bg: #0e1116;
+  --panel: #161b22;
+  --panel-2: #1c2330;
+  --border: #2a3342;
+  --fg: #e6edf3;
+  --muted: #8b98a9;
+  --accent: #4f8cff;
+  --accent-fg: #fff;
+  --danger: #e5484d;
+  --ok: #2ea043;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, -apple-system, Segoe UI, sans-serif; }
+a { color: var(--accent); text-decoration: none; }
+
+.topbar {
+  display: flex; align-items: center; gap: 16px;
+  padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 10;
+}
+.brand { font-weight: 700; letter-spacing: .2px; }
+.topbar nav { display: flex; gap: 14px; flex: 1; }
+.topbar nav a { color: var(--muted); padding: 6px 8px; border-radius: 6px; }
+.topbar nav a.active, .topbar nav a:hover { color: var(--fg); background: var(--panel-2); }
+.auth input {
+  background: var(--panel-2); border: 1px solid var(--border); color: var(--fg);
+  padding: 6px 10px; border-radius: 6px; width: 180px;
+}
+
+main { padding: 20px; max-width: 1200px; margin: 0 auto; }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 20px; }
+.panel h1 { margin-top: 0; font-size: 18px; }
+.panel h2 { font-size: 15px; margin: 20px 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+.card { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
+.card .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .5px; }
+.card .v { font-size: 26px; font-weight: 700; margin-top: 6px; }
+
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .5px; }
+tr:hover td { background: var(--panel-2); }
+
+button, .btn {
+  background: var(--accent); color: var(--accent-fg); border: 0;
+  padding: 8px 14px; border-radius: 6px; cursor: pointer; font-weight: 600;
+}
+button.secondary { background: var(--panel-2); color: var(--fg); border: 1px solid var(--border); }
+button.danger { background: var(--danger); }
+button:disabled { opacity: .5; cursor: not-allowed; }
+
+input[type=text], input[type=url], input[type=email], input[type=number],
+input[type=date], select, textarea {
+  background: var(--panel-2); color: var(--fg); border: 1px solid var(--border);
+  padding: 7px 10px; border-radius: 6px; width: 100%;
+}
+label { display: block; font-size: 12px; color: var(--muted); margin-top: 10px; margin-bottom: 4px; }
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.form-row.three { grid-template-columns: 1fr 1fr 1fr; }
+
+.hint { color: var(--muted); font-size: 13px; }
+.actions { display: flex; gap: 10px; margin-top: 16px; }
+
+.tag { display: inline-block; padding: 2px 8px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 999px; font-size: 11px; color: var(--muted); }
+.tag.platform-airbnb { color: #ff5a5f; }
+.tag.platform-vrbo { color: #3662d8; }
+.tag.platform-booking { color: #00388c; background: #a9c3ff22; }
+.tag.platform-direct { color: var(--ok); }
+
+.calendar { display: grid; grid-template-columns: 180px 1fr; gap: 12px; overflow: auto; }
+.cal-row { display: contents; }
+.cal-unit { position: sticky; left: 0; background: var(--panel); padding: 8px; border-bottom: 1px solid var(--border); }
+.cal-days { display: grid; grid-auto-flow: column; grid-auto-columns: 28px; gap: 2px; border-bottom: 1px solid var(--border); padding: 8px 0; }
+.cal-day { height: 28px; background: var(--panel-2); border-radius: 3px; position: relative; font-size: 10px; color: var(--muted); text-align: center; }
+.cal-day.booked { background: var(--danger); }
+.cal-day.blocked { background: #7a4a00; }
+.cal-day.today { outline: 1px solid var(--accent); }
+
+.photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
+.photo-grid figure { margin: 0; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.photo-grid img { width: 100%; height: 120px; object-fit: cover; display: block; }
+.photo-grid figcaption { padding: 6px 8px; font-size: 12px; color: var(--muted); }

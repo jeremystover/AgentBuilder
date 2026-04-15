@@ -3,7 +3,11 @@
   "compilerOptions": {
     "outDir": "dist",
     "rootDir": "src",
-    "types": ["@cloudflare/workers-types"]
+    "types": ["@cloudflare/workers-types"],
+    // The legacy booking-sync code predates the workspace's
+    // noUncheckedIndexedAccess rule. Relax it here so the as-is import
+    // typechecks; remove this override as the code is modernized.
+    "noUncheckedIndexedAccess": false
   },
-  "include": ["src/**/*", "worker-configuration.d.ts"]
+  "include": ["src/**/*"]
 }

@@ -88,9 +88,9 @@ importers:
       '@agentbuilder/llm':
         specifier: workspace:*
         version: link:../../packages/llm
-      agents:
-        specifier: ^0.0.95
-        version: 0.0.95(@cloudflare/workers-types@4.20260413.1)(react@19.2.5)
+      hono:
+        specifier: ^4.6.3
+        version: 4.12.12
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250410.0

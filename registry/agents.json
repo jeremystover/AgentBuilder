@@ -1,6 +1,6 @@
 {
   "$schemaVersion": 1,
-  "updatedAt": "2026-04-14T00:00:00.000Z",
+  "updatedAt": "2026-04-15T00:00:00.000Z",
   "agents": [
     {
       "id": "agent-builder",
@@ -220,25 +220,26 @@
     {
       "id": "guest-booking",
       "name": "Guest Booking",
-      "purpose": "Manages guest bookings across Airbnb, VRBO, and Booking.com — audits listing consistency across platforms (price, terms, photos, descriptions, titles) and manages overlapping-inventory availability using a graph-based containment/conflict model so that nested listing configurations (whole-house, partial-house, individual rooms) block each other correctly. Guesty is the current source of truth; the legacy booking-sync UI worker stays running until this agent reaches parity and will then be sunset.",
+      "purpose": "Channel manager for short-term rentals: keeps Airbnb, VRBO, Booking.com, and the direct-booking site in sync via iCal + platform APIs. Hosts the admin console, the guest-facing booking flow (with Stripe/Square checkout and SEO JSON-LD), and an MCP JSON-RPC endpoint so Claude can read inventory, check availability across the composite/atomic unit graph, and force-refresh inbound calendars.",
       "owner": "jeremystover",
       "status": "draft",
       "kind": "app",
       "skills": [
-        "listing-consistency-audit",
-        "availability-sync",
-        "inventory-graph-management",
-        "booking-event-processing",
-        "platform-api-integration"
+        "channel-sync",
+        "availability-engine",
+        "direct-booking",
+        "payments-integration",
+        "listing-ssr"
       ],
       "tools": [
-        "guesty-api-client",
-        "listing-diff-engine",
-        "inventory-graph-resolver",
-        "availability-block-writer",
-        "booking-event-listener",
-        "platform-calendar-sync",
-        "audit-report-generator"
+        "list_properties",
+        "list_units",
+        "list_listings",
+        "list_platforms",
+        "list_bookings",
+        "check_availability",
+        "pull_all_calendars",
+        "sync_log"
       ],
       "mcpServers": [],
       "sharedPackages": [
@@ -248,11 +249,11 @@
       "oauthScopes": [],
       "cloudflare": {
         "workerName": "guest-booking",
-        "durableObjects": ["GuestBookingDO"],
-        "d1": ["guest-booking-db"],
-        "kv": ["guest-booking-cache"],
-        "r2": [],
-        "queues": ["guest-booking-sync-queue"],
+        "durableObjects": [],
+        "d1": ["booking_sync"],
+        "kv": ["CACHE"],
+        "r2": ["booking-sync-photos"],
+        "queues": [],
         "hasAssets": true
       },
       "routing": {

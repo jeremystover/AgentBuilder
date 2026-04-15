@@ -7,12 +7,16 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "build": "wrangler deploy --dry-run --outdir=dist",
+    "db:init": "wrangler d1 execute booking_sync --file=./schema.sql",
+    "db:init:local": "wrangler d1 execute booking_sync --local --file=./schema.sql",
+    "db:seed": "wrangler d1 execute booking_sync --file=./seed.sql",
+    "db:seed:local": "wrangler d1 execute booking_sync --local --file=./seed.sql",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@agentbuilder/core": "workspace:*",
     "@agentbuilder/llm": "workspace:*",
-    "agents": "^0.0.95"
+    "hono": "^4.6.3"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250410.0",
