@@ -233,9 +233,9 @@ export function createZoomTools({ env, gfetch, sheets, spreadsheetId }) {
 
         if (calendarMatch) {
           // Update existing row
-          const rowIdx = await findRowByKey("Meetings", "meetingId", meetingId);
-          if (rowIdx > 0) {
-            await updateRow("Meetings", rowIdx, meetingRow);
+          const found = await findRowByKey("Meetings", "meetingId", meetingId);
+          if (found) {
+            await updateRow("Meetings", found.rowNum, meetingRow);
           }
         } else {
           // Append new row

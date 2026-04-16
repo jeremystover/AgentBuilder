@@ -26,6 +26,7 @@
 
 import { createGfetch, createUserFetch, createUserFetches } from "./auth.js";
 import { createSheets } from "./sheets.js";
+import { createD1Sheets } from "./d1-sheets.js";
 import { createTools } from "./tools.js";
 import { createCrmTools } from "./crm.js";
 import { createReviewTools } from "./reviews.js";
@@ -38,6 +39,25 @@ import { runCron, logError } from "./observability.js";
 import { bootstrapSheets } from "./bootstrap.js";
 import { createGoalsTools } from "./goals.js";
 import { createStateExportTools, generateStateExport, renderStateMarkdown } from "./state-export.js";
+
+// ── Data store resolution ────────────────────────────────────────────────────
+// When env.DB (Cloudflare D1) is bound, use it as the primary data store.
+// Otherwise fall back to Google Sheets via gfetch + spreadsheetId. The D1
+// adapter implements the same interface (readSheetAsObjects, findRowByKey,
+// appendRows, updateRow, etc.) so all consumers work unchanged.
+//
+// workCalSheets always uses Google Sheets — it's a separate spreadsheet
+// maintained by an external Apps Script bridge in the work org.
+
+function resolveDataStore(env, gfetch) {
+  if (env.DB) {
+    // D1 is available — use it. Pass a truthy sentinel for spreadsheetId so
+    // guard checks like `if (!spreadsheetId)` still pass in tool factories.
+    return { sheets: createD1Sheets(env.DB), spreadsheetId: "d1" };
+  }
+  const spreadsheetId = env.PPP_SHEETS_SPREADSHEET_ID || "";
+  return { sheets: createSheets(gfetch, spreadsheetId), spreadsheetId };
+}
 
 // ── Pure utilities ───────────────────────────────────────────────────────────
 
@@ -378,8 +398,7 @@ export default {
     // Personal account remains the default for automation drafts / legacy
     // single-account callers. Multi-account consumers use `userFetches`.
     const ufetch = userFetches.personal?.ufetch;
-    const spreadsheetId = env.PPP_SHEETS_SPREADSHEET_ID || "";
-    const sheets = createSheets(gfetch, spreadsheetId);
+    const { sheets, spreadsheetId } = resolveDataStore(env, gfetch);
     const workCalSheetId = env.PPP_WORK_CAL_SHEET_ID || "";
     const workCalSheets = workCalSheetId ? createSheets(gfetch, workCalSheetId) : null;
 
@@ -419,12 +438,11 @@ export default {
     if (request.method === "GET" && urlObj.pathname === "/dashboard") {
       const auth = requireAuth(request, env, { scope: "mcp" });
       if (!auth.ok) return auth.response;
-      const sid = env.PPP_SHEETS_SPREADSHEET_ID || "";
-      if (!sid) {
-        return new Response("PPP_SHEETS_SPREADSHEET_ID not set", { status: 400 });
-      }
       const { gfetch: gf } = createGfetch(env);
-      const sh = createSheets(gf, sid);
+      const { sheets: sh, spreadsheetId: sid } = resolveDataStore(env, gf);
+      if (!sid) {
+        return new Response("No data store configured (need DB or PPP_SHEETS_SPREADSHEET_ID)", { status: 400 });
+      }
       try {
         const [goals, projects, tasks, stakeholders] = await Promise.all([
           sh.readSheetAsObjects("Goals").catch(() => []),
@@ -451,7 +469,7 @@ export default {
   .hint { color: #888; font-size: 0.85em; margin-bottom: 1em; }
 </style>
 </head><body>
-<p class="hint">Rendered from Sheets. Add <code>?quarter=2026Q2</code> to filter.</p>
+<p class="hint">Add <code>?quarter=2026Q2</code> to filter.</p>
 <pre>${escaped}</pre>
 </body></html>`;
         return new Response(html, {
@@ -467,10 +485,9 @@ export default {
     if (request.method === "POST" && urlObj.pathname === "/internal/state-export") {
       const auth = requireAuth(request, env, { scope: "internal" });
       if (!auth.ok) return auth.response;
-      const sid = env.PPP_SHEETS_SPREADSHEET_ID || "";
-      if (!sid) return jsonResponse({ error: "PPP_SHEETS_SPREADSHEET_ID not set" }, 400);
       const { gfetch: gf } = createGfetch(env);
-      const sh = createSheets(gf, sid);
+      const { sheets: sh, spreadsheetId: sid } = resolveDataStore(env, gf);
+      if (!sid) return jsonResponse({ error: "No data store configured" }, 400);
       try {
         const { drive: d } = createContentTools({ gfetch: gf, config: {
           DEFAULT_FOLDER_ID: env.PPP_MCP_DRIVE_FOLDER_ID || "",
@@ -498,8 +515,7 @@ export default {
       const auth = requireAuth(request, env, { scope: "internal" });
       if (!auth.ok) return auth.response;
       const { gfetch: gf } = createGfetch(env);
-      const sid = env.PPP_SHEETS_SPREADSHEET_ID || "";
-      const sh = createSheets(gf, sid);
+      const { sheets: sh, spreadsheetId: sid } = resolveDataStore(env, gf);
       try {
         const zoom = createZoomTools({ env, gfetch: gf, sheets: sh, spreadsheetId: sid });
         const result = await zoom.poll_zoom_recordings.run({});
@@ -515,9 +531,8 @@ export default {
       const auth = requireAuth(request, env, { scope: "internal" });
       if (!auth.ok) return auth.response;
       const { ufetch: uf } = createUserFetch(env);
-      const sid = env.PPP_SHEETS_SPREADSHEET_ID || "";
       const { gfetch: gf } = createGfetch(env);
-      const sh = createSheets(gf, sid);
+      const { sheets: sh, spreadsheetId: sid } = resolveDataStore(env, gf);
       try {
         const result = await generateMorningBrief({ sheets: sh, ufetch: uf, spreadsheetId: sid });
         return jsonResponse(result);
@@ -532,9 +547,8 @@ export default {
       const auth = requireAuth(request, env, { scope: "internal" });
       if (!auth.ok) return auth.response;
       const { ufetch: uf } = createUserFetch(env);
-      const sid = env.PPP_SHEETS_SPREADSHEET_ID || "";
       const { gfetch: gf } = createGfetch(env);
-      const sh = createSheets(gf, sid);
+      const { sheets: sh, spreadsheetId: sid } = resolveDataStore(env, gf);
       try {
         const result = await generateCommitmentNudges({ sheets: sh, ufetch: uf, spreadsheetId: sid });
         return jsonResponse(result);
@@ -553,12 +567,11 @@ export default {
     if (request.method === "POST" && urlObj.pathname === "/internal/bootstrap-sheets") {
       const auth = requireAuth(request, env, { scope: "internal" });
       if (!auth.ok) return auth.response;
-      const sid = env.PPP_SHEETS_SPREADSHEET_ID || "";
-      if (!sid) {
-        return jsonResponse({ error: "PPP_SHEETS_SPREADSHEET_ID not set" }, 400);
-      }
       const { gfetch: gf } = createGfetch(env);
-      const sh = createSheets(gf, sid);
+      const { sheets: sh, spreadsheetId: sid } = resolveDataStore(env, gf);
+      if (!sid) {
+        return jsonResponse({ error: "No data store configured" }, 400);
+      }
       try {
         const report = await bootstrapSheets(sh);
         return jsonResponse({ ok: true, report });
@@ -601,8 +614,7 @@ export default {
 
     // Per-request Google auth context (token is cached at module level)
     const { gfetch } = createGfetch(env);
-    const spreadsheetId = env.PPP_SHEETS_SPREADSHEET_ID || "";
-    const sheets = createSheets(gfetch, spreadsheetId);
+    const { sheets, spreadsheetId } = resolveDataStore(env, gfetch);
     const workCalSheetId = env.PPP_WORK_CAL_SHEET_ID || "";
     const workCalSheets = workCalSheetId ? createSheets(gfetch, workCalSheetId) : null;
     const phase1ToolsRaw = createTools({ spreadsheetId, sheets });
