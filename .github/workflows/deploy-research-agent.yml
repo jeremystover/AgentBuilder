@@ -1,0 +1,22 @@
+name: Deploy research-agent
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/research-agent/**'
+      - 'packages/**'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/deploy-research-agent.yml'
+      - '.github/workflows/_deploy-agent.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    uses: ./.github/workflows/_deploy-agent.yml
+    with:
+      agent_id: research-agent
+      d1_database: research-agent-db
+    secrets:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
