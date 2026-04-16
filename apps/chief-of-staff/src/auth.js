@@ -11,7 +11,7 @@
  *    createUserFetch(env) — exchanges refresh token for access token.
  *    Required secrets: GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET,
  *                      GOOGLE_OAUTH_REFRESH_TOKEN
- *    Obtain the refresh token once via: bin/google-auth
+ *    Obtain the refresh token once via: node scripts/google-auth.js
  */
 
 export function sleep(ms) {
@@ -45,6 +45,29 @@ export async function withRetry(fn, { tries = 4, baseMs = 250 } = {}) {
     }
   }
   throw lastErr;
+}
+
+// Retry wrapper specifically for the Google token endpoint.
+// Retries on 429 / 5xx (transient) but passes 4xx through immediately
+// (invalid_grant, invalid_client, etc. are permanent and shouldn't be retried).
+async function fetchTokenEndpoint(bodyStr, { tries = 4, baseMs = 250 } = {}) {
+  let lastErr;
+  for (let i = 0; i < tries; i++) {
+    const res = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: bodyStr,
+    });
+    if (res.status === 429 || res.status >= 500) {
+      lastErr = res;
+      if (i < tries - 1) {
+        await sleep(baseMs * Math.pow(2, i) + Math.floor(Math.random() * 100));
+        continue;
+      }
+    }
+    return res;
+  }
+  return lastErr;
 }
 
 // ── JWT signing helpers (Web Crypto, works in Cloudflare Workers) ────────────
@@ -134,11 +157,9 @@ export function createGfetch(env) {
       privateKey
     );
 
-    const res = await fetch("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: `grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=${jwt}`,
-    });
+    const res = await fetchTokenEndpoint(
+      `grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=${jwt}`
+    );
 
     if (!res.ok) {
       const body = await res.text().catch(() => "");
@@ -152,12 +173,15 @@ export function createGfetch(env) {
   }
 
   async function gfetch(url, options = {}) {
-    const token = await getAccessToken();
-    const headers = {
-      Authorization: `Bearer ${token}`,
-      ...(options.headers || {}),
-    };
-    const res = await fetch(url, { ...options, headers });
+    let token = await getAccessToken();
+    const makeHeaders = (t) => ({ Authorization: `Bearer ${t}`, ...(options.headers || {}) });
+    let res = await fetch(url, { ...options, headers: makeHeaders(token) });
+    if (res.status === 401) {
+      // Token was rejected — evict cache entry and retry once with a fresh token.
+      _tokenCache.delete(clientEmail);
+      token = await getAccessToken();
+      res = await fetch(url, { ...options, headers: makeHeaders(token) });
+    }
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       throw new Error(`Google API ${res.status}: ${body}`);
@@ -226,20 +250,18 @@ export function createUserFetch(env, account = DEFAULT_ACCOUNT) {
       throw new Error(
         `OAuth2 credentials not configured for account '${account}'. ` +
         `Set ${clientIdVar}, ${clientSecretVar}, ${refreshTokenVar} via wrangler secret put. ` +
-        "Run bin/google-auth to obtain the refresh token."
+        "Run scripts/google-auth.js to obtain the refresh token."
       );
     }
 
-    const res = await fetch("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
+    const res = await fetchTokenEndpoint(
+      new URLSearchParams({
         client_id: clientId,
         client_secret: clientSecret,
         refresh_token: refreshToken,
         grant_type: "refresh_token",
-      }).toString(),
-    });
+      }).toString()
+    );
 
     if (!res.ok) {
       const body = await res.text().catch(() => "");
@@ -253,9 +275,15 @@ export function createUserFetch(env, account = DEFAULT_ACCOUNT) {
   }
 
   async function ufetch(url, options = {}) {
-    const token = await getUserAccessToken();
-    const headers = { Authorization: `Bearer ${token}`, ...(options.headers || {}) };
-    const res = await fetch(url, { ...options, headers });
+    let token = await getUserAccessToken();
+    const makeHeaders = (t) => ({ Authorization: `Bearer ${t}`, ...(options.headers || {}) });
+    let res = await fetch(url, { ...options, headers: makeHeaders(token) });
+    if (res.status === 401) {
+      // Token was rejected — evict cache entry and retry once with a fresh token.
+      _userTokenCache.delete(cacheKey);
+      token = await getUserAccessToken();
+      res = await fetch(url, { ...options, headers: makeHeaders(token) });
+    }
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       throw new Error(`Google API ${res.status} (${account}): ${body}`);
