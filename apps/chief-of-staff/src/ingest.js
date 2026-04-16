@@ -36,9 +36,9 @@ async function readConfigValue(sheets, key) {
 
 async function writeConfigValue(sheets, key, value) {
   try {
-    const rowIdx = await sheets.findRowByKey("Config", "key", key);
-    if (rowIdx > 0) {
-      await sheets.updateRow("Config", rowIdx, { key, value, updatedAt: nowIso() });
+    const found = await sheets.findRowByKey("Config", "key", key);
+    if (found) {
+      await sheets.updateRow("Config", found.rowNum, [key, value, nowIso()]);
     } else {
       await sheets.appendRows("Config", [[key, value, nowIso()]]);
     }
@@ -51,13 +51,15 @@ async function writeConfigValue(sheets, key, value) {
 
 async function writeIntakeRow(sheets, { kind, summary, payloadJson, sourceRef = "" }) {
   const id = generateId("int");
+  // Column order must match SHEET_SCHEMAS.IntakeQueue:
+  // intakeId, kind, summary, sourceRef, payloadJson, status, createdAt, updatedAt
   await sheets.appendRows("IntakeQueue", [[
     id,
     kind,
     summary.slice(0, 200),
+    sourceRef,
     payloadJson,
     "pending",
-    sourceRef,
     nowIso(),
     "",
   ]]);
@@ -181,9 +183,9 @@ async function ingestCalendar({ calendar, sheets, sinceMs }) {
       // Update existing row if title/time changed
       const existing = existingMeetings.find((m) => m.eventId === norm.eventId);
       if (existing && (existing.title !== norm.title || existing.startTime !== norm.startTime)) {
-        const rowIdx = await sheets.findRowByKey("Meetings", "eventId", norm.eventId);
-        if (rowIdx > 0) {
-          await sheets.updateRow("Meetings", rowIdx, {
+        const found = await sheets.findRowByKey("Meetings", "eventId", norm.eventId);
+        if (found) {
+          await sheets.updateRow("Meetings", found.rowNum, {
             ...existing,
             title: norm.title,
             startTime: norm.startTime,
@@ -334,10 +336,10 @@ async function ingestWorkCalendar({ sheets, workCalSheets, sinceMs }) {
       ]]);
       newMeetings++;
     } else {
-      const rowIdx = await sheets.findRowByKey("Meetings", "eventId", evt.eventId);
-      if (rowIdx > 0) {
+      const found = await sheets.findRowByKey("Meetings", "eventId", evt.eventId);
+      if (found) {
         const existing = existingMeetings.find((m) => m.eventId === evt.eventId) || {};
-        await sheets.updateRow("Meetings", rowIdx, {
+        await sheets.updateRow("Meetings", found.rowNum, {
           ...existing,
           title: evt.title,
           startTime: evt.startTime,
