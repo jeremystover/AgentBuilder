@@ -59,7 +59,7 @@ PPP_WORK_CAL_SHEET_ID         = "1joKa9hjG627uLTU9BmEBNWW2UhY4G6ZvQ2xF7-TYMaw"
 #
 #     OAuth2 credentials for Gmail (read + draft) and Calendar (read+write).
 #     Create a Desktop OAuth 2.0 Client in Google Cloud Console → Credentials.
-#     Run bin/google-auth once to get the refresh token.
+#     Run scripts/google-auth.js once to get the refresh token.
 #
 #     Default (personal) account:
 #       wrangler secret put GOOGLE_OAUTH_CLIENT_ID
