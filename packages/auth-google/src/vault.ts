@@ -5,13 +5,12 @@
  * tokens is impossible through this surface — a cross-agent leak would
  * require bypassing this class entirely, which shows up in code review.
  *
- * Phase 1: interface + D1 plumbing. Encryption + the OAuth dance land
- * in phase 2 — for now `encrypt`/`decrypt` are identity functions so
- * we can wire call sites without the KEK infrastructure yet. DO NOT
- * deploy this to production without fixing those.
+ * Tokens are encrypted at rest in D1 using AES-256-GCM with a KEK from
+ * Cloudflare Secrets Store.
  */
 
 import { AgentError } from '@agentbuilder/core';
+import { decryptToken, encryptToken } from './crypto.js';
 import type { StoredGoogleToken, TokenLookupKey } from './types.js';
 
 export interface TokenVault {
@@ -22,15 +21,17 @@ export interface TokenVault {
 
 export interface D1TokenVaultOptions {
   db: D1Database;
-  /** Reserved for phase 2: KEK pulled from Secrets Store */
-  encryptionKey?: CryptoKey;
+  /** KEK (Key Encryption Key) from Cloudflare Secrets Store, required for production */
+  encryptionKey: CryptoKey;
 }
 
 export class D1TokenVault implements TokenVault {
   private readonly db: D1Database;
+  private readonly encryptionKey: CryptoKey;
 
   constructor(opts: D1TokenVaultOptions) {
     this.db = opts.db;
+    this.encryptionKey = opts.encryptionKey;
   }
 
   async get(key: TokenLookupKey): Promise<StoredGoogleToken | null> {
@@ -54,8 +55,8 @@ export class D1TokenVault implements TokenVault {
       agentId: row.agent_id,
       userId: row.user_id,
       scopes: row.scopes,
-      accessToken: decrypt(row.access_token),
-      refreshToken: row.refresh_token ? decrypt(row.refresh_token) : null,
+      accessToken: await decryptToken(row.access_token, this.encryptionKey),
+      refreshToken: row.refresh_token ? await decryptToken(row.refresh_token, this.encryptionKey) : null,
       expiresAt: row.expires_at,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
@@ -63,6 +64,11 @@ export class D1TokenVault implements TokenVault {
   }
 
   async put(token: StoredGoogleToken): Promise<void> {
+    const encryptedAccessToken = await encryptToken(token.accessToken, this.encryptionKey);
+    const encryptedRefreshToken = token.refreshToken
+      ? await encryptToken(token.refreshToken, this.encryptionKey)
+      : null;
+
     await this.db
       .prepare(
         `INSERT INTO google_tokens
@@ -80,8 +86,8 @@ export class D1TokenVault implements TokenVault {
         token.agentId,
         token.userId,
         token.scopes,
-        encrypt(token.accessToken),
-        token.refreshToken ? encrypt(token.refreshToken) : null,
+        encryptedAccessToken,
+        encryptedRefreshToken,
         token.expiresAt,
         token.createdAt,
         token.updatedAt,
@@ -106,14 +112,4 @@ interface RawTokenRow {
   expires_at: number;
   created_at: number;
   updated_at: number;
-}
-
-// TODO(phase2): replace with AES-GCM using a KEK from Cloudflare Secrets Store.
-// Until then, every caller MUST treat stored values as sensitive.
-function encrypt(value: string): string {
-  return value;
-}
-
-function decrypt(value: string): string {
-  return value;
 }

@@ -8,9 +8,9 @@
  *   - No per-user OAuth needed for fleet operations; user OAuth happens
  *     only for consumer-facing app agents that need it
  *
- * Phase 1: types + interface stubs. Phase 2 adds JWT signing + install token
- * minting against the GitHub API.
+ * RS256 JWT signing + installation token minting against the GitHub API.
  */
 
 export * from './types.js';
 export * from './client.js';
+export * from './jwt.js';
