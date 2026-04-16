@@ -1,0 +1,22 @@
+name: Deploy chief-of-staff
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/chief-of-staff/**'
+      - 'packages/**'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/deploy-chief-of-staff.yml'
+      - '.github/workflows/_deploy-agent.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    uses: ./.github/workflows/_deploy-agent.yml
+    with:
+      agent_id: chief-of-staff
+      d1_database: chief-of-staff-db
+    secrets:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

@@ -101,6 +101,34 @@ wrangler d1 execute agentbuilder-core --remote \
 **⚠️ Production Security**: See `docs/phase-4-secrets-setup.md` for complete instructions
 on GitHub App authentication and token vault encryption key management.
 
+## Continuous deployment
+
+Every agent under `apps/*` is deployed by a GitHub Actions workflow at
+`.github/workflows/deploy-<agent-id>.yml`. On push to `main`, each workflow:
+
+1. Installs workspace deps (`pnpm install --frozen-lockfile`).
+2. Applies any pending D1 migrations in `apps/<id>/migrations/` via
+   `wrangler d1 migrations apply <db> --remote` (skipped when the agent has
+   no D1 database).
+3. Deploys the Worker via `wrangler deploy`.
+
+Path filters keep each workflow scoped to its own agent, the shared
+`packages/**`, and `pnpm-lock.yaml`, so unrelated changes don't redeploy
+every Worker. All per-agent workflows call the reusable workflow at
+`.github/workflows/_deploy-agent.yml` to share the install/migrate/deploy
+pipeline.
+
+Required repository secrets:
+
+| Secret | Purpose |
+|---|---|
+| `CLOUDFLARE_API_TOKEN` | Token with `Workers Scripts:Edit` + `D1:Edit` for the target account |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account id the Workers are deployed to |
+
+`pnpm create-agent` generates a matching `deploy-<id>.yml` automatically.
+Pass `--d1-database <db-name>` to pre-fill the migration step; otherwise
+edit the generated workflow once you add a D1 binding.
+
 ## Testing the personas (phase 3)
 
 All three personas have real tool loops and can be tested end-to-end.
