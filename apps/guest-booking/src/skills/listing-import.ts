@@ -1,16 +1,18 @@
 /**
  * Skill: listing-import
  *
- * Imports listings from Guesty (via API) or Airbnb/VRBO (manual entry).
+ * Imports listings from Guesty, Airbnb, or VRBO via manual entry.
  * After import, returns existing listings from other platforms so the
  * caller (Claude) can ask the user which listings represent the same
  * physical property and should be linked together.
  *
  * Also provides `linkListings` to assign the same property_id to
  * listings that represent the same property across platforms.
+ *
+ * Note: Guesty Lite does not offer an API, so all platforms use manual
+ * entry. The user provides listing details and Claude constructs the call.
  */
 import type { Env } from '../../worker-configuration';
-import { guestyRequest } from './platform-api-integration.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -86,121 +88,19 @@ export interface LinkListingsResult {
   }>;
 }
 
-// ── Guesty API fetch ─────────────────────────────────────────────────────────
-
-interface GuestyListing {
-  _id: string;
-  title?: string;
-  nickname?: string;
-  address?: { full?: string };
-  bedrooms?: number;
-  bathrooms?: number;
-  beds?: number;
-  accommodates?: number;
-  prices?: {
-    basePrice?: number;
-    cleaningFee?: number;
-    securityDeposit?: number;
-    weeklyPriceFactor?: number;
-    monthlyPriceFactor?: number;
-  };
-  terms?: {
-    minNights?: number;
-    maxNights?: number;
-    cancellation?: string;
-  };
-  publicDescription?: {
-    summary?: string;
-    space?: string;
-    access?: string;
-    notes?: string;
-  };
-  pictures?: Array<{ original?: string; thumbnail?: string; caption?: string }>;
-  instantBooking?: { enabled?: boolean };
-  amenities?: string[];
-  houseRules?: string;
-  propertyType?: string;
-  checkInTime?: string;
-  checkOutTime?: string;
-}
-
-async function fetchGuestyListings(env: Env): Promise<ManualListingInput[]> {
-  const resp = await guestyRequest(
-    env,
-    '/v1/listings?limit=100&fields=title,nickname,address,bedrooms,bathrooms,beds,accommodates,prices,terms,publicDescription,pictures,instantBooking,amenities,houseRules,propertyType,checkInTime,checkOutTime',
-  );
-  if (!resp.ok) {
-    const text = await resp.text();
-    throw new Error(`Guesty API error (${resp.status}): ${text}`);
-  }
-
-  const data = (await resp.json()) as { results: GuestyListing[] };
-  return data.results.map((g) => {
-    const desc = [
-      g.publicDescription?.summary,
-      g.publicDescription?.space,
-      g.publicDescription?.access,
-      g.publicDescription?.notes,
-    ]
-      .filter(Boolean)
-      .join('\n\n');
-
-    return {
-      externalId: g._id,
-      name: g.nickname || g.title || g._id,
-      title: g.title,
-      description: desc || undefined,
-      priceCents: g.prices?.basePrice != null ? Math.round(g.prices.basePrice * 100) : undefined,
-      cleaningFeeCents:
-        g.prices?.cleaningFee != null ? Math.round(g.prices.cleaningFee * 100) : undefined,
-      securityDepositCents:
-        g.prices?.securityDeposit != null ? Math.round(g.prices.securityDeposit * 100) : undefined,
-      weeklyDiscountPct:
-        g.prices?.weeklyPriceFactor != null
-          ? Math.round((1 - g.prices.weeklyPriceFactor) * 100)
-          : undefined,
-      monthlyDiscountPct:
-        g.prices?.monthlyPriceFactor != null
-          ? Math.round((1 - g.prices.monthlyPriceFactor) * 100)
-          : undefined,
-      minNights: g.terms?.minNights,
-      maxNights: g.terms?.maxNights,
-      instantBook: g.instantBooking?.enabled,
-      cancellationPolicy: g.terms?.cancellation,
-      maxGuests: g.accommodates,
-      bedrooms: g.bedrooms,
-      bathrooms: g.bathrooms,
-      beds: g.beds,
-      checkInTime: g.checkInTime,
-      checkOutTime: g.checkOutTime,
-      photoUrls: g.pictures?.map((p) => p.original ?? p.thumbnail ?? '').filter(Boolean),
-      amenities: g.amenities,
-      houseRules: g.houseRules,
-      petPolicy: undefined,
-      propertyType: g.propertyType,
-    };
-  });
-}
-
 // ── Import listings ──────────────────────────────────────────────────────────
 
 export async function importListings(
   env: Env,
   input: ImportListingsInput,
 ): Promise<ImportListingsResult> {
-  const { platform } = input;
-  let listings = input.listings;
-
-  // For Guesty, fetch from the API if no manual listings were supplied.
-  if (platform === 'guesty' && (!listings || listings.length === 0)) {
-    listings = await fetchGuestyListings(env);
-  }
+  const { platform, listings } = input;
 
   if (!listings || listings.length === 0) {
     return {
       imported: [],
       existingFromOtherPlatforms: [],
-      message: `No listings provided for ${platform}. For Airbnb/VRBO, supply listing data in the 'listings' array.`,
+      message: `No listings provided for ${platform}. Supply listing data in the 'listings' array.`,
     };
   }
 

@@ -15,6 +15,8 @@ export interface Env {
   SYNC_QUEUE: Queue<BookingSyncJob>;
 
   // Platform credentials (wired via `wrangler secret put`).
+  // Note: Guesty Lite does not offer an API. These are reserved for
+  // future use if upgrading to Guesty Pro.
   GUESTY_API_KEY?: string;
   GUESTY_WEBHOOK_SECRET?: string;
 }

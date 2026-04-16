@@ -53,7 +53,7 @@ const MCP_TOOLS = [
   {
     name: 'import_listings',
     description:
-      'Import listings from Guesty (auto-fetched via API), Airbnb, or VRBO (manual entry). Returns the imported listings plus any existing listings from other platforms so you can ask the user which ones represent the same physical property and should be linked.',
+      'Import listings from Guesty, Airbnb, or VRBO. Provide the listing details in the listings array. Returns the imported listings plus any existing listings from other platforms so you can ask the user which ones represent the same physical property and should be linked.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -65,7 +65,7 @@ const MCP_TOOLS = [
         listings: {
           type: 'array',
           description:
-            'Listing data for manual import (required for Airbnb/VRBO, optional for Guesty which can auto-fetch). Omit for Guesty to pull all listings from the API.',
+            'Listing data to import. Provide the details the user gives you for each listing.',
           items: {
             type: 'object',
             properties: {
