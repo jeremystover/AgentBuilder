@@ -1,0 +1,48 @@
+name = "research-agent"
+main = "src/index.ts"
+compatibility_date = "2025-04-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Durable Object — persistent chat session (single-user, named "jeremy")
+[[durable_objects.bindings]]
+name = "CHAT_SESSION"
+class_name = "ChatSession"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ChatSession"]
+
+# Workers AI — embeddings (bge-base-en-v1.5, 768-dim) + generation (Llama 3.1 8B)
+[ai]
+binding = "AI"
+
+# D1 — articles, sources, feedback, interest_profile tables
+[[d1_databases]]
+binding = "CONTENT_DB"
+database_name = "research-agent-db"
+database_id = "REPLACE_WITH_DB_ID"
+
+# Vectorize — semantic similarity index (create via: wrangler vectorize create research-agent-content --dimensions=768 --metric=cosine)
+[[vectorize]]
+binding = "CONTENT_VECTORS"
+index_name = "research-agent-content"
+
+# R2 — large HTML and full-text storage for articles exceeding D1 row limits
+[[r2_buckets]]
+binding = "CONTENT_STORE"
+bucket_name = "research-agent-content"
+
+# Cron — poll Bluesky sources every 30 minutes
+[triggers]
+crons = ["*/30 * * * *"]
+
+[vars]
+ENVIRONMENT = "production"
+
+# Inbound email routing is configured in the Cloudflare dashboard (Email > Email Workers).
+# The email() handler in src/index.ts processes forwarded messages automatically.
+
+# Secrets (set via wrangler secret put):
+#   wrangler secret put MCP_BEARER_TOKEN      — bearer token for /mcp endpoint
+#   wrangler secret put BLUESKY_IDENTIFIER    — Bluesky handle (e.g. user.bsky.social)
+#   wrangler secret put BLUESKY_APP_PASSWORD  — Bluesky app-specific password

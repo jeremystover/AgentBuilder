@@ -133,7 +133,7 @@ export async function handleMcpRequest(request: Request, env: Env, ctx: Executio
       return mcpResponse(ok(id, {
         protocolVersion: "2024-11-05",
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: "content-brain", version: "1.0.0" },
+        serverInfo: { name: "research-agent", version: "1.0.0" },
       }));
     }
 

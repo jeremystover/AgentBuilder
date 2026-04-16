@@ -286,6 +286,78 @@
         ]
       },
       "version": "0.0.1"
+    },
+    {
+      "id": "research-agent",
+      "name": "Research Agent",
+      "purpose": "Personal knowledge base — ingests articles from Bluesky, email forwards, and manual bookmarks; retrieves content via semantic and full-text search; synthesizes grounded answers with citations; and curates ranked digests by interest profile.",
+      "owner": "jeremystover",
+      "status": "draft",
+      "kind": "headless",
+      "skills": [
+        "bluesky-poll",
+        "url-ingestion",
+        "content-extraction",
+        "semantic-search",
+        "fulltext-search",
+        "rag-synthesis",
+        "digest-generation",
+        "interest-curation",
+        "content-scoring",
+        "source-management"
+      ],
+      "tools": [
+        "ingest_url",
+        "search_semantic",
+        "search_fulltext",
+        "get_article",
+        "synthesize",
+        "generate_digest",
+        "record_feedback",
+        "manage_interests",
+        "list_sources",
+        "score_content"
+      ],
+      "mcpServers": [],
+      "sharedPackages": [],
+      "oauthScopes": [],
+      "cloudflare": {
+        "workerName": "research-agent",
+        "durableObjects": ["ChatSession"],
+        "d1": ["research-agent-db"],
+        "kv": [],
+        "r2": ["research-agent-content"],
+        "queues": [],
+        "hasAssets": false
+      },
+      "routing": {
+        "triggerPhrases": [
+          "what have I saved about",
+          "ingest this URL",
+          "search my reading list",
+          "generate a digest",
+          "what did I bookmark",
+          "summarize my research on",
+          "add this to my knowledge base"
+        ],
+        "examples": [
+          "Ingest https://example.com/article and add it to my reading list",
+          "What have I saved about AI agents?",
+          "Generate a digest of what I've read in the last 24 hours",
+          "Search my knowledge base for articles about vector databases",
+          "Add the Bluesky feed @someaccount.bsky.social as a source",
+          "What does my research say about Cloudflare Workers?"
+        ],
+        "nonGoals": [
+          "Calendar, tasks, goals, or stakeholder management (that's Chief of Staff)",
+          "Financial accounting, bookkeeping, or tax work (that's CFO)",
+          "Guest booking or property management (that's Guest Booking)",
+          "Building or modifying other agents (that's Agent Builder)",
+          "Sending emails or creating calendar events",
+          "Real-time web search — this agent searches ingested content only"
+        ]
+      },
+      "version": "0.0.1"
     }
   ]
 }
