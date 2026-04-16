@@ -28,7 +28,8 @@ tools/                Repo-wide CLI tooling (run with `tsx`).
 
 ```bash
 pnpm create-agent my-agent --kind headless --name "My Agent" \
-  --purpose "One sentence describing what it does" --owner you
+  --purpose "One sentence describing what it does" --owner you \
+  --d1-database my-agent-db   # optional; omit if the agent has no D1
 pnpm install
 pnpm --filter @agentbuilder/app-my-agent typecheck
 pnpm --filter @agentbuilder/app-my-agent dev
@@ -36,6 +37,10 @@ pnpm --filter @agentbuilder/app-my-agent dev
 
 Fill in `apps/my-agent/SKILL.md` before merging. The registry entry is
 created automatically in draft status; flip to `active` when it's deployed.
+
+`create-agent` also writes `.github/workflows/deploy-my-agent.yml`, which
+runs D1 migrations and `wrangler deploy` on push to `main`. See the
+"Continuous deployment" section of the README for required secrets.
 
 ## Modifying shared packages
 

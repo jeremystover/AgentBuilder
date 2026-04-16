@@ -1,0 +1,69 @@
+name: Deploy Agent (reusable)
+
+# Reusable workflow that deploys a single agent Worker to Cloudflare and,
+# when the agent has a `migrations/` directory, applies pending D1
+# migrations before the deploy. Per-agent workflows under this directory
+# call this one with their own `agent_id` / `d1_database` inputs.
+
+on:
+  workflow_call:
+    inputs:
+      agent_id:
+        description: Directory name under apps/ (also the Worker name).
+        required: true
+        type: string
+      d1_database:
+        description: D1 database name to migrate. Leave empty to skip migrations.
+        required: false
+        type: string
+        default: ''
+      node_version:
+        description: Node.js version used to install deps and run wrangler.
+        required: false
+        type: string
+        default: '20'
+      pnpm_version:
+        description: pnpm version (keep in sync with the root package.json).
+        required: false
+        type: string
+        default: '9.12.0'
+    secrets:
+      CLOUDFLARE_API_TOKEN:
+        required: true
+      CLOUDFLARE_ACCOUNT_ID:
+        required: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ inputs.pnpm_version }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply D1 migrations
+        if: inputs.d1_database != '' && hashFiles(format('apps/{0}/migrations/**/*.sql', inputs.agent_id)) != ''
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: apps/${{ inputs.agent_id }}
+          command: d1 migrations apply ${{ inputs.d1_database }} --remote
+
+      - name: Deploy Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: apps/${{ inputs.agent_id }}
+          command: deploy

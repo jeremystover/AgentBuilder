@@ -10,6 +10,8 @@
  *   1. copies .agent-builder/templates/<kind>-agent/** to apps/<id>/**
  *   2. replaces __AGENT_ID__ / __AGENT_NAME__ / __AGENT_PURPOSE__ / __AGENT_CLASS__
  *   3. upserts a draft entry in registry/agents.json
+ *   4. renders .github/workflows/deploy-<id>.yml from the shared template
+ *      so every new agent has Cloudflare deploy + D1 migration CI wired up
  *
  * After scaffolding, run `pnpm install && pnpm --filter @agentbuilder/app-<id> typecheck`.
  */
@@ -30,6 +32,7 @@ interface Args {
   name: string;
   purpose: string;
   owner: string;
+  d1Database: string;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -57,8 +60,9 @@ function parseArgs(argv: string[]): Args {
   const name = flags.get('name') ?? id;
   const purpose = flags.get('purpose') ?? `TODO: describe ${id}`;
   const owner = flags.get('owner') ?? 'unknown';
+  const d1Database = flags.get('d1-database') ?? '';
 
-  return { id, kind, name, purpose, owner };
+  return { id, kind, name, purpose, owner, d1Database };
 }
 
 function classNameFor(id: string): string {
@@ -85,7 +89,8 @@ function applyReplacements(src: string, args: Args): string {
     .replaceAll('__AGENT_ID__', args.id)
     .replaceAll('__AGENT_NAME__', args.name)
     .replaceAll('__AGENT_PURPOSE__', args.purpose)
-    .replaceAll('__AGENT_CLASS__', className);
+    .replaceAll('__AGENT_CLASS__', className)
+    .replaceAll('__AGENT_D1_DATABASE__', args.d1Database ? `'${args.d1Database}'` : `''`);
 }
 
 async function copyTemplate(args: Args): Promise<string> {
@@ -102,6 +107,15 @@ async function copyTemplate(args: Args): Promise<string> {
   }
 
   return destDir;
+}
+
+async function writeDeployWorkflow(args: Args): Promise<string> {
+  const templatePath = resolve(REPO_ROOT, '.agent-builder/templates/common/deploy.yml.tmpl');
+  const destPath = resolve(REPO_ROOT, `.github/workflows/deploy-${args.id}.yml`);
+  await mkdir(resolve(destPath, '..'), { recursive: true });
+  const src = await readFile(templatePath, 'utf8');
+  await writeFile(destPath, applyReplacements(src, args), 'utf8');
+  return destPath;
 }
 
 async function registerAgent(args: Args): Promise<void> {
@@ -140,15 +154,22 @@ async function registerAgent(args: Args): Promise<void> {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const dest = await copyTemplate(args);
+  const workflow = await writeDeployWorkflow(args);
   await registerAgent(args);
 
   console.log(`✓ Scaffolded ${args.kind}-agent at ${relative(REPO_ROOT, dest)}`);
   console.log(`✓ Registered ${args.id} in registry/agents.json (status: draft)`);
+  console.log(`✓ Wrote deploy workflow at ${relative(REPO_ROOT, workflow)}`);
   console.log('\nNext steps:');
   console.log('  1. pnpm install');
   console.log(`  2. pnpm --filter @agentbuilder/app-${args.id} typecheck`);
   console.log(`  3. Fill in apps/${args.id}/SKILL.md (non-goals, tools, routing)`);
   console.log(`  4. pnpm --filter @agentbuilder/app-${args.id} dev`);
+  if (!args.d1Database) {
+    console.log(
+      `  5. When you add D1 to wrangler.toml, set d1_database in ${relative(REPO_ROOT, workflow)}`,
+    );
+  }
 }
 
 main().catch((err) => {

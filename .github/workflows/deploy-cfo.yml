@@ -1,0 +1,22 @@
+name: Deploy cfo
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/cfo/**'
+      - 'packages/**'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/deploy-cfo.yml'
+      - '.github/workflows/_deploy-agent.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    uses: ./.github/workflows/_deploy-agent.yml
+    with:
+      agent_id: cfo
+      d1_database: cfo-db
+    secrets:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
