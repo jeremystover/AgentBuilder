@@ -23,12 +23,12 @@ binding = "AI"
 [[d1_databases]]
 binding = "DB"
 database_name = "guest-booking-db"
-database_id = "TBD_after_wrangler_d1_create"
+database_id = "9d7bfbe9-0eb3-4431-925c-72ab04bf3e35"
 
 # KV cache for Guesty / iCal responses (respect platform rate limits).
 [[kv_namespaces]]
 binding = "CACHE"
-id = "TBD_after_wrangler_kv_create"
+id = "45ad1c3cf48e4fbebf57818cbc9079dd"
 
 # Async fan-out for booking events: one event → N platform block writes.
 [[queues.producers]]
