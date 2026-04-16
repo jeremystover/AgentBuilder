@@ -13,13 +13,18 @@
 
 ## Non-goals
 - Calendar, tasks, goals, or stakeholder management (that's Chief of Staff)
+- Sending emails or creating calendar events (that's Chief of Staff)
 - Financial accounting, bookkeeping, or tax work (that's CFO)
 - Guest booking or property management (that's Guest Booking)
 - Building or modifying other agents (that's Agent Builder)
-- Sending emails or creating calendar events
 - Real-time web search — this agent searches *ingested* content only
+- Ephemeral Drive doc or web page reads for planning context (that's Chief of Staff's `read_content`)
+
+> **Chief of Staff boundary:** Chief of Staff has `read_content` / `resolve_uri` for *ephemeral* fetching of Drive docs and web pages during planning (e.g., reading a meeting agenda). Research Agent is for *permanently indexing* articles so they can be searched later. "Read this doc for context" → Chief of Staff. "Save this article to my reading list" → Research Agent.
 
 ## Tools (MCP surface — POST /mcp)
+
+All 10 tools are available via the standard MCP endpoint and via POST /chat.
 
 | Tool | Description |
 |---|---|
@@ -28,12 +33,6 @@
 | `search_fulltext` | FTS5 keyword search — supports AND, OR, NOT, "exact phrase". |
 | `get_article` | Retrieve full article metadata by UUID; optionally include body or HTML. |
 | `synthesize` | RAG: retrieve relevant articles and generate a grounded answer with citations. |
-
-## Tools (chat surface — POST /chat)
-All five MCP tools above, plus:
-
-| Tool | Description |
-|---|---|
 | `generate_digest` | Curate a ranked digest of recent articles by interest profile. |
 | `record_feedback` | Thumbs-up a specific article → boosts topic and source weights. |
 | `manage_interests` | View or edit interest profile (topic weights, source scores, settings). |

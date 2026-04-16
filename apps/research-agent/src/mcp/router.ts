@@ -4,12 +4,17 @@
  */
 
 import type { Env, McpRequest, McpResponse, McpToolCallParams } from "../types";
-import { ZodError }                              from "zod";
-import { IngestUrlInput,      ingestUrl }        from "./tools/ingest_url";
-import { SearchSemanticInput, searchSemantic }   from "./tools/search_semantic";
-import { SearchFulltextInput, searchFulltext }   from "./tools/search_fulltext";
-import { GetArticleInput,     getArticle }       from "./tools/get_article";
-import { SynthesizeInput,     synthesize }       from "./tools/synthesize";
+import { ZodError }                                  from "zod";
+import { IngestUrlInput,       ingestUrl }           from "./tools/ingest_url";
+import { SearchSemanticInput,  searchSemantic }      from "./tools/search_semantic";
+import { SearchFulltextInput,  searchFulltext }      from "./tools/search_fulltext";
+import { GetArticleInput,      getArticle }          from "./tools/get_article";
+import { SynthesizeInput,      synthesize }          from "./tools/synthesize";
+import { GenerateDigestInput,  generateDigest }      from "./tools/generate_digest";
+import { RecordFeedbackInput,  recordFeedback }      from "./tools/record_feedback";
+import { ManageInterestsInput, manageInterests }     from "./tools/manage_interests";
+import { ListSourcesInput,     listSources }         from "./tools/list_sources";
+import { ScoreContentInput,    scoreContent }        from "./tools/score_content";
 
 const TOOL_MANIFESTS = [
   {
@@ -76,6 +81,74 @@ const TOOL_MANIFESTS = [
       },
     },
   },
+  {
+    name: "generate_digest",
+    description: "Generate a ranked digest of recently ingested articles, scored and grouped by your interest profile.",
+    inputSchema: {
+      type: "object", required: [], additionalProperties: false,
+      properties: {
+        limit:     { type: "integer", minimum: 1, maximum: 50, default: 15 },
+        since:     { type: "string", description: "ISO-8601 timestamp — only include articles ingested after this. Defaults to 24h ago." },
+        topic:     { type: "string", description: "Filter to a specific topic (partial match)" },
+        min_score: { type: "number", minimum: 0, maximum: 1, default: 0.0 },
+      },
+    },
+  },
+  {
+    name: "record_feedback",
+    description: "Record a thumbs-up on an article. Boosts topic and source weights in your interest profile.",
+    inputSchema: {
+      type: "object", required: ["article_id", "signal"], additionalProperties: false,
+      properties: {
+        article_id: { type: "string", format: "uuid" },
+        signal:     { type: "string", enum: ["thumbs_up"] },
+        note:       { type: "string", maxLength: 500 },
+      },
+    },
+  },
+  {
+    name: "manage_interests",
+    description: "View or edit your interest profile — topic weights, source trust scores, and digest settings.",
+    inputSchema: {
+      type: "object", required: ["action"], additionalProperties: false,
+      properties: {
+        action: { type: "string", enum: ["get", "update", "reset"] },
+        patch:  { type: "object", description: "Key-value pairs to set (action=update). Keys: 'topic:<name>', 'source:<id>', 'setting:<key>'" },
+        scope:  { type: "string", enum: ["topics", "sources", "all"], default: "all", description: "What to reset (action=reset)" },
+      },
+    },
+  },
+  {
+    name: "list_sources",
+    description: "List, add, remove, or toggle ingestion sources (Bluesky feeds, RSS, email aliases).",
+    inputSchema: {
+      type: "object", required: ["action"], additionalProperties: false,
+      properties: {
+        action:    { type: "string", enum: ["list", "add", "remove", "toggle"] },
+        source: {
+          type: "object", description: "Source definition (action=add)",
+          properties: {
+            type:    { type: "string", enum: ["rss", "bluesky", "email", "manual"] },
+            name:    { type: "string", minLength: 1, maxLength: 100 },
+            url:     { type: "string" },
+            enabled: { type: "boolean", default: true },
+          },
+        },
+        source_id: { type: "string", description: "Source ID (action=remove or toggle)" },
+        enabled:   { type: "boolean", description: "New enabled state (action=toggle)" },
+      },
+    },
+  },
+  {
+    name: "score_content",
+    description: "Score an article's relevance against your interest profile. Returns topic, source, recency, and total scores.",
+    inputSchema: {
+      type: "object", required: ["article_id"], additionalProperties: false,
+      properties: {
+        article_id: { type: "string", format: "uuid" },
+      },
+    },
+  },
 ] as const;
 
 const RPC_ERRORS = {
@@ -100,12 +173,17 @@ async function dispatchTool(
   toolName: string, args: Record<string, unknown>, env: Env, ctx: ExecutionContext,
 ): Promise<unknown> {
   switch (toolName) {
-    case "ingest_url":      return ingestUrl(IngestUrlInput.parse(args), env, ctx);
-    case "search_semantic": return searchSemantic(SearchSemanticInput.parse(args), env);
-    case "search_fulltext": return searchFulltext(SearchFulltextInput.parse(args), env);
-    case "get_article":     return getArticle(GetArticleInput.parse(args), env);
-    case "synthesize":      return synthesize(SynthesizeInput.parse(args), env);
-    default:                return null;
+    case "ingest_url":       return ingestUrl(IngestUrlInput.parse(args), env, ctx);
+    case "search_semantic":  return searchSemantic(SearchSemanticInput.parse(args), env);
+    case "search_fulltext":  return searchFulltext(SearchFulltextInput.parse(args), env);
+    case "get_article":      return getArticle(GetArticleInput.parse(args), env);
+    case "synthesize":       return synthesize(SynthesizeInput.parse(args), env);
+    case "generate_digest":  return generateDigest(GenerateDigestInput.parse(args), env);
+    case "record_feedback":  return recordFeedback(RecordFeedbackInput.parse(args), env);
+    case "manage_interests": return manageInterests(ManageInterestsInput.parse(args), env);
+    case "list_sources":     return listSources(ListSourcesInput.parse(args), env);
+    case "score_content":    return scoreContent(ScoreContentInput.parse(args), env);
+    default:                 return null;
   }
 }
 

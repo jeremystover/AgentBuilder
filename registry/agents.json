@@ -126,7 +126,9 @@
           "Financial accounting, bookkeeping, or tax work (that's the CFO agent)",
           "Building or modifying other agents",
           "Customer-facing apps or external-user conversations",
-          "Code authoring or engineering tasks"
+          "Code authoring or engineering tasks",
+          "Maintaining a persistent reading list, article archive, or knowledge base (that's Research Agent)",
+          "Ingesting URLs for later search, generating content digests, or managing an interest profile (that's Research Agent)"
         ]
       },
       "version": "4.0.0",
@@ -350,10 +352,11 @@
         ],
         "nonGoals": [
           "Calendar, tasks, goals, or stakeholder management (that's Chief of Staff)",
+          "Sending emails or creating calendar events (that's Chief of Staff)",
+          "Ephemeral Drive doc or web page reads for planning context (that's Chief of Staff's read_content)",
           "Financial accounting, bookkeeping, or tax work (that's CFO)",
           "Guest booking or property management (that's Guest Booking)",
           "Building or modifying other agents (that's Agent Builder)",
-          "Sending emails or creating calendar events",
           "Real-time web search — this agent searches ingested content only"
         ]
       },
