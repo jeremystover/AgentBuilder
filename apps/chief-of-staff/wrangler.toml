@@ -91,6 +91,19 @@ PPP_WORK_CAL_SHEET_ID         = "1joKa9hjG627uLTU9BmEBNWW2UhY4G6ZvQ2xF7-TYMaw"
 #     Create at marketplace.zoom.us → Develop → Build App → Server-to-Server OAuth.
 #     Scopes needed: recording:read (cloud_recording:read:list_recording_files:admin,
 #     cloud_recording:read:list_user_recordings:admin)
+#
+#   wrangler secret put BLUESKY_HANDLE
+#     Your Bluesky handle, e.g. "you.bsky.social". The leading @ is optional.
+#     Used to identify which account's likes to sync.
+#
+#   wrangler secret put BLUESKY_APP_PASSWORD
+#     An app-specific password from Bluesky → Settings → App passwords.
+#     Never use your main account password here — app passwords are revocable
+#     and scoped. Create one at: bsky.app/settings/app-passwords
+#
+#   wrangler secret put BLUESKY_PDS  (optional)
+#     Your personal data server URL. Defaults to "https://bsky.social".
+#     Only needed if you use a custom / self-hosted PDS.
 
 # ── D1 database ───────────────────────────────────────────────────────────────
 # Replaces Google Sheets as the primary data store for Tasks, Goals,

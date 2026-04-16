@@ -189,6 +189,10 @@ const TOOL_CATEGORIES = {
     "trigger_commitment_nudges",
     "log_agent_run",
   ],
+  bluesky: [
+    "run_bluesky_sync",
+    "list_bluesky_likes",
+  ],
   admin: [
     "bootstrap_sheets",
   ],
@@ -362,7 +366,7 @@ function buildCronDispatch({ gfetch, ufetch, userFetches, sheets, workCalSheets,
     "*/10 * * * *": {
       trigger: "ingest-and-zoom",
       handler: async () => {
-        const { runIngest } = createIngest({ ufetch, userFetches, gfetch, sheets, workCalSheets });
+        const { runIngest } = createIngest({ ufetch, userFetches, gfetch, sheets, workCalSheets, env });
         const ingest = await runIngest();
         // Zoom is best-effort on the same trigger; isolate its error so a Zoom
         // outage cannot mask ingest results in CronRuns.
@@ -629,7 +633,7 @@ export default {
     const phase3ZoomTools = createZoomTools({ env, gfetch, sheets, spreadsheetId });
     const userFetches = createUserFetches(env);
     const ufetch = userFetches.personal?.ufetch;
-    const ingestTools = createIngestTools({ ufetch, userFetches, gfetch, sheets, spreadsheetId, workCalSheets });
+    const ingestTools = createIngestTools({ ufetch, userFetches, gfetch, sheets, spreadsheetId, workCalSheets, env });
     const phase4AutomationTools = createAutomationTools({ ufetch, sheets, spreadsheetId });
     const { tools: contentTools, loaders, drive } = createContentTools({ gfetch, config });
     const goalsTools = createGoalsTools({ spreadsheetId, sheets, storeChangeset });
