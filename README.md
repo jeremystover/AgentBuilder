@@ -84,8 +84,10 @@ wrangler d1 create agentbuilder-core
 
 # Store shared secrets (these flow to Workers via env)
 wrangler secret put ANTHROPIC_API_KEY --name agent-builder
+wrangler secret put GITHUB_APP_ID --name agent-builder
+wrangler secret put GITHUB_APP_INSTALLATION_ID --name agent-builder
 wrangler secret put GITHUB_APP_PRIVATE_KEY --name agent-builder
-wrangler secret put GOOGLE_OAUTH_CLIENT_SECRET --name agent-builder
+wrangler secret put GOOGLE_TOKEN_VAULT_KEK --name agent-builder
 ```
 
 D1 schema for the shared token vault lives in
@@ -95,6 +97,9 @@ D1 schema for the shared token vault lives in
 wrangler d1 execute agentbuilder-core --remote \
   --command "$(node -e 'import(\"./packages/auth-google/src/schema.js\").then(m => console.log(m.GOOGLE_TOKEN_VAULT_SCHEMA))')"
 ```
+
+**⚠️ Production Security**: See `docs/phase-4-secrets-setup.md` for complete instructions
+on GitHub App authentication and token vault encryption key management.
 
 ## Testing the personas (phase 3)
 
@@ -140,6 +145,6 @@ dogfood agents scaffolded/migrated via Builder handoff: `cfo`, `chief-of-staff`,
 - ✅ **Phase 1** — monorepo skeleton, shared packages, persona stubs, templates, CLI, registry seed.
 - ✅ **Phase 2** — Architect persona with a real tool loop, structured-content support in the LLM client, DO-backed conversation sessions, registry tools (list/describe/check_overlap), `/chat` endpoint, chat test harness.
 - ✅ **Phase 3** — Builder persona with planning tools (plan_migration, plan_scaffold), Fleet Manager persona with read-only audit tools, Claude Code skills for execution, three dogfood agents (cfo, chief-of-staff, guest-booking) scaffolded/migrated via Builder handoff pattern.
-- ⏳ **Phase 4** — GitHub App RS256 JWT signing (Builder can open real PRs directly), Google OAuth token vault with AES-GCM encryption, production secrets wiring.
+- ✅ **Phase 4** — GitHub App RS256 JWT signing (@agentbuilder/auth-github), Google OAuth token vault with AES-256-GCM encryption (@agentbuilder/auth-google), production secrets setup guide.
 
 See `AGENTS.md` for working-in-repo conventions.

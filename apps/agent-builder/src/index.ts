@@ -195,7 +195,7 @@ export default {
       return jsonResponse({
         status: 'ok',
         agent: 'agent-builder',
-        phase: 3,
+        phase: 4,
         personas: ['architect', 'builder', 'fleet-manager'],
       });
     }
