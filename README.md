@@ -96,12 +96,13 @@ wrangler d1 execute agentbuilder-core --remote \
   --command "$(node -e 'import(\"./packages/auth-google/src/schema.js\").then(m => console.log(m.GOOGLE_TOKEN_VAULT_SCHEMA))')"
 ```
 
-## Testing the Architect persona (phase 2)
+## Testing the personas (phase 3)
 
-The Architect is the first persona implemented with a real tool loop.
-It has read-only access to the registry via three tools: `list_agents`,
-`describe_agent`, and `check_overlap`. You can test it end-to-end once
-`ANTHROPIC_API_KEY` is configured:
+All three personas have real tool loops and can be tested end-to-end.
+The **Architect** designs agents and proposes handoff to the **Builder**.
+The **Builder** plans scaffolds/migrations and hands off to Claude Code skills.
+The **Fleet Manager** audits registry health, overlap, and drift.
+Test it end-to-end once `ANTHROPIC_API_KEY` is configured:
 
 ```bash
 # 1. Put your Anthropic key in a local .dev.vars file (wrangler reads it for dev)
@@ -124,18 +125,21 @@ curl -X POST http://localhost:8787/chat \
   -d '{"message": "List everything in the fleet", "persona": "architect"}'
 ```
 
-Expected behavior: the Architect will call `list_agents` on most turns
-and `check_overlap` when you propose something new. Watch the `iterations`
-field in the response — > 1 means it made at least one tool call.
+Expected behavior: all three personas will make tool calls (watch `iterations` > 1).
+- **Architect**: calls `list_agents`, `describe_agent`, `check_overlap`, `validate_design`
+- **Builder**: calls `plan_migration`, `plan_scaffold`, and emits handoff to Claude Code
+- **Fleet Manager**: calls audit tools (`list_shared_package_consumers`, `find_stale_agents`, etc.)
 
-The Builder and Fleet Manager personas are still phase-2 stubs
-(single-turn, no tools). They'll get real tool loops in phase 3.
+The Builder is intentionally planning-only inside the Worker — it hands off to
+Claude Code skills (`.claude/skills/scaffold-agent.md`, `migrate-agent.md`)
+for actual file/git/wrangler operations. This pattern is proven by three
+dogfood agents scaffolded/migrated via Builder handoff: `cfo`, `chief-of-staff`, `guest-booking`.
 
 ## Phase status
 
 - ✅ **Phase 1** — monorepo skeleton, shared packages, persona stubs, templates, CLI, registry seed.
-- ✅ **Phase 2 (this commit)** — Architect persona with a real tool loop, structured-content support in the LLM client, DO-backed conversation sessions, registry tools (list/describe/check_overlap), `/chat` endpoint, chat test harness.
-- ⏳ **Phase 3** — Builder persona with fs/git/wrangler/github-app tools (opens real PRs), Fleet Manager persona with registry write + overlap propagation, shared eval harness, first dogfood agent scaffolded end-to-end.
-- ⏳ **Phase 4** — Google OAuth dance + token vault encryption, GitHub App JWT signing, production secrets wiring.
+- ✅ **Phase 2** — Architect persona with a real tool loop, structured-content support in the LLM client, DO-backed conversation sessions, registry tools (list/describe/check_overlap), `/chat` endpoint, chat test harness.
+- ✅ **Phase 3** — Builder persona with planning tools (plan_migration, plan_scaffold), Fleet Manager persona with read-only audit tools, Claude Code skills for execution, three dogfood agents (cfo, chief-of-staff, guest-booking) scaffolded/migrated via Builder handoff pattern.
+- ⏳ **Phase 4** — GitHub App RS256 JWT signing (Builder can open real PRs directly), Google OAuth token vault with AES-GCM encryption, production secrets wiring.
 
 See `AGENTS.md` for working-in-repo conventions.
