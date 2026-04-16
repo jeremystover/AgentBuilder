@@ -108,7 +108,7 @@ PPP_WORK_CAL_SHEET_ID         = "1joKa9hjG627uLTU9BmEBNWW2UhY4G6ZvQ2xF7-TYMaw"
 [[d1_databases]]
 binding = "DB"
 database_name = "chief-of-staff-db"
-database_id = "TODO_PASTE_DATABASE_ID_HERE"
+database_id = "fb337f5e-b57c-4844-aa08-10872deb8089"
 
 # ── Local dev ─────────────────────────────────────────────────────────────────
 # For local dev with `wrangler dev`, create .dev.vars (gitignored) with:
