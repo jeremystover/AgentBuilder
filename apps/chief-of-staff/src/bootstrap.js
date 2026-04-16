@@ -109,6 +109,14 @@ export const SHEET_SCHEMAS = {
   Errors: [
     "errorId", "scope", "message", "stack", "contextJson", "createdAt",
   ],
+
+  // Liked posts ingested from Bluesky via the ATProto API.
+  // See migrations/0003_bluesky_likes.sql for the D1 schema.
+  BlueskyLikes: [
+    "likeId", "likeUri", "postUri", "postCid", "postAuthorDid",
+    "postAuthorHandle", "postAuthorName", "postText", "postCreatedAt",
+    "likedAt", "payloadJson", "importedAt",
+  ],
 };
 
 /**

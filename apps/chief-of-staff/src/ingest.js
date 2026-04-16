@@ -15,6 +15,7 @@
 import { createGmail } from "./gmail.js";
 import { createCalendar } from "./calendar.js";
 import { DEFAULT_ACCOUNT, getUserFetch } from "./auth.js";
+import { createBluesky } from "./bluesky.js";
 
 function nowIso() { return new Date().toISOString(); }
 function generateId(prefix) {
@@ -420,14 +421,145 @@ async function ingestDrive({ gfetch, sheets, sinceMs }) {
   return { ingested: count, source: "drive" };
 }
 
+// ── Bluesky likes ingestion ──────────────────────────────────────────────────
+// Fetches the authenticated user's most-recent liked posts from the Bluesky
+// ATProto API and writes new ones to BlueskyLikes + IntakeQueue.
+//
+// Strategy: listRecords returns likes newest-first. We stop fetching pages the
+// moment we see a likeUri that is already in our BlueskyLikes table — since
+// all subsequent records are even older and therefore already imported.
+// This keeps the cost of each incremental sync to just one or two API pages.
+
+async function ingestBlueskyLikes({ bluesky, sheets }) {
+  // Load existing likeUris so we can detect when we've caught up.
+  let existingRows = [];
+  try {
+    existingRows = await sheets.readSheetAsObjects("BlueskyLikes");
+  } catch {
+    // Table may not exist on the first run — treat as empty.
+  }
+  const existingUris = new Set(existingRows.map((r) => r.likeUri).filter(Boolean));
+
+  const toInsert = []; // { row: [...], intake: {...} }
+  let cursor;
+  const MAX_PAGES = 5; // 5 × 100 = 500 likes max per ingest run
+
+  outer: for (let page = 0; page < MAX_PAGES; page++) {
+    let data;
+    try {
+      data = await bluesky.listLikes({ limit: 100, cursor });
+    } catch (e) {
+      // Surface partial results if we already have some new rows; otherwise error.
+      if (toInsert.length === 0) {
+        return { source: "bluesky-likes", error: e.message };
+      }
+      break;
+    }
+
+    const records = data.records || [];
+    if (!records.length) break;
+
+    // Collect fresh records. Stop at the first one we already know — all
+    // subsequent records are older and therefore also already imported.
+    const freshRecords = [];
+    for (const rec of records) {
+      if (existingUris.has(rec.uri)) break outer;
+      freshRecords.push(rec);
+    }
+
+    // Resolve post content in batches of 25 (API limit).
+    const postUriList = freshRecords
+      .map((r) => r.value?.subject?.uri)
+      .filter(Boolean);
+    const postsByUri = new Map();
+    for (let i = 0; i < postUriList.length; i += 25) {
+      try {
+        const { posts = [] } = await bluesky.getPosts(postUriList.slice(i, i + 25));
+        for (const p of posts) postsByUri.set(p.uri, p);
+      } catch {
+        // Best-effort — continue without post content if resolution fails.
+      }
+    }
+
+    for (const rec of freshRecords) {
+      const postUri = rec.value?.subject?.uri || "";
+      const post = postsByUri.get(postUri);
+      const author = post?.author || {};
+      const postRecord = post?.record || {};
+      const text = String(postRecord.text || "").slice(0, 1000);
+      const likedAt = rec.value?.createdAt || nowIso();
+
+      const likeId = generateId("bsky");
+      toInsert.push({
+        row: [
+          likeId,
+          rec.uri,                          // likeUri
+          postUri,                          // postUri
+          rec.value?.subject?.cid || "",    // postCid
+          author.did || "",                 // postAuthorDid
+          author.handle || "",              // postAuthorHandle
+          author.displayName || "",         // postAuthorName
+          text,                             // postText
+          postRecord.createdAt || "",       // postCreatedAt
+          likedAt,                          // likedAt
+          JSON.stringify({ likeRecord: rec, post: post || null }), // payloadJson
+          nowIso(),                         // importedAt
+        ],
+        intake: {
+          kind: "bluesky-like",
+          summary: `Liked on Bluesky: @${author.handle || "unknown"} — ${text.slice(0, 120)}`,
+          payloadJson: JSON.stringify({
+            likeId,
+            likeUri: rec.uri,
+            postUri,
+            author: {
+              did: author.did || "",
+              handle: author.handle || "",
+              displayName: author.displayName || "",
+            },
+            text,
+            likedAt,
+          }),
+          sourceRef: rec.uri,
+        },
+      });
+    }
+
+    cursor = data.cursor;
+    if (!cursor) break;
+  }
+
+  if (toInsert.length > 0) {
+    try {
+      await sheets.appendRows("BlueskyLikes", toInsert.map((t) => t.row));
+    } catch (e) {
+      return {
+        source: "bluesky-likes",
+        error: `write failed: ${e.message}`,
+        attempted: toInsert.length,
+      };
+    }
+    for (const { intake } of toInsert) {
+      try {
+        await writeIntakeRow(sheets, intake);
+      } catch {
+        // Best-effort — intake failure should not block the main sync result.
+      }
+    }
+  }
+
+  return { source: "bluesky-likes", newLikes: toInsert.length };
+}
+
 // ── Main ingest entry point ───────────────────────────────────────────────────
 
-export function createIngest({ ufetch, userFetches = null, gfetch, sheets, workCalSheets = null }) {
+export function createIngest({ ufetch, userFetches = null, gfetch, sheets, workCalSheets = null, env = null }) {
   // Personal account clients stay as the default for backwards-compatible
   // callers. Multi-account ingest builds per-account clients on the fly
   // below so each account gets its own token/auth context.
   const gmail = ufetch ? createGmail(ufetch) : null;
   const calendar = ufetch ? createCalendar(ufetch) : null;
+  const bluesky = env ? createBluesky(env) : null;
 
   // Resolve the set of accounts to ingest Gmail from. If the caller passed a
   // userFetches map we use every entry in it; otherwise we fall back to the
@@ -511,6 +643,22 @@ export function createIngest({ ufetch, userFetches = null, gfetch, sheets, workC
       results.sources.push({ source: "drive", error: e.message });
     }
 
+    // Bluesky likes — optional, requires BLUESKY_HANDLE + BLUESKY_APP_PASSWORD.
+    // Isolated so a Bluesky outage cannot mask results from the other sources.
+    if (bluesky) {
+      try {
+        const bskyResult = await ingestBlueskyLikes({ bluesky, sheets });
+        results.sources.push(bskyResult);
+      } catch (e) {
+        results.sources.push({ source: "bluesky-likes", error: e.message });
+      }
+    } else {
+      results.sources.push({
+        source: "bluesky-likes",
+        skipped: "BLUESKY_HANDLE or BLUESKY_APP_PASSWORD not set",
+      });
+    }
+
     // Keep the legacy single-account last-run key fresh so older tooling
     // that still reads it (and the personal-only calendar/drive paths above)
     // advances in lockstep with the main ingest cycle.
@@ -520,7 +668,7 @@ export function createIngest({ ufetch, userFetches = null, gfetch, sheets, workC
     return results;
   }
 
-  return { runIngest, gmail, calendar };
+  return { runIngest, gmail, calendar, bluesky };
 }
 
 // ── MCP tool wrappers ─────────────────────────────────────────────────────────
@@ -529,10 +677,10 @@ function formatContent(obj) {
   return { content: [{ type: "text", text: JSON.stringify(obj, null, 2) }] };
 }
 
-export function createIngestTools({ ufetch, userFetches = null, gfetch, sheets, spreadsheetId, workCalSheets = null }) {
+export function createIngestTools({ ufetch, userFetches = null, gfetch, sheets, spreadsheetId, workCalSheets = null, env = null }) {
   if (!spreadsheetId) return {};
 
-  const { runIngest } = createIngest({ ufetch, userFetches, gfetch, sheets, workCalSheets });
+  const { runIngest, bluesky } = createIngest({ ufetch, userFetches, gfetch, sheets, workCalSheets, env });
 
   // Resolve { gmail, calendar } clients for a named account. If userFetches
   // was not provided (legacy single-account callers) we fall back to the
@@ -748,6 +896,71 @@ export function createIngestTools({ ufetch, userFetches = null, gfetch, sheets, 
           const { gmail } = clientsFor(args.account);
           const draft = await gmail.createDraft(args);
           return formatContent({ ok: true, draftId: draft.id });
+        } catch (e) {
+          return formatContent({ error: e.message });
+        }
+      },
+    },
+
+    // ── Bluesky tools ───────────────────────────────────────────────────────
+
+    run_bluesky_sync: {
+      description:
+        "Manually trigger the Bluesky likes sync. Fetches recently liked posts from " +
+        "the Bluesky API and writes any new ones to BlueskyLikes + IntakeQueue. " +
+        "Normally runs automatically as part of the 10-minute ingest cron. " +
+        "Requires BLUESKY_HANDLE and BLUESKY_APP_PASSWORD secrets.",
+      inputSchema: { type: "object", properties: {}, additionalProperties: false },
+      run: async () => {
+        if (!bluesky) {
+          return formatContent({
+            error:
+              "Bluesky not configured. Set the BLUESKY_HANDLE and " +
+              "BLUESKY_APP_PASSWORD secrets via `wrangler secret put`.",
+          });
+        }
+        try {
+          const result = await ingestBlueskyLikes({ bluesky, sheets });
+          return formatContent(result);
+        } catch (e) {
+          return formatContent({ error: e.message });
+        }
+      },
+    },
+
+    list_bluesky_likes: {
+      description:
+        "List recently liked Bluesky posts stored in BlueskyLikes. " +
+        "Returns likes sorted newest-first, useful for content curation and inspiration. " +
+        "Call run_bluesky_sync first if results seem stale.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          limit: {
+            type: "number",
+            description: "Max results to return. Default 20, max 100.",
+          },
+        },
+        additionalProperties: false,
+      },
+      run: async (args = {}) => {
+        try {
+          const rows = await sheets.readSheetAsObjects("BlueskyLikes");
+          const limit = Math.min(args.limit || 20, 100);
+          const sorted = rows
+            .filter((r) => r.likedAt)
+            .sort((a, b) => (a.likedAt < b.likedAt ? 1 : -1))
+            .slice(0, limit)
+            .map((r) => ({
+              likeId: r.likeId,
+              postUri: r.postUri,
+              author: r.postAuthorHandle ? `@${r.postAuthorHandle}` : r.postAuthorDid,
+              displayName: r.postAuthorName,
+              text: r.postText,
+              postCreatedAt: r.postCreatedAt,
+              likedAt: r.likedAt,
+            }));
+          return formatContent({ count: sorted.length, likes: sorted });
         } catch (e) {
           return formatContent({ error: e.message });
         }
