@@ -33,10 +33,7 @@ function jsonResponse(obj: unknown, status = 200): Response {
   });
 }
 
-function requireAuth(
-  request: Request,
-  env: Env,
-): { ok: true } | { ok: false; response: Response } {
+function requireAuth(request: Request, env: Env): { ok: true } | { ok: false; response: Response } {
   const expected = env.MCP_HTTP_KEY ?? '';
   if (!expected) return { ok: true };
 
@@ -54,13 +51,95 @@ function requireAuth(
 
 const MCP_TOOLS = [
   {
-    name: 'audit_listings',
+    name: 'import_listings',
     description:
-      'Diff listing fields (price, terms, photos, descriptions, titles) across Airbnb/VRBO/Booking.com and return a structured divergence report.',
+      'Import listings from Guesty (auto-fetched via API), Airbnb, or VRBO (manual entry). Returns the imported listings plus any existing listings from other platforms so you can ask the user which ones represent the same physical property and should be linked.',
     inputSchema: {
       type: 'object',
       properties: {
-        propertyId: { type: 'string', description: 'Optional property id to scope the audit.' },
+        platform: {
+          type: 'string',
+          enum: ['guesty', 'airbnb', 'vrbo'],
+          description: 'The platform to import from.',
+        },
+        listings: {
+          type: 'array',
+          description:
+            'Listing data for manual import (required for Airbnb/VRBO, optional for Guesty which can auto-fetch). Omit for Guesty to pull all listings from the API.',
+          items: {
+            type: 'object',
+            properties: {
+              externalId: { type: 'string', description: 'The listing ID on the platform.' },
+              name: { type: 'string', description: 'Display name / nickname for this listing.' },
+              title: { type: 'string', description: 'Listing headline / title.' },
+              description: { type: 'string' },
+              priceCents: { type: 'number', description: 'Nightly base price in cents.' },
+              cleaningFeeCents: { type: 'number' },
+              securityDepositCents: { type: 'number' },
+              weeklyDiscountPct: {
+                type: 'number',
+                description: 'Weekly discount as a whole number (e.g. 10 = 10%).',
+              },
+              monthlyDiscountPct: {
+                type: 'number',
+                description: 'Monthly discount as a whole number.',
+              },
+              minNights: { type: 'number' },
+              maxNights: { type: 'number' },
+              instantBook: { type: 'boolean' },
+              cancellationPolicy: { type: 'string' },
+              maxGuests: { type: 'number' },
+              bedrooms: { type: 'number' },
+              bathrooms: { type: 'number' },
+              beds: { type: 'number' },
+              checkInTime: { type: 'string', description: 'e.g. "15:00" or "3:00 PM".' },
+              checkOutTime: { type: 'string', description: 'e.g. "11:00" or "11:00 AM".' },
+              photoUrls: { type: 'array', items: { type: 'string' }, description: 'Photo URLs.' },
+              amenities: { type: 'array', items: { type: 'string' } },
+              houseRules: { type: 'string' },
+              petPolicy: { type: 'string' },
+              propertyType: { type: 'string', description: 'e.g. house, apartment, cabin.' },
+            },
+            required: ['externalId', 'name'],
+          },
+        },
+      },
+      required: ['platform'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'link_listings',
+    description:
+      'Link listing nodes from different platforms that represent the same physical property. This groups them for cross-platform audit comparison and creates conflicts_with edges so availability sync blocks across platforms.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        listingNodeIds: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Array of listing node IDs (at least 2) that represent the same property.',
+        },
+        propertyLabel: {
+          type: 'string',
+          description: 'Optional human-readable label for this property group.',
+        },
+      },
+      required: ['listingNodeIds'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'audit_listings',
+    description:
+      'Compare listing configuration across platforms for linked properties. Returns a field-by-field divergence report showing what is out of sync (photos, instant book, pricing, discounts, description, amenities, policies, etc.) as a table with the current value on each platform.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        propertyId: {
+          type: 'string',
+          description: 'Property group ID to audit. Omit to audit all linked properties.',
+        },
       },
       additionalProperties: false,
     },

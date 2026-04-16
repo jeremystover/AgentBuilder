@@ -19,6 +19,7 @@ export interface ListingNode {
   platform: 'airbnb' | 'vrbo' | 'booking_com' | 'guesty';
   externalListingId: string;
   displayName: string;
+  propertyId?: string;
 }
 
 export interface ListingEdge {
@@ -30,15 +31,23 @@ export interface ListingEdge {
 
 export async function upsertListingNode(env: Env, node: ListingNode): Promise<void> {
   await env.DB.prepare(
-    `INSERT INTO listing_node (id, guesty_id, platform, external_listing_id, display_name)
-     VALUES (?, ?, ?, ?, ?)
+    `INSERT INTO listing_node (id, guesty_id, platform, external_listing_id, display_name, property_id)
+     VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        guesty_id = excluded.guesty_id,
        platform = excluded.platform,
        external_listing_id = excluded.external_listing_id,
-       display_name = excluded.display_name`,
+       display_name = excluded.display_name,
+       property_id = COALESCE(excluded.property_id, listing_node.property_id)`,
   )
-    .bind(node.id, node.guestyId ?? null, node.platform, node.externalListingId, node.displayName)
+    .bind(
+      node.id,
+      node.guestyId ?? null,
+      node.platform,
+      node.externalListingId,
+      node.displayName,
+      node.propertyId ?? null,
+    )
     .run();
 }
 

@@ -14,10 +14,12 @@ CREATE TABLE IF NOT EXISTS listing_node (
   platform TEXT NOT NULL,       -- 'airbnb' | 'vrbo' | 'booking_com' | 'guesty'
   external_listing_id TEXT NOT NULL,
   display_name TEXT NOT NULL,
+  property_id TEXT,             -- groups listings that represent the same physical property across platforms
   created_at TEXT DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_listing_node_platform ON listing_node(platform);
 CREATE INDEX IF NOT EXISTS idx_listing_node_guesty ON listing_node(guesty_id);
+CREATE INDEX IF NOT EXISTS idx_listing_node_property ON listing_node(property_id);
 
 -- Inventory graph: edges
 --   'contains'        booking to_node blocks from_node  (whole-house blocks rooms)
@@ -39,11 +41,32 @@ CREATE TABLE IF NOT EXISTS listing_snapshot (
   id TEXT PRIMARY KEY,
   listing_node_id TEXT NOT NULL REFERENCES listing_node(id),
   snapshot_at TEXT NOT NULL DEFAULT (datetime('now')),
+  -- Pricing & terms
   price_cents INTEGER,
+  cleaning_fee_cents INTEGER,
+  security_deposit_cents INTEGER,
+  weekly_discount_pct REAL,
+  monthly_discount_pct REAL,
   min_nights INTEGER,
+  max_nights INTEGER,
+  cancellation_policy TEXT,
+  instant_book INTEGER,         -- 0 or 1
+  -- Content
   title TEXT,
   description TEXT,
-  photo_urls TEXT               -- JSON array
+  photo_urls TEXT,              -- JSON array of URLs
+  property_type TEXT,           -- 'house' | 'apartment' | 'cabin' | etc
+  -- Capacity & layout
+  bedrooms INTEGER,
+  bathrooms REAL,               -- 1.5, 2, etc
+  beds INTEGER,
+  max_guests INTEGER,
+  -- Policies & logistics
+  check_in_time TEXT,
+  check_out_time TEXT,
+  house_rules TEXT,
+  pet_policy TEXT,
+  amenities TEXT                -- JSON array of strings
 );
 CREATE INDEX IF NOT EXISTS idx_listing_snapshot_node ON listing_snapshot(listing_node_id, snapshot_at);
 

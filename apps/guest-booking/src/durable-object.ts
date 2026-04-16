@@ -13,15 +13,21 @@ import { DurableObject } from 'cloudflare:workers';
 import { createLogger } from '@agentbuilder/core';
 import { LLMClient } from '@agentbuilder/llm';
 import type { BookingSyncJob, Env } from '../worker-configuration';
-import { listingConsistencyAudit } from './skills/listing-consistency-audit.js';
 import { availabilitySync } from './skills/availability-sync.js';
 import { processBookingEvent } from './skills/booking-event-processing.js';
 import {
-  upsertEdge,
-  upsertListingNode,
   type ListingEdge,
   type ListingNode,
+  upsertEdge,
+  upsertListingNode,
 } from './skills/inventory-graph-management.js';
+import { listingConsistencyAudit } from './skills/listing-consistency-audit.js';
+import {
+  type ImportListingsInput,
+  type LinkListingsInput,
+  importListings,
+  linkListings,
+} from './skills/listing-import.js';
 
 const SYSTEM_PROMPT = `You are Guest Booking.
 
@@ -48,6 +54,20 @@ export class GuestBookingDO extends DurableObject<Env> {
     const method = request.method;
 
     // ── MCP tool dispatch (proxied from the outer worker) ──────────────────
+    if (url.pathname === '/api/mcp/import_listings' && method === 'POST') {
+      const body = (await request.json()) as ImportListingsInput;
+      logger.info('mcp.import_listings', { platform: body.platform });
+      const result = await importListings(this.env, body);
+      return Response.json(result);
+    }
+
+    if (url.pathname === '/api/mcp/link_listings' && method === 'POST') {
+      const body = (await request.json()) as LinkListingsInput;
+      logger.info('mcp.link_listings', { count: body.listingNodeIds?.length });
+      const result = await linkListings(this.env, body);
+      return Response.json(result);
+    }
+
     if (url.pathname === '/api/mcp/audit_listings' && method === 'POST') {
       const body = (await request.json().catch(() => ({}))) as { propertyId?: string };
       logger.info('mcp.audit_listings');
