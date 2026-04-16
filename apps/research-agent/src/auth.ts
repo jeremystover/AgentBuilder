@@ -3,7 +3,7 @@ import type { Env } from "./types";
 export interface AuthResult  { ok: true;  error?: never; }
 export interface AuthFailure { ok: false; error: string; status: 401 | 403; }
 export type AuthCheck = AuthResult | AuthFailure;
- 
+  
 /**
  * Timing-safe string comparison using HMAC-SHA-256.
  * Signs both strings with a per-request throwaway key so the
