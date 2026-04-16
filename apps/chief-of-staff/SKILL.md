@@ -25,6 +25,10 @@ draft), Google Calendar (read/write), and Zoom (cloud recording poll).
 - Customer-facing apps or external-user conversations.
 - Code authoring or software-engineering tasks.
 - Property-operations / guest bookings — route to **Guest Booking**.
+- Building or searching a persistent reading list, article archive, or knowledge base — route to **Research Agent**.
+- Ingesting URLs into a searchable index, generating content digests, or managing an interest profile — route to **Research Agent**.
+
+> **content-tools boundary:** The `read_content` / `resolve_uri` tools exist to fetch a Drive doc or web page *on-the-fly for planning use* (e.g., reading a meeting doc before a call). They are ephemeral — nothing is indexed. If the goal is to *permanently save and later search* an article, that belongs to Research Agent.
 
 ## Tools
 

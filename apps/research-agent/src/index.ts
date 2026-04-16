@@ -1,5 +1,5 @@
 /**
- * Content Brain — Worker entrypoint
+ * Research Agent — Worker entrypoint
  *
  * Routes:
  *   POST /mcp          → MCP JSON-RPC server (bearer auth required)
@@ -39,7 +39,7 @@ function mcpCorsHeaders(): HeadersInit {
 
 // Restricted CORS for browser-originated endpoints (ingest, chat)
 function corsHeaders(origin: string | null): HeadersInit {
-  const allowed = ["chrome-extension://", "moz-extension://", "https://contentbrain.workers.dev"];
+  const allowed = ["chrome-extension://", "moz-extension://", "https://research-agent."];
   const allowOrigin = origin && allowed.some((p) => origin.startsWith(p)) ? origin : "null";
   return {
     "Access-Control-Allow-Origin":  allowOrigin,
