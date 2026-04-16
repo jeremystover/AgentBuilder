@@ -210,7 +210,7 @@ export const DEFAULT_ACCOUNT = "personal";
 //
 // This keeps the field names (CLIENT_ID / CLIENT_SECRET / REFRESH_TOKEN)
 // aligned across every account so it's easy to scan secrets in Cloudflare.
-function envVarForAccount(fieldSuffix, account) {
+export function envVarForAccount(fieldSuffix, account) {
   if (!account || account === DEFAULT_ACCOUNT) {
     return `GOOGLE_OAUTH_${fieldSuffix}`;
   }
@@ -218,11 +218,39 @@ function envVarForAccount(fieldSuffix, account) {
 }
 
 /**
- * createUserFetch(env, account) — factory that returns a user-OAuth-
+ * storeRefreshTokenInD1(db, account, refreshToken) — persist a new refresh
+ * token to D1 so it survives isolate recycles and takes precedence over the
+ * env var secret on the next token refresh. Called by the /oauth/callback
+ * handler after a successful browser-based re-authorization.
+ */
+export async function storeRefreshTokenInD1(db, account, refreshToken) {
+  await db
+    .prepare(
+      `INSERT INTO google_oauth_tokens (account, refresh_token, updated_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(account) DO UPDATE SET
+         refresh_token = excluded.refresh_token,
+         updated_at    = excluded.updated_at`
+    )
+    .bind(account, refreshToken, new Date().toISOString())
+    .run();
+  // Evict the in-memory access token cache so the next API call uses the new
+  // refresh token immediately rather than waiting for the cached token to expire.
+  for (const [k] of _userTokenCache) {
+    if (k.startsWith(`${account}:`)) _userTokenCache.delete(k);
+  }
+}
+
+/**
+ * createUserFetch(env, account, db) — factory that returns a user-OAuth-
  * authenticated fetch for the named Google account.
  *
  * Uses the offline refresh token stored in env to obtain short-lived access
  * tokens via the standard OAuth2 token endpoint. Token is cached per isolate.
+ *
+ * Refresh token resolution order:
+ *   1. D1 google_oauth_tokens table (set via /internal/google-reauth browser flow)
+ *   2. Env var secret (GOOGLE_OAUTH_*_REFRESH_TOKEN — initial setup fallback)
  *
  * Secret naming:
  *   "personal" (default) — GOOGLE_OAUTH_CLIENT_ID / _CLIENT_SECRET / _REFRESH_TOKEN
@@ -231,21 +259,37 @@ function envVarForAccount(fieldSuffix, account) {
  *
  * Returns { ufetch, getUserAccessToken, account }.
  */
-export function createUserFetch(env, account = DEFAULT_ACCOUNT) {
+export function createUserFetch(env, account = DEFAULT_ACCOUNT, db = null) {
   const clientIdVar = envVarForAccount("CLIENT_ID", account);
   const clientSecretVar = envVarForAccount("CLIENT_SECRET", account);
   const refreshTokenVar = envVarForAccount("REFRESH_TOKEN", account);
 
   const clientId = env[clientIdVar] || "";
   const clientSecret = env[clientSecretVar] || "";
-  const refreshToken = env[refreshTokenVar] || "";
   const cacheKey = `${account}:${clientId}`;
+
+  // D1 takes precedence; env var is the fallback for initial setup.
+  async function resolveRefreshToken() {
+    if (db) {
+      try {
+        const row = await db
+          .prepare("SELECT refresh_token FROM google_oauth_tokens WHERE account = ?")
+          .bind(account)
+          .first();
+        if (row?.refresh_token) return row.refresh_token;
+      } catch {
+        // D1 unavailable — fall through to env var
+      }
+    }
+    return env[refreshTokenVar] || "";
+  }
 
   async function getUserAccessToken() {
     const now = Math.floor(Date.now() / 1000);
     const cached = _userTokenCache.get(cacheKey);
     if (cached && cached.expiresAt > now + 60) return cached.token;
 
+    const refreshToken = await resolveRefreshToken();
     if (!clientId || !clientSecret || !refreshToken) {
       throw new Error(
         `OAuth2 credentials not configured for account '${account}'. ` +
@@ -308,9 +352,10 @@ export function createUserFetch(env, account = DEFAULT_ACCOUNT) {
  * multi-account ingest) should use this map with getUserFetch() below.
  */
 export function createUserFetches(env) {
+  const db = env?.DB ?? null;
   const out = {};
   if (env && env.GOOGLE_OAUTH_CLIENT_ID) {
-    out[DEFAULT_ACCOUNT] = createUserFetch(env, DEFAULT_ACCOUNT);
+    out[DEFAULT_ACCOUNT] = createUserFetch(env, DEFAULT_ACCOUNT, db);
   }
   for (const key of Object.keys(env || {})) {
     // Match GOOGLE_OAUTH_<ACCOUNT>_CLIENT_ID but NOT the bare
@@ -323,7 +368,7 @@ export function createUserFetches(env) {
     const account = m[1].toLowerCase();
     if (!account || account === DEFAULT_ACCOUNT) continue;
     if (!env[key]) continue;
-    out[account] = createUserFetch(env, account);
+    out[account] = createUserFetch(env, account, db);
   }
   return out;
 }

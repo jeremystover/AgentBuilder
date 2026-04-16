@@ -24,7 +24,7 @@
  *   PPP_MCP_WEB_RATE_LIMIT_PER_MIN, PPP_MCP_WEB_ALLOWLIST, PPP_MCP_WEB_DENYLIST
  */
 
-import { createGfetch, createUserFetch, createUserFetches } from "./auth.js";
+import { createGfetch, createUserFetch, createUserFetches, storeRefreshTokenInD1, envVarForAccount, DEFAULT_ACCOUNT } from "./auth.js";
 import { createSheets } from "./sheets.js";
 import { createD1Sheets } from "./d1-sheets.js";
 import { createTools } from "./tools.js";
@@ -111,6 +111,16 @@ function requireAuth(request, env, { scope }) {
 
   if (token && token === expected) return { ok: true };
   return { ok: false, response: jsonResponse({ error: "Unauthorized" }, 401) };
+}
+
+// HMAC-SHA256 helper used by the OAuth re-auth state token.
+async function computeHmacHex(data, secret) {
+  const key = await crypto.subtle.importKey(
+    "raw", new TextEncoder().encode(secret || ""),
+    { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(data));
+  return Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
 // ── Tool category registry ───────────────────────────────────────────────────
@@ -534,7 +544,7 @@ export default {
     if (request.method === "POST" && urlObj.pathname === "/internal/morning-brief") {
       const auth = requireAuth(request, env, { scope: "internal" });
       if (!auth.ok) return auth.response;
-      const { ufetch: uf } = createUserFetch(env);
+      const { ufetch: uf } = createUserFetch(env, DEFAULT_ACCOUNT, env.DB ?? null);
       const { gfetch: gf } = createGfetch(env);
       const { sheets: sh, spreadsheetId: sid } = resolveDataStore(env, gf);
       try {
@@ -550,7 +560,7 @@ export default {
     if (request.method === "POST" && urlObj.pathname === "/internal/commitment-nudges") {
       const auth = requireAuth(request, env, { scope: "internal" });
       if (!auth.ok) return auth.response;
-      const { ufetch: uf } = createUserFetch(env);
+      const { ufetch: uf } = createUserFetch(env, DEFAULT_ACCOUNT, env.DB ?? null);
       const { gfetch: gf } = createGfetch(env);
       const { sheets: sh, spreadsheetId: sid } = resolveDataStore(env, gf);
       try {
@@ -583,6 +593,144 @@ export default {
         await logError({ sheets: sh, spreadsheetId: sid, scope: "internal:bootstrap-sheets", err: e });
         return jsonResponse({ error: e.message }, 500);
       }
+    }
+
+    // ── Browser-based Google OAuth re-authorization ──────────────────────────
+    //
+    // Step 1: GET /internal/google-reauth?account=personal (or work, etc.)
+    //   Requires INTERNAL_CRON_KEY auth. Builds a signed state token (HMAC-
+    //   SHA256 over "account|timestamp" using INTERNAL_CRON_KEY), then
+    //   redirects the browser to Google's consent page. No Node.js or local
+    //   source files needed — just open the URL in any browser.
+    //
+    // Step 2: Google redirects to GET /oauth/callback?code=...&state=...
+    //   Validates the state HMAC (expires after 10 min). Exchanges the code
+    //   for tokens and stores the new refresh token in D1. On next API call
+    //   the new token is used automatically.
+
+    if (request.method === "GET" && urlObj.pathname === "/internal/google-reauth") {
+      const auth = requireAuth(request, env, { scope: "internal" });
+      if (!auth.ok) return auth.response;
+
+      if (!env.DB) {
+        return new Response("D1 database not bound — apply migration 0004 first.", { status: 500 });
+      }
+
+      const account = urlObj.searchParams.get("account") || DEFAULT_ACCOUNT;
+      const clientIdVar = envVarForAccount("CLIENT_ID", account);
+      const clientId = env[clientIdVar] || "";
+      if (!clientId) {
+        return new Response(
+          `No client ID found for account '${account}'. Set ${clientIdVar} via wrangler secret put.`,
+          { status: 400 }
+        );
+      }
+
+      const signingKey = env.INTERNAL_CRON_KEY || env.MCP_HTTP_KEY || "";
+      const ts = Date.now().toString();
+      const stateData = `${account}|${ts}`;
+      const hmac = await computeHmacHex(stateData, signingKey);
+      const state = encodeURIComponent(`${stateData}|${hmac}`);
+
+      const origin = `${urlObj.protocol}//${urlObj.host}`;
+      const redirectUri = encodeURIComponent(`${origin}/oauth/callback`);
+      const scopes = encodeURIComponent(
+        "https://www.googleapis.com/auth/gmail.readonly " +
+        "https://www.googleapis.com/auth/gmail.compose " +
+        "https://www.googleapis.com/auth/calendar"
+      );
+      const consentUrl =
+        `https://accounts.google.com/o/oauth2/v2/auth` +
+        `?client_id=${encodeURIComponent(clientId)}` +
+        `&redirect_uri=${redirectUri}` +
+        `&response_type=code` +
+        `&scope=${scopes}` +
+        `&access_type=offline` +
+        `&prompt=consent` +
+        `&state=${state}`;
+
+      return Response.redirect(consentUrl, 302);
+    }
+
+    if (request.method === "GET" && urlObj.pathname === "/oauth/callback") {
+      const code  = urlObj.searchParams.get("code")  || "";
+      const error = urlObj.searchParams.get("error") || "";
+      const rawState = urlObj.searchParams.get("state") || "";
+
+      if (error) {
+        return new Response(`OAuth error: ${error}`, { status: 400, headers: { "content-type": "text/plain" } });
+      }
+      if (!code || !rawState) {
+        return new Response("Missing code or state.", { status: 400, headers: { "content-type": "text/plain" } });
+      }
+
+      // Validate state: format is "account|timestamp|hmac"
+      const parts = rawState.split("|");
+      if (parts.length !== 3) {
+        return new Response("Invalid state.", { status: 400, headers: { "content-type": "text/plain" } });
+      }
+      const [account, ts, receivedHmac] = parts;
+      const signingKey = env.INTERNAL_CRON_KEY || env.MCP_HTTP_KEY || "";
+      const expectedHmac = await computeHmacHex(`${account}|${ts}`, signingKey);
+      if (receivedHmac !== expectedHmac) {
+        return new Response("State validation failed.", { status: 403, headers: { "content-type": "text/plain" } });
+      }
+      if (Date.now() - Number(ts) > 10 * 60 * 1000) {
+        return new Response("State expired — restart the re-auth flow.", { status: 400, headers: { "content-type": "text/plain" } });
+      }
+
+      const clientIdVar     = envVarForAccount("CLIENT_ID",     account);
+      const clientSecretVar = envVarForAccount("CLIENT_SECRET", account);
+      const clientId     = env[clientIdVar]     || "";
+      const clientSecret = env[clientSecretVar] || "";
+      if (!clientId || !clientSecret) {
+        return new Response(
+          `OAuth client credentials not found for account '${account}'.`,
+          { status: 500, headers: { "content-type": "text/plain" } }
+        );
+      }
+
+      const origin = `${urlObj.protocol}//${urlObj.host}`;
+      const redirectUri = `${origin}/oauth/callback`;
+
+      const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          code,
+          client_id:     clientId,
+          client_secret: clientSecret,
+          redirect_uri:  redirectUri,
+          grant_type:    "authorization_code",
+        }).toString(),
+      });
+      const tokenJson = await tokenRes.json().catch(() => ({}));
+
+      if (!tokenRes.ok || !tokenJson.refresh_token) {
+        const detail = JSON.stringify(tokenJson);
+        return new Response(
+          `Token exchange failed: ${detail}${!tokenJson.refresh_token ? " (no refresh_token — try revoking access at myaccount.google.com/permissions and re-running)" : ""}`,
+          { status: 500, headers: { "content-type": "text/plain" } }
+        );
+      }
+
+      if (!env.DB) {
+        return new Response("D1 not bound — cannot persist token.", { status: 500, headers: { "content-type": "text/plain" } });
+      }
+      await storeRefreshTokenInD1(env.DB, account, tokenJson.refresh_token);
+
+      return new Response(
+        `<!doctype html><html><head><meta charset="utf-8">
+<title>Re-auth successful</title>
+<style>body{font-family:system-ui,sans-serif;max-width:600px;margin:4em auto;padding:0 1em;color:#222}</style>
+</head><body>
+<h2>&#10003; Google re-authorization successful</h2>
+<p>Account: <strong>${account}</strong></p>
+<p>The new refresh token has been stored in D1. The worker will use it automatically on the next API call.</p>
+<p>You can close this tab.</p>
+</body></html>`,
+        { status: 200, headers: { "content-type": "text/html; charset=utf-8" } }
+      );
     }
 
     if (request.method !== "POST" || urlObj.pathname !== "/mcp") {
