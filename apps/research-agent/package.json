@@ -2,7 +2,11 @@
   "name": "@agentbuilder/app-research-agent",
   "version": "0.0.1",
   "private": true,
+  "description": "",
+  "license": "ISC",
+  "author": "",
   "type": "module",
+  "main": "index.js",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
