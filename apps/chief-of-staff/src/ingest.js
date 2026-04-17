@@ -51,7 +51,12 @@ async function writeConfigValue(sheets, key, value) {
 
 // ── IntakeQueue writer ───────────────────────────────────────────────────────
 
-async function writeIntakeRow(sheets, { kind, summary, payloadJson, sourceRef = "" }) {
+async function writeIntakeRow(sheets, { kind, summary, payloadJson, sourceRef = "", existingRefs = null }) {
+  // Deduplication: skip if sourceRef already exists in IntakeQueue
+  if (sourceRef && existingRefs && existingRefs.has(sourceRef)) {
+    return null; // Already ingested, skip
+  }
+
   const id = generateId("int");
   // Column order must match SHEET_SCHEMAS.IntakeQueue:
   // intakeId, kind, summary, sourceRef, payloadJson, status, createdAt, updatedAt
@@ -76,6 +81,15 @@ async function ingestGmail({ gmail, sheets, sinceMs, account = DEFAULT_ACCOUNT }
     query: "in:inbox -category:promotions -category:social",
     maxResults: 50,
   });
+
+  // Load existing IntakeQueue sourceRefs to avoid duplicates
+  let existingRows = [];
+  try {
+    existingRows = await sheets.readSheetAsObjects("IntakeQueue");
+  } catch {
+    // Table may not exist on first run
+  }
+  const existingRefs = new Set(existingRows.map((r) => r.sourceRef).filter(Boolean));
 
   let count = 0;
   const emails = []; // Collect emails for filter scanning
@@ -110,11 +124,14 @@ async function ingestGmail({ gmail, sheets, sinceMs, account = DEFAULT_ACCOUNT }
     // which inbox a thread came from. Tag the sourceRef too to keep intake
     // rows from different accounts from colliding on a shared threadId.
     const acctTag = account === DEFAULT_ACCOUNT ? "" : `[${account}] `;
-    await writeIntakeRow(sheets, {
+    const sourceRef = account === DEFAULT_ACCOUNT ? thread.threadId : `${account}:${thread.threadId}`;
+
+    const intakeId = await writeIntakeRow(sheets, {
       kind,
       summary: `${acctTag}Email: ${thread.subject} — from ${thread.messages[0].from}`,
       payloadJson: JSON.stringify(payload),
-      sourceRef: account === DEFAULT_ACCOUNT ? thread.threadId : `${account}:${thread.threadId}`,
+      sourceRef,
+      existingRefs,
     });
 
     // Collect email data for filter scanning
@@ -129,6 +146,7 @@ async function ingestGmail({ gmail, sheets, sinceMs, account = DEFAULT_ACCOUNT }
     });
 
     count++;
+    if (intakeId) count++;
   }
 
   // Scan emails for filter matches
@@ -157,6 +175,13 @@ async function ingestCalendar({ calendar, sheets, sinceMs }) {
   let existingMeetings = [];
   try { existingMeetings = await sheets.readSheetAsObjects("Meetings"); } catch { /* empty */ }
   const existingEventIds = new Set(existingMeetings.map((m) => m.eventId).filter(Boolean));
+
+  // Load existing intake sourceRefs to avoid duplicate intake rows
+  let existingIntakeRows = [];
+  try {
+    existingIntakeRows = await sheets.readSheetAsObjects("IntakeQueue");
+  } catch { /* empty */ }
+  const existingIntakeRefs = new Set(existingIntakeRows.map((r) => r.sourceRef).filter(Boolean));
 
   let newCount = 0;
   let updatedCount = 0;
@@ -203,6 +228,7 @@ async function ingestCalendar({ calendar, sheets, sinceMs }) {
           summary: `Upcoming meeting: ${norm.title} in ${Math.round(hoursUntil * 10) / 10}h with ${otherAttendees}`,
           payloadJson: JSON.stringify({ ...norm, hoursUntil }),
           sourceRef: norm.eventId,
+          existingRefs: existingIntakeRefs,
         });
       }
     } else {
@@ -328,6 +354,13 @@ async function ingestWorkCalendar({ sheets, workCalSheets, sinceMs }) {
   try { existingMeetings = await sheets.readSheetAsObjects("Meetings"); } catch { /* empty */ }
   const existingEventIds = new Set(existingMeetings.map((m) => m.eventId).filter(Boolean));
 
+  // Load existing intake sourceRefs to avoid duplicate intake rows
+  let existingIntakeRows = [];
+  try {
+    existingIntakeRows = await sheets.readSheetAsObjects("IntakeQueue");
+  } catch { /* empty */ }
+  const existingIntakeRefs = new Set(existingIntakeRows.map((r) => r.sourceRef).filter(Boolean));
+
   let newMeetings = 0;
   let updatedMeetings = 0;
   let intakeRows = 0;
@@ -382,7 +415,7 @@ async function ingestWorkCalendar({ sheets, workCalSheets, sinceMs }) {
     }
 
     if (isMaterialWorkCalChange(change)) {
-      await writeIntakeRow(sheets, {
+      const intakeId = await writeIntakeRow(sheets, {
         kind: change.changeType === "created" ? "calendar" : "calendar-change",
         summary: buildWorkCalIntakeSummary(change, evt),
         payloadJson: JSON.stringify({
@@ -395,8 +428,9 @@ async function ingestWorkCalendar({ sheets, workCalSheets, sinceMs }) {
           },
         }),
         sourceRef: evt.eventId,
+        existingRefs: existingIntakeRefs,
       });
-      intakeRows++;
+      if (intakeId) intakeRows++;
     }
   }
 
@@ -418,6 +452,15 @@ async function ingestDrive({ gfetch, sheets, sinceMs }) {
   const data = await res.json();
   const files = data.files || [];
 
+  // Load existing intake sourceRefs to avoid duplicates
+  let existingRows = [];
+  try {
+    existingRows = await sheets.readSheetAsObjects("IntakeQueue");
+  } catch {
+    // Table may not exist on first run
+  }
+  const existingRefs = new Set(existingRows.map((r) => r.sourceRef).filter(Boolean));
+
   let count = 0;
   for (const file of files) {
     // Only surface docs/sheets/slides, not thumbnails/images/etc
@@ -428,7 +471,7 @@ async function ingestDrive({ gfetch, sheets, sinceMs }) {
     ];
     if (!interestingTypes.includes(file.mimeType)) continue;
 
-    await writeIntakeRow(sheets, {
+    const intakeId = await writeIntakeRow(sheets, {
       kind: "drive",
       summary: `Drive doc updated: ${file.name}`,
       payloadJson: JSON.stringify({
@@ -439,8 +482,9 @@ async function ingestDrive({ gfetch, sheets, sinceMs }) {
         webViewLink: file.webViewLink,
       }),
       sourceRef: file.id,
+      existingRefs,
     });
-    count++;
+    if (intakeId) count++;
   }
 
   return { ingested: count, source: "drive" };
@@ -464,6 +508,13 @@ async function ingestBlueskyLikes({ bluesky, sheets }) {
     // Table may not exist on the first run — treat as empty.
   }
   const existingUris = new Set(existingRows.map((r) => r.likeUri).filter(Boolean));
+
+  // Load existing intake sourceRefs to avoid duplicate intake rows
+  let existingIntakeRows = [];
+  try {
+    existingIntakeRows = await sheets.readSheetAsObjects("IntakeQueue");
+  } catch { /* empty */ }
+  const existingIntakeRefs = new Set(existingIntakeRows.map((r) => r.sourceRef).filter(Boolean));
 
   const toInsert = []; // { row: [...], intake: {...} }
   let cursor;
@@ -566,7 +617,10 @@ async function ingestBlueskyLikes({ bluesky, sheets }) {
     }
     for (const { intake } of toInsert) {
       try {
-        await writeIntakeRow(sheets, intake);
+        await writeIntakeRow(sheets, {
+          ...intake,
+          existingRefs: existingIntakeRefs,
+        });
       } catch {
         // Best-effort — intake failure should not block the main sync result.
       }
@@ -986,6 +1040,109 @@ export function createIngestTools({ ufetch, userFetches = null, gfetch, sheets, 
               likedAt: r.likedAt,
             }));
           return formatContent({ count: sorted.length, likes: sorted });
+        } catch (e) {
+          return formatContent({ error: e.message });
+        }
+      },
+    },
+
+    // ── Intake queue management ────────────────────────────────────────
+
+    purge_intake_before: {
+      description:
+        "Mark all pending intake items created before a specified date as 'archived' without screening. " +
+        "Useful for bulk cleanup of stale queue items (e.g., archive everything before 30 days ago). " +
+        "Does NOT apply screening — purely date-based archival. Returns count archived.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          beforeDate: {
+            type: "string",
+            description: "ISO date or datetime. Archive all pending items created before this.",
+          },
+        },
+        required: ["beforeDate"],
+        additionalProperties: false,
+      },
+      run: async (args = {}) => {
+        if (!args.beforeDate) {
+          return formatContent({ error: "beforeDate is required (ISO format)" });
+        }
+        try {
+          const cutoffMs = new Date(args.beforeDate).getTime();
+          if (!Number.isFinite(cutoffMs)) {
+            return formatContent({ error: "Invalid date format" });
+          }
+
+          const rows = await sheets.readSheetAsObjects("IntakeQueue");
+          const toArchive = rows.filter((r) => {
+            const createdMs = new Date(r.createdAt || 0).getTime();
+            return Number.isFinite(createdMs) && createdMs < cutoffMs && String(r.status || "").toLowerCase() === "pending";
+          });
+
+          if (toArchive.length === 0) {
+            return formatContent({ archived: 0, note: "No pending items found before cutoff date." });
+          }
+
+          let archivedCount = 0;
+          for (const row of toArchive) {
+            try {
+              const found = await sheets.findRowByKey("IntakeQueue", "intakeId", row.intakeId);
+              if (found) {
+                await sheets.updateRow("IntakeQueue", found.rowNum, {
+                  ...row,
+                  status: "archived",
+                  updatedAt: nowIso(),
+                });
+                archivedCount++;
+              }
+            } catch {
+              // Best-effort: continue archiving others if one fails
+            }
+          }
+
+          return formatContent({
+            archived: archivedCount,
+            beforeDate: args.beforeDate,
+            note: `Archived ${archivedCount} pending intake items created before ${args.beforeDate}.`,
+          });
+        } catch (e) {
+          return formatContent({ error: e.message });
+        }
+      },
+    },
+
+    intake_queue_stats: {
+      description:
+        "Show statistics about the IntakeQueue: total items, pending count, items by kind, " +
+        "oldest/newest items. Useful for monitoring queue size and health.",
+      inputSchema: { type: "object", properties: {}, additionalProperties: false },
+      run: async () => {
+        try {
+          const rows = await sheets.readSheetAsObjects("IntakeQueue");
+          const total = rows.length;
+          const pending = rows.filter((r) => String(r.status || "").toLowerCase() === "pending").length;
+
+          const byKind = {};
+          for (const row of rows) {
+            const kind = String(row.kind || "unknown");
+            byKind[kind] = (byKind[kind] || 0) + 1;
+          }
+
+          const createdDates = rows
+            .map((r) => new Date(r.createdAt || 0).getTime())
+            .filter(Number.isFinite);
+          const oldest = createdDates.length > 0 ? new Date(Math.min(...createdDates)).toISOString() : null;
+          const newest = createdDates.length > 0 ? new Date(Math.max(...createdDates)).toISOString() : null;
+
+          return formatContent({
+            total,
+            pending,
+            byKind,
+            oldest,
+            newest,
+            note: pending > 0 && pending > 100 ? `⚠️  Queue is large (${pending} pending). Consider purging old items.` : undefined,
+          });
         } catch (e) {
           return formatContent({ error: e.message });
         }
