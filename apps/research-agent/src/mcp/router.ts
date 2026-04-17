@@ -115,13 +115,14 @@ const TOOL_MANIFESTS = [
   },
   {
     name: "manage_interests",
-    description: "View or edit your interest profile — topic weights, source trust scores, and digest settings.",
+    description: "View or edit your interest profile — topic weights, category weights, source trust scores, and digest settings. Use action=seed to bootstrap curated defaults (creates any missing categories).",
     inputSchema: {
       type: "object", required: ["action"], additionalProperties: false,
       properties: {
-        action: { type: "string", enum: ["get", "update", "reset"] },
-        patch:  { type: "object", description: "Key-value pairs to set (action=update). Keys: 'topic:<name>', 'source:<id>', 'setting:<key>'" },
-        scope:  { type: "string", enum: ["topics", "sources", "all"], default: "all", description: "What to reset (action=reset)" },
+        action:    { type: "string", enum: ["get", "update", "reset", "seed"] },
+        patch:     { type: "object", description: "Key-value pairs to set (action=update). Keys: 'topic:<name>', 'category:<slug>', 'source:<id>', 'setting:<key>'" },
+        scope:     { type: "string", enum: ["topics", "categories", "sources", "all"], default: "all", description: "What to reset (action=reset)" },
+        overwrite: { type: "boolean", default: false, description: "For action=seed: if true, replace existing weights; if false, only set keys not already present." },
       },
     },
   },
