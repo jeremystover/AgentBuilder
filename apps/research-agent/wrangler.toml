@@ -20,7 +20,7 @@ binding = "AI"
 [[d1_databases]]
 binding = "CONTENT_DB"
 database_name = "research-agent-db"
-database_id = "REPLACE_WITH_DB_ID"
+database_id = "3c019a9b-ad01-4621-b7cb-8dfd81940082"
 
 # Vectorize — semantic similarity index (create via: wrangler vectorize create research-agent-content --dimensions=768 --metric=cosine)
 [[vectorize]]
