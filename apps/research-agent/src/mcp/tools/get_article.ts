@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Env } from "../../types";
-import { articleQueries } from "../../lib/db";
+import { articleQueries, articleCategoryQueries } from "../../lib/db";
 import { getObject, getTextKey } from "../../lib/storage";
 
 export const GetArticleInput = z.object({
@@ -26,6 +26,7 @@ export interface GetArticleOutput {
   language:         string | null;
   source_id:        string | null;
   status:           string;
+  categories:       string[];
   full_text?:       string | null;
   html?:            string | null;
   error_message?:   string | null;
@@ -34,6 +35,8 @@ export interface GetArticleOutput {
 export async function getArticle(input: GetArticleInput, env: Env): Promise<GetArticleOutput> {
   const row = await articleQueries.findById(env.CONTENT_DB, input.article_id);
   if (!row) throw new Error(`Article not found: ${input.article_id}`);
+
+  const cats = await articleCategoryQueries.listForArticle(env.CONTENT_DB, input.article_id);
 
   const output: GetArticleOutput = {
     article_id:       row.id,
@@ -50,6 +53,7 @@ export async function getArticle(input: GetArticleInput, env: Env): Promise<GetA
     language:         row.language         ?? null,
     source_id:        row.source_id        ?? null,
     status:           row.status,
+    categories:       cats.map((c) => c.name),
     error_message:    row.error_message    ?? null,
   };
 

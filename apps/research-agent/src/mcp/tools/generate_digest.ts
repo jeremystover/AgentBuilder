@@ -12,7 +12,7 @@
 
 import { z } from "zod";
 import type { Env } from "../../types";
-import { articleQueries } from "../../lib/db";
+import { articleQueries, articleCategoryQueries } from "../../lib/db";
 import { scoreContent } from "./score_content";
 
 export const GenerateDigestInput = z.object({
@@ -28,6 +28,9 @@ export const GenerateDigestInput = z.object({
   min_score: z
     .number().min(0).max(1).default(0.0)
     .describe("Minimum relevance score to include (0 = no filter)"),
+  category_id: z
+    .string().uuid().optional()
+    .describe("Filter digest to articles in this category"),
 });
 
 export type GenerateDigestInput = z.infer<typeof GenerateDigestInput>;
@@ -45,6 +48,7 @@ export interface DigestItem {
   ingested_at:      string;
   reading_time_min: number | null;
   source_id:        string | null;
+  categories:       string[];
 }
 
 export interface DigestSection {
@@ -84,7 +88,18 @@ export async function generateDigest(
     )
     .all<Awaited<ReturnType<typeof articleQueries.findById>>>();
 
-  const allRows = rows.results.filter((r): r is NonNullable<typeof r> => r !== null);
+  let allRows = rows.results.filter((r): r is NonNullable<typeof r> => r !== null);
+
+  // Filter by category if specified
+  if (input.category_id) {
+    const filtered = [];
+    for (const row of allRows) {
+      const cats = await articleCategoryQueries.listForArticle(env.CONTENT_DB, row.id);
+      if (cats.some((c) => c.id === input.category_id)) filtered.push(row);
+    }
+    allRows = filtered;
+  }
+
   const totalFetched = allRows.length;
 
   if (totalFetched === 0) {
@@ -111,20 +126,25 @@ export async function generateDigest(
   const top = scored.slice(0, input.limit);
 
   // 4. Build flat item list
-  const items: DigestItem[] = top.map(({ row, score }, idx) => ({
-    article_id:       row.id,
-    rank:             idx + 1,
-    score:            Math.round(score * 10_000) / 10_000,
-    title:            row.title            ?? null,
-    url:              row.url,
-    author:           row.author           ?? null,
-    summary:          row.summary          ?? null,
-    topics:           row.topics ? JSON.parse(row.topics) : [],
-    published_at:     row.published_at     ?? null,
-    ingested_at:      row.ingested_at,
-    reading_time_min: row.reading_time_min ?? null,
-    source_id:        row.source_id        ?? null,
-  }));
+  const items: DigestItem[] = [];
+  for (const [idx, { row, score }] of top.entries()) {
+    const cats = await articleCategoryQueries.listForArticle(env.CONTENT_DB, row.id);
+    items.push({
+      article_id:       row.id,
+      rank:             idx + 1,
+      score:            Math.round(score * 10_000) / 10_000,
+      title:            row.title            ?? null,
+      url:              row.url,
+      author:           row.author           ?? null,
+      summary:          row.summary          ?? null,
+      topics:           row.topics ? JSON.parse(row.topics) : [],
+      published_at:     row.published_at     ?? null,
+      ingested_at:      row.ingested_at,
+      reading_time_min: row.reading_time_min ?? null,
+      source_id:        row.source_id        ?? null,
+      categories:       cats.map((c) => c.name),
+    });
+  }
 
   // 5. Group into topic sections
   const topicMap = new Map<string, DigestItem[]>();

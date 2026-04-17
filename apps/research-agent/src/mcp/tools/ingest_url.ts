@@ -1,15 +1,17 @@
 import { z } from "zod";
 import type { Env } from "../../types";
-import { articleQueries } from "../../lib/db";
+import { articleQueries, articleCategoryQueries } from "../../lib/db";
 import { upsertVector } from "../../lib/vectors";
 import { storeHTML, getHTMLKey } from "../../lib/storage";
 import { extractContent } from "../../lib/extract";
+import { autoAssignCategories } from "../../lib/categorize";
 
 export const IngestUrlInput = z.object({
   url:            z.string().url().describe("The fully-qualified URL to ingest"),
   source_id:      z.string().optional().describe("Optional source ID to associate"),
   force_reingest: z.boolean().default(false).describe("Re-process even if previously ingested"),
   note:           z.string().max(500).optional().describe("Optional note about why this was saved"),
+  category_ids:   z.array(z.string().uuid()).optional().describe("Category IDs to tag this article with"),
 });
 
 export type IngestUrlInput = z.infer<typeof IngestUrlInput>;
@@ -25,6 +27,7 @@ export interface IngestUrlOutput {
   word_count:       number | null;
   reading_time_min: number | null;
   already_existed:  boolean;
+  categories:       string[];
   status:           "ready" | "error";
   error?:           string;
 }
@@ -99,11 +102,12 @@ export async function ingestUrl(
   env: Env,
   ctx: ExecutionContext,
 ): Promise<IngestUrlOutput> {
-  const { url, source_id, force_reingest } = input;
+  const { url, source_id, force_reingest, category_ids } = input;
 
   // Deduplication check
   const existing = await articleQueries.findByUrl(env.CONTENT_DB, url);
   if (existing && !force_reingest) {
+    const existingCats = await articleCategoryQueries.listForArticle(env.CONTENT_DB, existing.id);
     return {
       article_id: existing.id, url: existing.url,
       canonical_url: existing.canonical_url ?? null,
@@ -112,7 +116,8 @@ export async function ingestUrl(
       topics: existing.topics ? JSON.parse(existing.topics) : [],
       word_count: existing.word_count ?? null,
       reading_time_min: existing.reading_time_min ?? null,
-      already_existed: true, status: existing.status === "ready" ? "ready" : "error",
+      already_existed: true, categories: existingCats.map((c) => c.id),
+      status: existing.status === "ready" ? "ready" : "error",
     };
   }
 
@@ -125,7 +130,7 @@ export async function ingestUrl(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await articleQueries.upsertError(env.CONTENT_DB, { id: articleId, url, source_id: source_id ?? null, error: `fetch/extract failed: ${message}` });
-    return { article_id: articleId, url, canonical_url: null, title: null, author: null, summary: null, topics: [], word_count: null, reading_time_min: null, already_existed: false, status: "error", error: message };
+    return { article_id: articleId, url, canonical_url: null, title: null, author: null, summary: null, topics: [], word_count: null, reading_time_min: null, already_existed: false, categories: [], status: "error", error: message };
   }
 
   const { title, author, publishedAt, fullText, html, canonicalUrl } = extracted;
@@ -175,10 +180,24 @@ export async function ingestUrl(
     );
   }
 
+  // Assign categories
+  const assignedCategories: string[] = [];
+  if (category_ids?.length) {
+    await articleCategoryQueries.bulkAssign(env.CONTENT_DB, articleId, category_ids, "manual");
+    assignedCategories.push(...category_ids);
+  } else {
+    try {
+      const autoIds = await autoAssignCategories(env.CONTENT_DB, env.AI, articleId, { title, summary, topics });
+      assignedCategories.push(...autoIds);
+    } catch (err) {
+      console.warn("[ingest_url] Auto-categorization failed:", err);
+    }
+  }
+
   return {
     article_id: articleId, url, canonical_url: canonicalUrl ?? null,
     title: title ?? null, author: author ?? null, summary: summary || null,
     topics, word_count: wordCount, reading_time_min: readingTimeMin,
-    already_existed: false, status: "ready",
+    already_existed: false, categories: assignedCategories, status: "ready",
   };
 }

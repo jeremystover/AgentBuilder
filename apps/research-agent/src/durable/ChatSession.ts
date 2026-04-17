@@ -33,6 +33,14 @@ import { RecordFeedbackInput }  from "../mcp/tools/record_feedback";
 import { ManageInterestsInput } from "../mcp/tools/manage_interests";
 import { ListSourcesInput }     from "../mcp/tools/list_sources";
 import { ScoreContentInput }    from "../mcp/tools/score_content";
+import { manageCategories }     from "../mcp/tools/manage_categories";
+import { tagContent }           from "../mcp/tools/tag_content";
+import { uploadFile }           from "../mcp/tools/upload_file";
+import { cleanup }              from "../mcp/tools/cleanup";
+import { ManageCategoriesInput } from "../mcp/tools/manage_categories";
+import { TagContentInput }       from "../mcp/tools/tag_content";
+import { UploadFileInput }       from "../mcp/tools/upload_file";
+import { CleanupInput }          from "../mcp/tools/cleanup";
 
 // ── Message types ─────────────────────────────────────────────
 
@@ -70,6 +78,10 @@ You have access to Jeremy's curated article library and can help him:
 - Manage his reading sources (use list_sources)
 - Record when he finds something valuable (use record_feedback with thumbs_up)
 - Update his interest profile (use manage_interests)
+- Organize articles into research categories (use manage_categories to create/list/update/delete)
+- Tag articles with categories (use tag_content to assign, remove, list, or auto-suggest)
+- Upload files and images (use upload_file — OCR extracts text from images automatically)
+- Clean up the knowledge base (use cleanup to find duplicates, stale content, and orphans)
 
 Communication style:
 - Be concise and direct
@@ -78,7 +90,8 @@ Communication style:
 - If you can't find relevant content, say so and suggest he ingest some sources
 
 Available tools: search_semantic, search_fulltext, synthesize, get_article, ingest_url,
-generate_digest, record_feedback, manage_interests, list_sources, score_content`;
+generate_digest, record_feedback, manage_interests, list_sources, score_content,
+manage_categories, tag_content, upload_file, cleanup`;
 
 // ── Tool definitions for the LLM ──────────────────────────────
 
@@ -200,6 +213,65 @@ const TOOL_DEFINITIONS = [
       properties: { article_id: { type: "string" } },
     },
   },
+  {
+    name: "manage_categories",
+    description: "Create, list, update, or delete research categories for organizing content.",
+    parameters: {
+      type: "object", required: ["action"],
+      properties: {
+        action:         { type: "string", enum: ["create", "list", "get", "update", "delete"] },
+        name:           { type: "string" },
+        description:    { type: "string" },
+        color:          { type: "string" },
+        parent_id:      { type: "string" },
+        category_id:    { type: "string" },
+        include_counts: { type: "boolean" },
+      },
+    },
+  },
+  {
+    name: "tag_content",
+    description: "Assign, remove, list, or auto-suggest categories for articles.",
+    parameters: {
+      type: "object", required: ["action"],
+      properties: {
+        action:       { type: "string", enum: ["assign", "remove", "list", "suggest", "bulk_assign"] },
+        article_id:   { type: "string" },
+        article_ids:  { type: "array", items: { type: "string" } },
+        category_ids: { type: "array", items: { type: "string" } },
+      },
+    },
+  },
+  {
+    name: "upload_file",
+    description: "Upload a file (image, PDF, text). Runs OCR on images and auto-creates articles from text content.",
+    parameters: {
+      type: "object", required: ["content_base64", "filename"],
+      properties: {
+        content_base64: { type: "string" },
+        filename:       { type: "string" },
+        mime_type:      { type: "string" },
+        article_id:     { type: "string" },
+        category_ids:   { type: "array", items: { type: "string" } },
+        note:           { type: "string" },
+      },
+    },
+  },
+  {
+    name: "cleanup",
+    description: "Analyze and clean up the knowledge base: delete articles, find duplicates, stale content, and orphans.",
+    parameters: {
+      type: "object", required: ["action"],
+      properties: {
+        action:        { type: "string", enum: ["delete_article", "delete_attachment", "analyze", "review", "approve", "reject", "execute"] },
+        article_id:    { type: "string" },
+        attachment_id: { type: "string" },
+        scope:         { type: "string", enum: ["all", "duplicates", "stale", "errors", "orphans", "uncategorized"] },
+        batch_id:      { type: "string" },
+        ids:           { type: "array", items: { type: "string" } },
+      },
+    },
+  },
 ] as const;
 
 // ── Tool executor ─────────────────────────────────────────────
@@ -219,8 +291,12 @@ async function executeTool(
     case "record_feedback":  return recordFeedback(RecordFeedbackInput.parse(args), env);
     case "manage_interests": return manageInterests(ManageInterestsInput.parse(args), env);
     case "list_sources":     return listSources(ListSourcesInput.parse(args), env);
-    case "score_content":    return scoreContent(ScoreContentInput.parse(args), env);
-    default:                 throw new Error(`Unknown tool: ${name}`);
+    case "score_content":       return scoreContent(ScoreContentInput.parse(args), env);
+    case "manage_categories":  return manageCategories(ManageCategoriesInput.parse(args), env);
+    case "tag_content":        return tagContent(TagContentInput.parse(args), env);
+    case "upload_file":        return uploadFile(UploadFileInput.parse(args), env);
+    case "cleanup":            return cleanup(CleanupInput.parse(args), env);
+    default:                   throw new Error(`Unknown tool: ${name}`);
   }
 }
 
