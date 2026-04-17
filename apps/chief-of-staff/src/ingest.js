@@ -1093,7 +1093,7 @@ export function createIngestTools({ ufetch, userFetches = null, gfetch, sheets, 
             return formatContent({ error: "IntakeQueue sheet missing required columns (status, createdAt)" });
           }
 
-          const MAX_BATCH = 1000;
+          const MAX_BATCH = 500;
           const candidates = [];
           let totalEligible = 0;
           for (let i = 0; i < rows.length; i++) {
