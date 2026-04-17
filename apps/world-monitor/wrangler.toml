@@ -1,0 +1,21 @@
+name = "world-monitor"
+main = "src/index.ts"
+compatibility_date = "2025-04-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[durable_objects.bindings]]
+name = "AGENT_DO"
+class_name = "WorldMonitorDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["WorldMonitorDO"]
+
+[ai]
+binding = "AI"
+
+# Uncomment once the shared DB is provisioned.
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "agentbuilder-core"
+# database_id = "REPLACE_WITH_DB_ID"

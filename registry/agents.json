@@ -1,6 +1,6 @@
 {
   "$schemaVersion": 1,
-  "updatedAt": "2026-04-14T00:00:00.000Z",
+  "updatedAt": "2026-04-17T14:30:30.760Z",
   "agents": [
     {
       "id": "agent-builder",
@@ -9,9 +9,23 @@
       "owner": "jeremystover",
       "status": "draft",
       "kind": "headless",
-      "skills": ["scaffold-agent", "register-agent", "flag-overlap", "propagate-shared-changes"],
-      "tools": ["file-system", "wrangler", "pnpm", "git", "github-app", "registry-rw"],
-      "mcpServers": ["github"],
+      "skills": [
+        "scaffold-agent",
+        "register-agent",
+        "flag-overlap",
+        "propagate-shared-changes"
+      ],
+      "tools": [
+        "file-system",
+        "wrangler",
+        "pnpm",
+        "git",
+        "github-app",
+        "registry-rw"
+      ],
+      "mcpServers": [
+        "github"
+      ],
       "sharedPackages": [
         "@agentbuilder/core",
         "@agentbuilder/llm",
@@ -21,8 +35,12 @@
       "oauthScopes": [],
       "cloudflare": {
         "workerName": "agent-builder",
-        "durableObjects": ["AgentBuilderDO"],
-        "d1": ["agentbuilder_core"],
+        "durableObjects": [
+          "AgentBuilderDO"
+        ],
+        "d1": [
+          "agentbuilder_core"
+        ],
         "kv": [],
         "r2": [],
         "queues": [],
@@ -185,9 +203,13 @@
       "cloudflare": {
         "workerName": "cfo",
         "durableObjects": [],
-        "d1": ["cfo-db"],
+        "d1": [
+          "cfo-db"
+        ],
         "kv": [],
-        "r2": ["cfo-files"],
+        "r2": [
+          "cfo-files"
+        ],
         "queues": [],
         "hasAssets": true
       },
@@ -253,11 +275,19 @@
       "oauthScopes": [],
       "cloudflare": {
         "workerName": "guest-booking",
-        "durableObjects": ["GuestBookingDO"],
-        "d1": ["guest-booking-db"],
-        "kv": ["guest-booking-cache"],
+        "durableObjects": [
+          "GuestBookingDO"
+        ],
+        "d1": [
+          "guest-booking-db"
+        ],
+        "kv": [
+          "guest-booking-cache"
+        ],
         "r2": [],
-        "queues": ["guest-booking-sync-queue"],
+        "queues": [
+          "guest-booking-sync-queue"
+        ],
         "hasAssets": true
       },
       "routing": {
@@ -325,10 +355,16 @@
       "oauthScopes": [],
       "cloudflare": {
         "workerName": "research-agent",
-        "durableObjects": ["ChatSession"],
-        "d1": ["research-agent-db"],
+        "durableObjects": [
+          "ChatSession"
+        ],
+        "d1": [
+          "research-agent-db"
+        ],
         "kv": [],
-        "r2": ["research-agent-content"],
+        "r2": [
+          "research-agent-content"
+        ],
         "queues": [],
         "hasAssets": false
       },
@@ -358,6 +394,86 @@
           "Guest booking or property management (that's Guest Booking)",
           "Building or modifying other agents (that's Agent Builder)",
           "Real-time web search — this agent searches ingested content only"
+        ]
+      },
+      "version": "0.0.1"
+    },
+    {
+      "id": "world-monitor",
+      "name": "World Monitor",
+      "purpose": "Situational-awareness agent. Wraps the worldmonitor-mcp server to surface live markets, geopolitics, conflict, climate, supply-chain, cyber, and infrastructure signals to the fleet via MCP.",
+      "owner": "jeremystover",
+      "status": "draft",
+      "kind": "headless",
+      "skills": [
+        "market-signals",
+        "geopolitical-monitoring",
+        "news-brief",
+        "climate-and-seismology",
+        "supply-chain-monitoring",
+        "cyber-and-infrastructure",
+        "government-filings",
+        "prediction-markets"
+      ],
+      "tools": [
+        "markets",
+        "geopolitics",
+        "news",
+        "climate",
+        "supply_chain",
+        "cyber_infra",
+        "government",
+        "predictions"
+      ],
+      "mcpServers": ["worldmonitor"],
+      "sharedPackages": [
+        "@agentbuilder/core",
+        "@agentbuilder/llm"
+      ],
+      "oauthScopes": [],
+      "cloudflare": {
+        "workerName": "world-monitor",
+        "durableObjects": [
+          "WorldMonitorDO"
+        ],
+        "d1": [],
+        "kv": [],
+        "r2": [],
+        "queues": [],
+        "hasAssets": false
+      },
+      "routing": {
+        "triggerPhrases": [
+          "what's happening in the markets",
+          "any earthquakes",
+          "wildfires",
+          "severe weather",
+          "fred print",
+          "sec filing",
+          "prediction market",
+          "news brief",
+          "supply chain",
+          "cyber incident",
+          "conflict activity",
+          "situational awareness"
+        ],
+        "examples": [
+          "Pull a news brief on the latest US-China trade headlines",
+          "Any recent earthquakes near the Pacific Northwest?",
+          "What did prediction markets move on for the Fed meeting?",
+          "Summarize conflict activity in the Red Sea over the last 24h",
+          "Latest FRED print for CPIAUCSL and UNRATE",
+          "Any new SEC EDGAR filings for NVDA this week?",
+          "Maritime disruptions in the Suez or Panama today?"
+        ],
+        "nonGoals": [
+          "Calendar, tasks, goals, or stakeholder management (that's Chief of Staff)",
+          "Bookkeeping, budgeting, taxes, or personal financial planning (that's CFO)",
+          "Guest booking or property management (that's Guest Booking)",
+          "Indexing articles into a personal knowledge base (that's Research Agent)",
+          "Building or modifying other agents (that's Agent Builder)",
+          "Executing trades, moving money, or any write-side action against external systems",
+          "Investment, legal, medical, or geopolitical advice — data only"
         ]
       },
       "version": "0.0.1"
