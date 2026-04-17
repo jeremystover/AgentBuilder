@@ -117,6 +117,21 @@ export const SHEET_SCHEMAS = {
     "postAuthorHandle", "postAuthorName", "postText", "postCreatedAt",
     "likedAt", "payloadJson", "importedAt",
   ],
+
+  // Email filters for watching specific senders and keywords.
+  // See migrations/0004_email_filters.sql for the D1 schema.
+  EmailFilters: [
+    "filterId", "name", "description", "senderPattern", "bodyKeywordsJson",
+    "priority", "enabled", "createdAt", "updatedAt",
+  ],
+
+  // Flagged emails that matched one or more filter rules.
+  // See migrations/0004_email_filters.sql for the D1 schema.
+  FlaggedEmails: [
+    "flagId", "filterId", "messageId", "threadId", "subject", "from_addr",
+    "date", "snippet", "priority", "status", "surfacedAt", "actionedAt",
+    "actionNotes", "flaggedAt",
+  ],
 };
 
 /**

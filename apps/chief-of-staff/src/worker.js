@@ -39,6 +39,7 @@ import { runCron, logError } from "./observability.js";
 import { bootstrapSheets } from "./bootstrap.js";
 import { createGoalsTools } from "./goals.js";
 import { createStateExportTools, generateStateExport, renderStateMarkdown } from "./state-export.js";
+import { createEmailFilterMCPTools } from "./email-filters.js";
 
 // ── Data store resolution ────────────────────────────────────────────────────
 // When env.DB (Cloudflare D1) is bound, use it as the primary data store.
@@ -182,6 +183,14 @@ const TOOL_CATEGORIES = {
   ],
   gmail: [
     "create_gmail_draft",
+  ],
+  email_filtering: [
+    "create_email_filter",
+    "list_email_filters",
+    "update_email_filter",
+    "delete_email_filter",
+    "get_flagged_emails",
+    "mark_flagged_email",
   ],
   automation: [
     "run_ingest",
@@ -638,6 +647,15 @@ export default {
     const { tools: contentTools, loaders, drive } = createContentTools({ gfetch, config });
     const goalsTools = createGoalsTools({ spreadsheetId, sheets, storeChangeset });
     const stateExportTools = createStateExportTools({ spreadsheetId, sheets, drive });
+    const emailFilterToolDefs = createEmailFilterMCPTools({ sheets });
+    const emailFilterTools = emailFilterToolDefs.reduce((acc, def) => {
+      acc[def.name] = {
+        description: def.description,
+        inputSchema: def.inputSchema,
+        run: def.handler,
+      };
+      return acc;
+    }, {});
 
     // Build full tool registry
     const TOOLS = {
@@ -663,6 +681,9 @@ export default {
 
       // Ingest: Gmail + Calendar + Drive cron ingestion + Calendar write tools
       ...ingestTools,
+
+      // Email filtering: watch for specific senders/keywords and flag for response
+      ...emailFilterTools,
 
       // Phase 4: Morning brief, commitment nudges, draft replies, agent run logging
       ...phase4AutomationTools,

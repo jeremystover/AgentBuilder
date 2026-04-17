@@ -322,7 +322,7 @@ export function createTools({ spreadsheetId, sheets }) {
         const contextToken = generateId("ctx");
         const hydratedAt = nowIso();
 
-        let tasks = [], commitments = [], intake = [];
+        let tasks = [], commitments = [], intake = [], flaggedEmails = [];
         // Collect read failures so the caller sees them. Silently swallowing
         // these hides missing tabs / bad headers / permission errors and
         // makes every downstream tool look "empty" instead of "broken".
@@ -343,11 +343,17 @@ export function createTools({ spreadsheetId, sheets }) {
           console.warn("hydrate: intake read failed", e.message);
           warnings.push({ sheet: "IntakeQueue", message: e.message });
         }
+        try { flaggedEmails = await readSheetAsObjects("FlaggedEmails"); }
+        catch (e) {
+          console.warn("hydrate: flagged emails read failed", e.message);
+          warnings.push({ sheet: "FlaggedEmails", message: e.message });
+        }
 
         const openTasks = tasks.filter((t) => isOpen(t.status));
         const myCommitments = commitments.filter((c) => String(c.ownerType) === "me" && isOpen(c.status));
         const theirCommitments = commitments.filter((c) => String(c.ownerType) === "other" && isOpen(c.status));
         const pendingIntake = intake.filter((i) => String(i.status) === "pending");
+        const newFlaggedEmails = flaggedEmails.filter((f) => String(f.status) === "new");
 
         const overdueTasks = openTasks.filter((t) => t.dueAt && new Date(t.dueAt) < now);
         const overdueCommitments = myCommitments.filter((c) => c.dueAt && new Date(c.dueAt) < now);
@@ -363,6 +369,7 @@ export function createTools({ spreadsheetId, sheets }) {
             overdueCommitments: overdueCommitments.length,
             theirOpenCommitments: theirCommitments.length,
             pendingIntake: pendingIntake.length,
+            flaggedEmails: newFlaggedEmails.length,
           },
           openTasks: openTasks.slice(0, 30).map((t) => ({
             taskKey: t.taskKey,
@@ -395,6 +402,14 @@ export function createTools({ spreadsheetId, sheets }) {
             summary: i.summary,
             sourceRef: i.sourceRef,
             createdAt: i.createdAt,
+          })),
+          flaggedEmails: newFlaggedEmails.slice(0, 10).map((f) => ({
+            flagId: f.flagId,
+            subject: f.subject,
+            from: f.from_addr,
+            priority: f.priority,
+            snippet: f.snippet,
+            flaggedAt: f.flaggedAt,
           })),
         };
 
