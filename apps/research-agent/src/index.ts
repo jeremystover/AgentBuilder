@@ -103,7 +103,15 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
     }
 
     const raw = body as Record<string, unknown>;
-    const parsed = IngestUrlInput.safeParse({ url: raw["url"], source_id: raw["source_id"], note: raw["note"] });
+    const parsed = IngestUrlInput.safeParse({
+      url:          raw["url"],
+      source_id:    raw["source_id"],
+      note:         raw["note"],
+      content:      raw["content"],
+      title:        raw["title"],
+      author:       raw["author"],
+      published_at: raw["published_at"],
+    });
 
     if (!parsed.success) {
       return jsonResponse({ error: "Invalid input", details: parsed.error.flatten().fieldErrors }, 400, corsHeaders(origin));

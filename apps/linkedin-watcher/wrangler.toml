@@ -1,0 +1,28 @@
+name = "linkedin-watcher"
+main = "src/index.ts"
+compatibility_date = "2025-04-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Daily cron — 7:00 America/Los_Angeles ≈ 14:00 UTC (PST) / 15:00 UTC (PDT).
+# We poll a 48h window so up to one missed run still catches every post.
+[triggers]
+crons = ["0 14 * * *"]
+
+# KV — watchlist + seen-post dedup state
+[[kv_namespaces]]
+binding = "LINKEDIN_STATE"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+
+# R2 — rendered HTML snapshots of each post (public bucket for reference)
+[[r2_buckets]]
+binding = "LINKEDIN_CONTENT"
+bucket_name = "linkedin-watcher-content"
+
+[vars]
+RESEARCH_AGENT_URL = "https://research-agent.jsstover.workers.dev"
+ENVIRONMENT        = "production"
+
+# Secrets (set via wrangler secret put):
+#   wrangler secret put PROXYCURL_API_KEY  — api key from app.proxycurl.com
+#   wrangler secret put INTERNAL_SECRET    — shared secret; must match research-agent
+#   wrangler secret put WATCHER_API_KEY    — bearer token for this worker's mgmt API

@@ -72,6 +72,9 @@ export interface Env {
   MCP_BEARER_TOKEN:     string;
   BLUESKY_IDENTIFIER:   string;
   BLUESKY_APP_PASSWORD: string;
+  // Shared secret for server-to-server ingestion from fleet agents (e.g. linkedin-watcher)
+  // that post pre-fetched content to /ingest. Optional.
+  INTERNAL_SECRET?:     string;
   ENVIRONMENT:          string;
 }
 

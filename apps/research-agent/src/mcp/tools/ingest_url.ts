@@ -12,6 +12,13 @@ export const IngestUrlInput = z.object({
   force_reingest: z.boolean().default(false).describe("Re-process even if previously ingested"),
   note:           z.string().max(500).optional().describe("Optional note about why this was saved"),
   category_ids:   z.array(z.string().uuid()).optional().describe("Category IDs to tag this article with"),
+  // Pre-fetched content (server-to-server). If provided, the URL fetch is skipped
+  // and these values are used as the extracted article. Used by fleet agents such
+  // as linkedin-watcher that already have the text in hand.
+  content:        z.string().optional().describe("Pre-fetched article body text. Skips URL fetch."),
+  title:          z.string().optional().describe("Pre-fetched title. Only used when content is provided."),
+  author:         z.string().optional().describe("Pre-fetched author. Only used when content is provided."),
+  published_at:   z.string().optional().describe("Pre-fetched ISO-8601 publish date. Only used when content is provided."),
 });
 
 export type IngestUrlInput = z.infer<typeof IngestUrlInput>;
@@ -123,14 +130,28 @@ export async function ingestUrl(
 
   const articleId = existing?.id ?? crypto.randomUUID();
 
-  // Fetch & extract
+  // Fetch & extract — unless caller supplied pre-fetched content (server-to-server ingest).
   let extracted: Awaited<ReturnType<typeof extractContent>>;
-  try {
-    extracted = await extractContent(url);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    await articleQueries.upsertError(env.CONTENT_DB, { id: articleId, url, source_id: source_id ?? null, error: `fetch/extract failed: ${message}` });
-    return { article_id: articleId, url, canonical_url: null, title: null, author: null, summary: null, topics: [], word_count: null, reading_time_min: null, already_existed: false, categories: [], status: "error", error: message };
+  if (input.content && input.content.trim().length > 0) {
+    const text = input.content;
+    const escape = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    extracted = {
+      title:        input.title  ?? null,
+      author:       input.author ?? null,
+      publishedAt:  input.published_at ?? null,
+      fullText:     text,
+      html:         `<article>${text.split(/\n+/).map((p) => `<p>${escape(p)}</p>`).join("")}</article>`,
+      canonicalUrl: url,
+      lang:         null,
+    };
+  } else {
+    try {
+      extracted = await extractContent(url);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await articleQueries.upsertError(env.CONTENT_DB, { id: articleId, url, source_id: source_id ?? null, error: `fetch/extract failed: ${message}` });
+      return { article_id: articleId, url, canonical_url: null, title: null, author: null, summary: null, topics: [], word_count: null, reading_time_min: null, already_existed: false, categories: [], status: "error", error: message };
+    }
   }
 
   const { title, author, publishedAt, fullText, html, canonicalUrl } = extracted;
