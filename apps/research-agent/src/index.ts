@@ -197,7 +197,7 @@ async function handleScheduled(controller: ScheduledController, env: Env, ctx: E
     ctx.waitUntil((async () => {
       try {
         const { runPollBluesky } = await import("./cron/poll_bluesky");
-        await runPollBluesky(env);
+        await runPollBluesky(env, ctx);
       } catch (e) {
         console.error("[cron/poll_bluesky] failed:", e);
       }
