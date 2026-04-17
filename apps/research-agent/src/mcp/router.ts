@@ -15,11 +15,15 @@ import { RecordFeedbackInput,  recordFeedback }      from "./tools/record_feedba
 import { ManageInterestsInput, manageInterests }     from "./tools/manage_interests";
 import { ListSourcesInput,     listSources }         from "./tools/list_sources";
 import { ScoreContentInput,    scoreContent }        from "./tools/score_content";
+import { ManageCategoriesInput, manageCategories }   from "./tools/manage_categories";
+import { TagContentInput,       tagContent }         from "./tools/tag_content";
+import { UploadFileInput,       uploadFile }         from "./tools/upload_file";
+import { CleanupInput,          cleanup }            from "./tools/cleanup";
 
 const TOOL_MANIFESTS = [
   {
     name: "ingest_url",
-    description: "Fetch a URL, extract content, summarize, embed, and store in the knowledge base. Idempotent.",
+    description: "Fetch a URL, extract content, summarize, embed, and store in the knowledge base. Idempotent. Optionally tag with categories.",
     inputSchema: {
       type: "object", required: ["url"], additionalProperties: false,
       properties: {
@@ -27,6 +31,7 @@ const TOOL_MANIFESTS = [
         source_id:      { type: "string" },
         force_reingest: { type: "boolean", default: false },
         note:           { type: "string", maxLength: 500 },
+        category_ids:   { type: "array", items: { type: "string", format: "uuid" }, description: "Category IDs to tag this article with" },
       },
     },
   },
@@ -39,19 +44,20 @@ const TOOL_MANIFESTS = [
         query:     { type: "string", minLength: 1, maxLength: 1000 },
         top_k:     { type: "integer", minimum: 1, maximum: 50, default: 10 },
         min_score: { type: "number", minimum: 0, maximum: 1, default: 0.5 },
-        filter:    { type: "object", additionalProperties: false, properties: { source_id: { type: "string" }, topic: { type: "string" } } },
+        filter:    { type: "object", additionalProperties: false, properties: { source_id: { type: "string" }, topic: { type: "string" }, category_id: { type: "string", format: "uuid" } } },
       },
     },
   },
   {
     name: "search_fulltext",
-    description: 'FTS5 keyword search. Supports AND, OR, NOT, and "exact phrase" operators.',
+    description: 'FTS5 keyword search. Supports AND, OR, NOT, and "exact phrase" operators. Optionally filter by category.',
     inputSchema: {
       type: "object", required: ["query"], additionalProperties: false,
       properties: {
-        query:  { type: "string", minLength: 1, maxLength: 500 },
-        limit:  { type: "integer", minimum: 1, maximum: 50, default: 20 },
-        offset: { type: "integer", minimum: 0, default: 0 },
+        query:       { type: "string", minLength: 1, maxLength: 500 },
+        limit:       { type: "integer", minimum: 1, maximum: 50, default: 20 },
+        offset:      { type: "integer", minimum: 0, default: 0 },
+        category_id: { type: "string", format: "uuid", description: "Filter to articles in this category" },
       },
     },
   },
@@ -83,14 +89,15 @@ const TOOL_MANIFESTS = [
   },
   {
     name: "generate_digest",
-    description: "Generate a ranked digest of recently ingested articles, scored and grouped by your interest profile.",
+    description: "Generate a ranked digest of recently ingested articles, scored and grouped by your interest profile. Optionally filter by category.",
     inputSchema: {
       type: "object", required: [], additionalProperties: false,
       properties: {
-        limit:     { type: "integer", minimum: 1, maximum: 50, default: 15 },
-        since:     { type: "string", description: "ISO-8601 timestamp — only include articles ingested after this. Defaults to 24h ago." },
-        topic:     { type: "string", description: "Filter to a specific topic (partial match)" },
-        min_score: { type: "number", minimum: 0, maximum: 1, default: 0.0 },
+        limit:       { type: "integer", minimum: 1, maximum: 50, default: 15 },
+        since:       { type: "string", description: "ISO-8601 timestamp — only include articles ingested after this. Defaults to 24h ago." },
+        topic:       { type: "string", description: "Filter to a specific topic (partial match)" },
+        min_score:   { type: "number", minimum: 0, maximum: 1, default: 0.0 },
+        category_id: { type: "string", format: "uuid", description: "Filter to articles in this category" },
       },
     },
   },
@@ -149,6 +156,65 @@ const TOOL_MANIFESTS = [
       },
     },
   },
+  {
+    name: "manage_categories",
+    description: "Create, list, update, or delete research categories for organizing content into interest areas.",
+    inputSchema: {
+      type: "object", required: ["action"], additionalProperties: false,
+      properties: {
+        action:         { type: "string", enum: ["create", "list", "get", "update", "delete"] },
+        name:           { type: "string", minLength: 1, maxLength: 100 },
+        description:    { type: "string", maxLength: 500 },
+        color:          { type: "string", pattern: "^#[0-9a-fA-F]{6}$" },
+        parent_id:      { type: "string", format: "uuid" },
+        category_id:    { type: "string", format: "uuid" },
+        include_counts: { type: "boolean", default: false },
+      },
+    },
+  },
+  {
+    name: "tag_content",
+    description: "Assign, remove, list, or auto-suggest categories for articles. Supports bulk assignment.",
+    inputSchema: {
+      type: "object", required: ["action"], additionalProperties: false,
+      properties: {
+        action:       { type: "string", enum: ["assign", "remove", "list", "suggest", "bulk_assign"] },
+        article_id:   { type: "string", format: "uuid" },
+        article_ids:  { type: "array", items: { type: "string", format: "uuid" }, maxItems: 50 },
+        category_ids: { type: "array", items: { type: "string", format: "uuid" } },
+      },
+    },
+  },
+  {
+    name: "upload_file",
+    description: "Upload a file (image, PDF, text) to the knowledge base. Runs OCR on images and auto-creates articles from text-heavy content.",
+    inputSchema: {
+      type: "object", required: ["content_base64", "filename"], additionalProperties: false,
+      properties: {
+        content_base64: { type: "string", description: "Base64-encoded file content" },
+        filename:       { type: "string", minLength: 1, maxLength: 255 },
+        mime_type:      { type: "string" },
+        article_id:     { type: "string", format: "uuid" },
+        category_ids:   { type: "array", items: { type: "string", format: "uuid" } },
+        note:           { type: "string", maxLength: 500 },
+      },
+    },
+  },
+  {
+    name: "cleanup",
+    description: "Analyze and clean up the knowledge base: delete articles with cascade, find duplicates, stale errors, orphaned storage, and uncategorized articles. Review-then-approve workflow.",
+    inputSchema: {
+      type: "object", required: ["action"], additionalProperties: false,
+      properties: {
+        action:        { type: "string", enum: ["delete_article", "delete_attachment", "analyze", "review", "approve", "reject", "execute"] },
+        article_id:    { type: "string", format: "uuid" },
+        attachment_id: { type: "string", format: "uuid" },
+        scope:         { type: "string", enum: ["all", "duplicates", "stale", "errors", "orphans", "uncategorized"], default: "all" },
+        batch_id:      { type: "string" },
+        ids:           { type: "array", items: { type: "string", format: "uuid" } },
+      },
+    },
+  },
 ] as const;
 
 const RPC_ERRORS = {
@@ -182,8 +248,12 @@ async function dispatchTool(
     case "record_feedback":  return recordFeedback(RecordFeedbackInput.parse(args), env);
     case "manage_interests": return manageInterests(ManageInterestsInput.parse(args), env);
     case "list_sources":     return listSources(ListSourcesInput.parse(args), env);
-    case "score_content":    return scoreContent(ScoreContentInput.parse(args), env);
-    default:                 return null;
+    case "score_content":       return scoreContent(ScoreContentInput.parse(args), env);
+    case "manage_categories":  return manageCategories(ManageCategoriesInput.parse(args), env);
+    case "tag_content":        return tagContent(TagContentInput.parse(args), env);
+    case "upload_file":        return uploadFile(UploadFileInput.parse(args), env);
+    case "cleanup":            return cleanup(CleanupInput.parse(args), env);
+    default:                   return null;
   }
 }
 

@@ -38,3 +38,36 @@ export async function objectExists(bucket: R2Bucket, key: string): Promise<boole
   const head = await bucket.head(key);
   return head !== null;
 }
+
+// ── Attachment storage ────────────────────────────────────────
+
+const ATTACHMENT_PREFIX = "attachments";
+
+export function getAttachmentKey(attachmentId: string, filename: string): string {
+  return `${ATTACHMENT_PREFIX}/${attachmentId}/${filename}`;
+}
+
+export async function storeAttachment(
+  bucket: R2Bucket,
+  key: string,
+  data: ArrayBuffer,
+  contentType: string,
+): Promise<void> {
+  await bucket.put(key, data, {
+    httpMetadata: { contentType, cacheControl: CACHE_CONTROL },
+  });
+}
+
+export async function listR2Keys(bucket: R2Bucket, prefix: string): Promise<string[]> {
+  const keys: string[] = [];
+  let cursor: string | undefined;
+  for (;;) {
+    const result = await bucket.list({ prefix, ...(cursor ? { cursor } : {}) });
+    for (const obj of result.objects) {
+      keys.push(obj.key);
+    }
+    if (!result.truncated) break;
+    cursor = result.cursor;
+  }
+  return keys;
+}

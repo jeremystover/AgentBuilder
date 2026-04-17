@@ -1,14 +1,14 @@
 import { z } from "zod";
 import type { Env } from "../../types";
 import { queryVectors } from "../../lib/vectors";
-import { articleQueries } from "../../lib/db";
+import { articleQueries, articleCategoryQueries } from "../../lib/db";
 import type { ArticleRow } from "../../lib/db";
 
 export const SearchSemanticInput = z.object({
   query:     z.string().min(1).max(1000).describe("Natural language search query"),
   top_k:     z.number().int().min(1).max(50).default(10).describe("Number of results to return"),
   min_score: z.number().min(0).max(1).default(0.5).describe("Minimum cosine similarity score"),
-  filter:    z.object({ source_id: z.string().optional(), topic: z.string().optional() }).optional(),
+  filter:    z.object({ source_id: z.string().optional(), topic: z.string().optional(), category_id: z.string().uuid().optional() }).optional(),
 });
 
 export type SearchSemanticInput = z.infer<typeof SearchSemanticInput>;
@@ -24,6 +24,7 @@ export interface SemanticResult {
   published_at:     string | null;
   ingested_at:      string;
   reading_time_min: number | null;
+  categories:       string[];
 }
 
 export interface SearchSemanticOutput {
@@ -67,6 +68,13 @@ export async function searchSemantic(input: SearchSemanticInput, env: Env): Prom
       if (!topics.some((t) => t.toLowerCase().includes(topicLower))) continue;
     }
 
+    if (input.filter?.category_id) {
+      const cats = await articleCategoryQueries.listForArticle(env.CONTENT_DB, row.id);
+      if (!cats.some((c) => c.id === input.filter!.category_id)) continue;
+    }
+
+    const articleCategories = await articleCategoryQueries.listForArticle(env.CONTENT_DB, row.id);
+
     results.push({
       article_id:       row.id,
       score:            Math.round(match.score * 10_000) / 10_000,
@@ -78,6 +86,7 @@ export async function searchSemantic(input: SearchSemanticInput, env: Env): Prom
       published_at:     row.published_at     ?? null,
       ingested_at:      row.ingested_at,
       reading_time_min: row.reading_time_min ?? null,
+      categories:       articleCategories.map((c) => c.name),
     });
   }
 
