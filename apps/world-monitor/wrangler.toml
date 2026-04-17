@@ -14,6 +14,16 @@ new_sqlite_classes = ["WorldMonitorDO"]
 [ai]
 binding = "AI"
 
+# Response cache for upstream calls. Per-category TTLs live in src/cache.ts
+# (markets 60s, news/climate/cyber_infra/predictions/geopolitics 5m,
+# supply_chain 10m, government 15m). Uncomment after running:
+#   wrangler kv namespace create WM_CACHE
+# and pasting the returned id below. The worker degrades gracefully (no-op
+# cache path) when the binding is absent, so local dev works without KV.
+# [[kv_namespaces]]
+# binding = "WM_CACHE"
+# id = "REPLACE_WITH_KV_ID"
+
 # Uncomment once the shared DB is provisioned.
 # [[d1_databases]]
 # binding = "DB"

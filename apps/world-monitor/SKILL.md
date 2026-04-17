@@ -1,93 +1,125 @@
 # World Monitor
 
-**Purpose.** Situational-awareness agent for the fleet. Wraps the upstream
-[worldmonitor-mcp](https://github.com/mahimn01/worldmonitor-mcp) server
-(which itself wraps [koala73/worldmonitor](https://github.com/koala73/worldmonitor))
-to surface live markets, geopolitics, conflict, climate, supply chain, cyber,
-and infrastructure signals to other agents via MCP.
+**Purpose.** Situational-awareness agent for the fleet. Surfaces live markets,
+geopolitics, conflict, climate, supply-chain, cyber, and infrastructure signals
+via 8 coarse MCP tools. Internally ports the upstream
+[worldmonitor-mcp](https://github.com/mahimn01/worldmonitor-mcp) registry
+(which itself wraps [koala73/worldmonitor](https://github.com/koala73/worldmonitor)),
+implemented as a native Cloudflare Worker — no stdio subprocess, no DOM parser.
 
 ## When to call me
 - "What's happening in the markets right now?"
-- "Any recent earthquakes / wildfires / severe weather near [place]?"
-- "Latest FRED print for [series]" / "What did the treasury auction today?"
-- "Summarize conflict activity in [region] over the last 24h"
-- "Any new SEC EDGAR filings for [ticker]?"
-- "What do prediction markets say about [event]?"
-- "Pull a news brief on [topic]"
-- "Supply-chain or maritime disruptions today?"
-- "Recent cyber incidents affecting [sector]?"
+- "Any recent earthquakes M5+ in the last 24h?"
+- "Give me a news brief on [variant=full|tech|finance]"
+- "Any new SEC EDGAR filings for NVDA?"
+- "Show insider transactions for CIK 0000320193"
+- "What are the latest 13F filings from Berkshire (CIK 1067983)?"
 
 ## Non-goals
 - Calendar, tasks, goals, or stakeholder management (that's Chief of Staff)
-- Bookkeeping, budgeting, tax work, or personal financial planning (that's CFO) —
+- Bookkeeping, budgeting, taxes, or personal financial planning (that's CFO) —
   World Monitor reports market data, it doesn't act on your portfolio
 - Guest booking or property management (that's Guest Booking)
 - Building or modifying other agents (that's Agent Builder)
 - Indexing articles into a personal knowledge base (that's Research Agent) —
   World Monitor returns live feeds, not a saved-article store
+- Article extraction / body fetching — explicitly out of scope (HTML parsing on
+  Workers is costly; the upstream's DOM-based extractor was not ported)
 - Executing trades, moving money, or any write-side action against external systems
-- Giving investment, legal, medical, or geopolitical advice — data only
+- Investment, legal, medical, or geopolitical advice — data only
 
-## Tools (MCP surface — POST /mcp)
+## MCP surface
 
-Surface is kept coarse. Each tool proxies to the matching category in the
-upstream worldmonitor-mcp server (which exposes ~140 underlying tools across
-32 services). The upstream server is launched as a stdio child process or
-reached via a configured `WORLDMONITOR_MCP_URL`.
+Exposed at `POST /mcp` as 8 coarse tools. Each takes `{ operation, params }`
+where `operation` is an enum of the specific endpoint to hit.
 
-| Tool | Description |
-|---|---|
-| `markets` | Equities, treasury, CFTC, congress-trading, onchain, and sentiment queries. |
-| `geopolitics` | Intelligence, conflict events, military movement, unrest, displacement. |
-| `news` | Headline feeds, research briefs, and article extraction (direct + Google Cache + Archive.org fallbacks). |
-| `climate` | Weather, agriculture, wildfire, and seismology queries. |
-| `supply_chain` | Supply-chain signals, maritime traffic, and trade-flow data. |
-| `cyber_infra` | Cyber incidents, critical-infrastructure alerts, aviation events. |
-| `government` | Government releases, SEC EDGAR filings, economic-calendar entries. |
-| `predictions` | Prediction-market odds and forecasting signals. |
+| Coarse tool | v1 status | v1 operations |
+|---|---|---|
+| `markets` | wired (proxy) | `list_market_quotes`, `list_crypto_quotes`, `list_commodity_quotes`, `get_sector_summary`, `list_stablecoin_markets`, `list_etf_flows`, `get_country_stock_index`, `list_gulf_quotes` |
+| `news` | wired (proxy) | `list_feed_digest` |
+| `climate` | wired (proxy) | `list_earthquakes` |
+| `government` | wired (**direct** to SEC EDGAR) | `search_sec_filings`, `get_insider_transactions`, `get_institutional_holdings`, `get_company_filings`, `get_company_facts` |
+| `geopolitics` | stubbed (returns 501) | — |
+| `supply_chain` | stubbed | — |
+| `cyber_infra` | stubbed | — |
+| `predictions` | stubbed | — |
 
-Kept under the 10-tool cap (AGENTS.md §2). Each tool takes a free-form
-`query` plus optional structured params (`symbols`, `region`, `since`, etc.)
-that are forwarded to the underlying worldmonitor-mcp call.
+Adding operations to a wired category = drop a `ServiceDef` under
+`src/registry/services/` and register it in `src/registry/index.ts`.
+Adding a direct handler = add a file under `src/handlers/` and mirror
+`directHandlers` in `src/handlers/index.ts`. The dispatcher and cache are
+category-generic; no other code changes needed.
 
-## Upstream MCP server
+## Architecture
 
-```json
-{
-  "mcpServers": {
-    "worldmonitor": {
-      "command": "npx",
-      "args": ["github:mahimn01/worldmonitor-mcp"]
-    }
-  }
-}
+```
+POST /mcp  ─►  handleMcp  ─►  dispatch(category, operation, params)
+                                │
+                                ├─ withCache (KV, per-category TTL)
+                                │       │
+                                │       ▼
+                                ├─ direct  → src/handlers/<service>.ts
+                                │           (e.g. SEC EDGAR → data.sec.gov)
+                                │
+                                └─ proxy   → client.callUrl
+                                            (WORLDMONITOR_BASE_URL + basePath + endpoint)
 ```
 
-Installed from the git repo because `worldmonitor-mcp` is not yet published
-to npm. Swap to `"args": ["worldmonitor-mcp"]` once it's on the registry.
+- **HTTP client** (`src/client.ts`): native `fetch`, AbortController timeout,
+  2× exponential backoff on 429/5xx, HTML-response detection, response-size
+  truncation (largest-array halving, ported from upstream).
+- **Cache** (`src/cache.ts`): KV-backed, per-category TTL. Degrades to no-op
+  when the `WM_CACHE` binding is absent.
+- **Registry** (`src/registry/`): declarative `ServiceDef` objects — same shape
+  as upstream; porting more services is mechanical.
+
+## Cache TTLs
+
+Tuned by data volatility:
+
+| Category | TTL |
+|---|---|
+| `markets` | 60s |
+| `news`, `climate`, `cyber_infra`, `predictions`, `geopolitics` | 5m |
+| `supply_chain` | 10m |
+| `government` | 15m |
+
+`markets` sits at KV's minimum (60s); lowering further requires a different
+cache substrate (Durable Object storage or in-memory).
 
 ## Env / secrets
 
-None are required. All are optional and unlock rate-limited endpoints:
+None are required; defaults work. All are optional:
 
-| Secret | Purpose |
-|---|---|
-| `WORLDMONITOR_BASE_URL` | Upstream worldmonitor.app URL (default `https://worldmonitor.app`) |
-| `WORLDMONITOR_API_KEY` | Upstream API key if you have one |
-| `FINNHUB_API_KEY` | Earnings/IPO calendar, market quotes |
-| `FRED_API_KEY` | FRED economic data |
-| `USDA_API_KEY` | Crop and drought reports |
-| `OPENSANCTIONS_API_KEY` | Sanctions search enhancement |
+| Variable | Purpose | Default |
+|---|---|---|
+| `WM_CACHE` (KV binding) | Response cache | disabled (no-op) |
+| `MCP_HTTP_KEY` | Bearer token for `POST /mcp` | no auth |
+| `WORLDMONITOR_BASE_URL` | Upstream base URL | `https://worldmonitor.app` |
+| `WORLDMONITOR_API_KEY` | Upstream bearer token | none |
+| `WORLDMONITOR_TIMEOUT` | HTTP timeout in ms | `15000` |
+| `WORLDMONITOR_MAX_RESPONSE_SIZE` | Response truncation threshold in bytes | `100000` |
 
-Set any of these via `wrangler secret put <NAME> --name world-monitor`.
+Secrets flow via `wrangler secret put <NAME> --name world-monitor`.
+
+## One-time setup: KV cache
+
+```bash
+wrangler kv namespace create WM_CACHE
+# → returns an id; paste it into wrangler.toml where noted
+```
+
+The worker is functional without KV — the cache layer silently no-ops when
+the binding is missing. Skipping this step is fine for local dev.
 
 ## Shared packages
 - `@agentbuilder/core`
 - `@agentbuilder/llm`
 
 ## Notes
-- Model tier: `default` (Sonnet). Drop to `fast` (Haiku) for pure
-  classification (e.g., "which category does this question belong to").
+- Model tier: `default` (Sonnet). The MCP surface is pure data — the LLM only
+  engages when a user calls `POST /chat` for a conversational turn.
 - Prompt caching: on by default via `@agentbuilder/llm`.
-- Upstream is AGPL-3.0 (koala73/worldmonitor). The `mahimn01/worldmonitor-mcp`
-  wrapper licensing should be reviewed before production deploy.
+- Upstream koala73/worldmonitor is AGPL-3.0; mahimn01/worldmonitor-mcp is MIT.
+  This Worker port uses only the service definitions and the
+  direct-handler shapes — verify license compatibility before production deploy.

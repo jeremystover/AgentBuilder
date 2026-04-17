@@ -1,23 +1,28 @@
 /**
  * World Monitor — headless agent Worker entrypoint.
  *
- * Purpose: Wraps the worldmonitor-mcp server to surface live markets, geopolitics, conflict, climate, supply chain, cyber, and infrastructure data to the fleet via MCP.
+ * Surfaces live situational-awareness data (markets, news, climate, government, etc.)
+ * as 8 coarse MCP tools. Each tool takes an `operation` enum + `params` object and
+ * dispatches internally to either:
+ *   - a proxy call to worldmonitor.app  (default — 21 upstream services)
+ *   - a direct call to the underlying provider (SEC EDGAR in v1; more to follow)
  *
  * Routes:
- *   GET  /health  → { status: 'ok', agent: 'world-monitor' }
- *   POST /chat    → { message, sessionId? } (REST, for curl testing)
- *   POST /mcp     → JSON-RPC 2.0 MCP server (Claude custom tool integration)
+ *   GET  /health  → { status, agent, wiredCategories }
+ *   POST /chat    → { message, sessionId? } (REST, for curl / chat.sh)
+ *   POST /mcp     → JSON-RPC 2.0 MCP server
  *
- * MCP auth: set MCP_HTTP_KEY secret via `wrangler secret put MCP_HTTP_KEY`,
- * then add Authorization: Bearer <MCP_HTTP_KEY> in Claude's connector settings.
- *
- * See ./SKILL.md for the full persona, tools, and non-goals.
+ * MCP auth: set MCP_HTTP_KEY via `wrangler secret put MCP_HTTP_KEY`.
+ * KV cache (optional): bind WM_CACHE in wrangler.toml — see SKILL.md.
  */
 
+import { UpstreamError } from './client.js';
+import { dispatch } from './dispatcher.js';
+import { MCP_TOOLS } from './mcp-tools.js';
+import type { CoarseCategory } from './registry/types.js';
 import type { Env } from '../worker-configuration';
-export { WorldMonitorDO } from './durable-object.js';
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+export { WorldMonitorDO } from './durable-object.js';
 
 function jsonResponse(obj: unknown, status = 200): Response {
   return new Response(JSON.stringify(obj), {
@@ -41,28 +46,16 @@ function requireAuth(
   return { ok: false, response: jsonResponse({ error: 'Unauthorized' }, 401) };
 }
 
-// ── MCP tool definitions ─────────────────────────────────────────────────────
-// TODO: Replace this stub with your agent's actual tools.
-// Each tool should have: name, description, inputSchema, and be handled
-// in the tools/call branch of handleMcp below.
-
-const MCP_TOOLS = [
-  {
-    name: 'chat',
-    description: 'Wraps the worldmonitor-mcp server to surface live markets, geopolitics, conflict, climate, supply chain, cyber, and infrastructure data to the fleet via MCP.. Send a message and get a response. Pass sessionId back on follow-up turns.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        message: { type: 'string', description: 'Your message.' },
-        sessionId: { type: 'string', description: 'Session id for conversation continuity. Omit to start new.' },
-      },
-      required: ['message'],
-      additionalProperties: false,
-    },
-  },
-];
-
-// ── JSON-RPC 2.0 MCP handler ─────────────────────────────────────────────────
+const CATEGORIES: ReadonlySet<CoarseCategory> = new Set([
+  'markets',
+  'geopolitics',
+  'news',
+  'climate',
+  'supply_chain',
+  'cyber_infra',
+  'government',
+  'predictions',
+]);
 
 interface JsonRpcMessage {
   jsonrpc?: string;
@@ -71,11 +64,7 @@ interface JsonRpcMessage {
   params?: Record<string, unknown>;
 }
 
-async function handleMcp(
-  message: JsonRpcMessage,
-  env: Env,
-  originalRequest: Request,
-): Promise<unknown> {
+async function handleMcp(message: JsonRpcMessage, env: Env): Promise<unknown> {
   const { id, method, params } = message;
 
   if (!method) {
@@ -90,7 +79,8 @@ async function handleMcp(
         protocolVersion: '2024-11-05',
         capabilities: { tools: {} },
         serverInfo: { name: 'world-monitor', version: '0.1.0' },
-        instructions: 'Wraps the worldmonitor-mcp server to surface live markets, geopolitics, conflict, climate, supply chain, cyber, and infrastructure data to the fleet via MCP.',
+        instructions:
+          'Situational-awareness data from markets, geopolitics, news, climate, supply chain, cyber, government, and prediction markets. Call a coarse tool with {operation, params}; see the operation enum for available endpoints.',
       },
     };
   }
@@ -101,57 +91,53 @@ async function handleMcp(
 
   if (method === 'tools/call') {
     const name = String(params?.name ?? '');
-    if (name !== 'chat') {
+    if (!CATEGORIES.has(name as CoarseCategory)) {
       return { jsonrpc: '2.0', id, error: { code: -32601, message: `Unknown tool: ${name}` } };
     }
 
-    const args = (params?.arguments ?? {}) as { message?: string; sessionId?: string };
-    if (!args.message) {
-      return { jsonrpc: '2.0', id, error: { code: -32602, message: '`message` is required' } };
+    const args = (params?.arguments ?? {}) as { operation?: string; params?: Record<string, unknown> };
+    if (!args.operation) {
+      return { jsonrpc: '2.0', id, error: { code: -32602, message: '`operation` is required' } };
     }
 
-    const doKey = args.sessionId ?? crypto.randomUUID();
-    const doId = env.AGENT_DO.idFromName(doKey);
-    const stub = env.AGENT_DO.get(doId);
-
-    const doRequest = new Request(originalRequest.url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ message: args.message, sessionId: doKey }),
-    });
-
-    const doResponse = await stub.fetch(doRequest);
-    if (!doResponse.ok) {
-      const text = await doResponse.text();
-      return { jsonrpc: '2.0', id, error: { code: -32000, message: text } };
+    try {
+      const result = await dispatch(
+        env as unknown as Parameters<typeof dispatch>[0],
+        name as CoarseCategory,
+        args.operation,
+        args.params ?? {},
+      );
+      return {
+        jsonrpc: '2.0',
+        id,
+        result: {
+          content: [{ type: 'text', text: JSON.stringify(result) }],
+        },
+      };
+    } catch (err: unknown) {
+      const status = err instanceof UpstreamError ? err.status : 500;
+      const msg = err instanceof Error ? err.message : String(err);
+      return { jsonrpc: '2.0', id, error: { code: -32000 - status, message: msg } };
     }
-
-    const result = (await doResponse.json()) as Record<string, unknown>;
-    return {
-      jsonrpc: '2.0',
-      id,
-      result: {
-        content: [{ type: 'text', text: JSON.stringify(result) }],
-      },
-    };
   }
 
   if (method === 'notifications/initialized') return null;
-
   return { jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } };
 }
-
-// ── Worker ───────────────────────────────────────────────────────────────────
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
     if (request.method === 'GET' && url.pathname === '/health') {
-      return jsonResponse({ status: 'ok', agent: 'world-monitor' });
+      return jsonResponse({
+        status: 'ok',
+        agent: 'world-monitor',
+        wiredCategories: ['markets', 'news', 'climate', 'government'],
+        cache: (env as unknown as { WM_CACHE?: unknown }).WM_CACHE ? 'enabled' : 'disabled',
+      });
     }
 
-    // REST /chat for local testing with curl / chat.sh
     if (url.pathname === '/chat' && request.method === 'POST') {
       let sessionId: string | null = null;
       const cloned = request.clone();
@@ -166,7 +152,6 @@ export default {
       return stub.fetch(request);
     }
 
-    // MCP /mcp for Claude custom tool integration
     if (url.pathname === '/mcp' && request.method === 'POST') {
       const auth = requireAuth(request, env);
       if (!auth.ok) return auth.response;
@@ -175,16 +160,24 @@ export default {
       try {
         msg = (await request.json()) as JsonRpcMessage;
       } catch {
-        return jsonResponse({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } });
+        return jsonResponse({
+          jsonrpc: '2.0',
+          id: null,
+          error: { code: -32700, message: 'Parse error' },
+        });
       }
 
       try {
-        const out = await handleMcp(msg, env, request);
+        const out = await handleMcp(msg, env);
         if (out === null) return new Response(null, { status: 204 });
         return jsonResponse(out);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        return jsonResponse({ jsonrpc: '2.0', id: msg.id ?? null, error: { code: -32000, message } });
+        return jsonResponse({
+          jsonrpc: '2.0',
+          id: msg.id ?? null,
+          error: { code: -32000, message },
+        });
       }
     }
 
