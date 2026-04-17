@@ -213,7 +213,7 @@ async function markPolled(env: Env, sourceId: string): Promise<void> {
 
 // ── Main export ───────────────────────────────────────────────
 
-export async function runPollBluesky(env: Env): Promise<void> {
+export async function runPollBluesky(env: Env, ctx: ExecutionContext): Promise<void> {
   if (!env.BLUESKY_IDENTIFIER || !env.BLUESKY_APP_PASSWORD) {
     console.log("[poll_bluesky] BLUESKY_IDENTIFIER or BLUESKY_APP_PASSWORD not set — skipping");
     return;
@@ -243,7 +243,7 @@ export async function runPollBluesky(env: Env): Promise<void> {
         for (const url of urls) {
           if (ingested >= MAX_PER_RUN) break;
           try {
-            await ingestUrl({ url, source_id: undefined, force_reingest: false }, env, {} as ExecutionContext);
+            await ingestUrl({ url, source_id: undefined, force_reingest: false }, env, ctx);
             ingested++;
           } catch (e) {
             console.warn(`[poll_bluesky] ingest failed for ${url}:`, e);
@@ -294,7 +294,7 @@ export async function runPollBluesky(env: Env): Promise<void> {
         for (const url of urls) {
           if (totalIngested >= MAX_PER_RUN) break;
           try {
-            await ingestUrl({ url, source_id: source.id, force_reingest: false }, env, {} as ExecutionContext);
+            await ingestUrl({ url, source_id: source.id, force_reingest: false }, env, ctx);
             sourceIngested++;
             totalIngested++;
           } catch (e) {
