@@ -1052,7 +1052,8 @@ export function createIngestTools({ ufetch, userFetches = null, gfetch, sheets, 
       description:
         "Mark all pending intake items created before a specified date as 'archived' without screening. " +
         "Useful for bulk cleanup of stale queue items (e.g., archive everything before 30 days ago). " +
-        "Does NOT apply screening — purely date-based archival. Returns count archived.",
+        "Does NOT apply screening — purely date-based archival. Returns count archived. " +
+        "Processes up to 50 items per call — run again if more remain.",
       inputSchema: {
         type: "object",
         properties: {
@@ -1070,14 +1071,10 @@ export function createIngestTools({ ufetch, userFetches = null, gfetch, sheets, 
         }
         try {
           let dateStr = String(args.beforeDate).trim();
-
-          // Handle date-only format (YYYY-MM-DD) by appending T00:00:00Z
-          if (dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
+          if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
             dateStr = dateStr + "T00:00:00Z";
           }
-
-          // Ensure it ends with Z for UTC if it has time but no timezone
-          if (dateStr.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/) && !dateStr.endsWith("Z")) {
+          if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(dateStr)) {
             dateStr = dateStr + "Z";
           }
 
@@ -1086,37 +1083,55 @@ export function createIngestTools({ ufetch, userFetches = null, gfetch, sheets, 
             return formatContent({ error: `Invalid date format: "${args.beforeDate}". Expected ISO 8601 (e.g., 2026-04-16 or 2026-04-16T12:00:00Z).` });
           }
 
-          const rows = await sheets.readSheetAsObjects("IntakeQueue");
-          const toArchive = rows.filter((r) => {
-            const createdMs = new Date(r.createdAt || 0).getTime();
-            return Number.isFinite(createdMs) && createdMs < cutoffMs && String(r.status || "").toLowerCase() === "pending";
-          });
+          // Read the raw sheet once — avoids re-reading per row via findRowByKey
+          const { headers, rows } = await sheets.readSheet("IntakeQueue");
+          const statusIdx = headers.indexOf("status");
+          const createdIdx = headers.indexOf("createdAt");
+          const updatedIdx = headers.indexOf("updatedAt");
 
-          if (toArchive.length === 0) {
+          if (statusIdx === -1 || createdIdx === -1) {
+            return formatContent({ error: "IntakeQueue sheet missing required columns (status, createdAt)" });
+          }
+
+          const MAX_BATCH = 50;
+          const candidates = [];
+          let totalEligible = 0;
+          for (let i = 0; i < rows.length; i++) {
+            const row = rows[i];
+            if (String(row[statusIdx] || "").toLowerCase() !== "pending") continue;
+            const createdMs = new Date(row[createdIdx] || 0).getTime();
+            if (!Number.isFinite(createdMs) || createdMs >= cutoffMs) continue;
+            totalEligible++;
+            if (candidates.length < MAX_BATCH) {
+              candidates.push({ rowNum: i + 2, row });
+            }
+          }
+
+          if (candidates.length === 0) {
             return formatContent({ archived: 0, note: "No pending items found before cutoff date." });
           }
 
           let archivedCount = 0;
-          for (const row of toArchive) {
+          for (const { rowNum, row } of candidates) {
             try {
-              const found = await sheets.findRowByKey("IntakeQueue", "intakeId", row.intakeId);
-              if (found) {
-                await sheets.updateRow("IntakeQueue", found.rowNum, {
-                  ...row,
-                  status: "archived",
-                  updatedAt: nowIso(),
-                });
-                archivedCount++;
-              }
+              const updatedRow = [...row];
+              updatedRow[statusIdx] = "archived";
+              if (updatedIdx !== -1) updatedRow[updatedIdx] = nowIso();
+              await sheets.updateRow("IntakeQueue", rowNum, updatedRow);
+              archivedCount++;
             } catch {
               // Best-effort: continue archiving others if one fails
             }
           }
 
+          const remaining = totalEligible - archivedCount;
           return formatContent({
             archived: archivedCount,
             beforeDate: args.beforeDate,
-            note: `Archived ${archivedCount} pending intake items created before ${args.beforeDate}.`,
+            remaining,
+            note: remaining > 0
+              ? `Archived ${archivedCount} of ${totalEligible} eligible items (batch limit ${MAX_BATCH}). Run again to continue.`
+              : `Archived ${archivedCount} pending intake items created before ${args.beforeDate}.`,
           });
         } catch (e) {
           return formatContent({ error: e.message });
