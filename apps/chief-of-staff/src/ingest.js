@@ -1058,7 +1058,7 @@ export function createIngestTools({ ufetch, userFetches = null, gfetch, sheets, 
         properties: {
           beforeDate: {
             type: "string",
-            description: "ISO date or datetime. Archive all pending items created before this.",
+            description: "ISO 8601 datetime (e.g., 2026-04-16T00:00:00Z or 2026-04-16). Archive all pending items created before this.",
           },
         },
         required: ["beforeDate"],
@@ -1066,12 +1066,24 @@ export function createIngestTools({ ufetch, userFetches = null, gfetch, sheets, 
       },
       run: async (args = {}) => {
         if (!args.beforeDate) {
-          return formatContent({ error: "beforeDate is required (ISO format)" });
+          return formatContent({ error: "beforeDate is required (ISO 8601 format)" });
         }
         try {
-          const cutoffMs = new Date(args.beforeDate).getTime();
+          let dateStr = String(args.beforeDate).trim();
+
+          // Handle date-only format (YYYY-MM-DD) by appending T00:00:00Z
+          if (dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
+            dateStr = dateStr + "T00:00:00Z";
+          }
+
+          // Ensure it ends with Z for UTC if it has time but no timezone
+          if (dateStr.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/) && !dateStr.endsWith("Z")) {
+            dateStr = dateStr + "Z";
+          }
+
+          const cutoffMs = new Date(dateStr).getTime();
           if (!Number.isFinite(cutoffMs)) {
-            return formatContent({ error: "Invalid date format" });
+            return formatContent({ error: `Invalid date format: "${args.beforeDate}". Expected ISO 8601 (e.g., 2026-04-16 or 2026-04-16T12:00:00Z).` });
           }
 
           const rows = await sheets.readSheetAsObjects("IntakeQueue");
