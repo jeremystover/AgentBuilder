@@ -5,7 +5,7 @@
  * audits listing consistency across platforms and manages
  * overlapping-inventory availability using a graph-based
  * containment/conflict model.
- *
+ *  
  * Routes:
  *   GET  /health    → { status: 'ok', agent: 'guest-booking' }
  *   GET  /*         → static assets from ./public
