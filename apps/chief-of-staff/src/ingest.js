@@ -16,6 +16,7 @@ import { createGmail } from "./gmail.js";
 import { createCalendar } from "./calendar.js";
 import { DEFAULT_ACCOUNT, getUserFetch } from "./auth.js";
 import { createBluesky } from "./bluesky.js";
+import { createEmailFilterTools } from "./email-filters.js";
 
 function nowIso() { return new Date().toISOString(); }
 function generateId(prefix) {
@@ -91,6 +92,8 @@ async function ingestGmail({ gmail, sheets, sinceMs, account = DEFAULT_ACCOUNT }
   const existingRefs = new Set(existingRows.map((r) => r.sourceRef).filter(Boolean));
 
   let count = 0;
+  const emails = []; // Collect emails for filter scanning
+
   for (const thread of threads) {
     const latestMsg = thread.messages[thread.messages.length - 1];
 
@@ -130,10 +133,33 @@ async function ingestGmail({ gmail, sheets, sinceMs, account = DEFAULT_ACCOUNT }
       sourceRef,
       existingRefs,
     });
+
+    // Collect email data for filter scanning
+    emails.push({
+      messageId: thread.messages[0].messageId,
+      threadId: thread.threadId,
+      subject: thread.subject,
+      from: thread.messages[0].from,
+      date: latestMsg.date,
+      snippet: thread.snippet,
+      body: body,
+    });
+
+    count++;
     if (intakeId) count++;
   }
 
-  return { ingested: count, source: "gmail", account };
+  // Scan emails for filter matches
+  let flagged = 0;
+  try {
+    const { scanEmailsForFilters } = createEmailFilterTools({ sheets });
+    const flaggedEmails = await scanEmailsForFilters(emails);
+    flagged = flaggedEmails.length;
+  } catch {
+    // Email filtering failure should not block ingest
+  }
+
+  return { ingested: count, flagged, source: "gmail", account };
 }
 
 // ── Calendar ingestion ───────────────────────────────────────────────────────
