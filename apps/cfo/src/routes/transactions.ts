@@ -128,7 +128,7 @@ export async function handleDeleteTransaction(request: Request, env: Env, txId: 
 
 // ── PATCH /transactions/:id/classify ─────────────────────────────────────────
 const ClassifySchema = z.object({
-  entity: z.enum(['coaching_business', 'airbnb_activity', 'family_personal']),
+  entity: z.enum(['elyse_coaching', 'jeremy_coaching', 'airbnb_activity', 'family_personal']),
   category_tax: z.string().min(1),
   category_budget: z.string().optional(),
   note: z.string().optional(),
@@ -203,7 +203,7 @@ export async function handleManualClassify(request: Request, env: Env, txId: str
 
 // ── POST /transactions/:id/split ──────────────────────────────────────────────
 const SplitItemSchema = z.object({
-  entity: z.enum(['coaching_business', 'airbnb_activity', 'family_personal']),
+  entity: z.enum(['elyse_coaching', 'jeremy_coaching', 'airbnb_activity', 'family_personal']),
   category_tax: z.string().optional(),
   amount: z.number(),
   note: z.string().optional(),

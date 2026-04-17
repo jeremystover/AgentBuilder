@@ -37,7 +37,7 @@ const CLASSIFICATION_TOOL = {
     properties: {
       entity: {
         type: 'string',
-        enum: ['coaching_business', 'airbnb_activity', 'family_personal'],
+        enum: ['elyse_coaching', 'jeremy_coaching', 'airbnb_activity', 'family_personal'],
         description: 'Which business entity or personal category this transaction belongs to',
       },
       category_tax: {
@@ -68,17 +68,21 @@ const CLASSIFICATION_TOOL = {
   },
 };
 
-const SYSTEM_PROMPT = `You are an expert US tax and accounting classification agent for a taxpayer with:
+const SYSTEM_PROMPT = `You are an expert US tax and accounting classification agent for a household with four entities:
 
-1. **Coaching Business** (sole proprietor → Schedule C)
-   Sells online coaching, courses, and digital products.
+1. **Elyse's Coaching** (entity: elyse_coaching — sole proprietor → Schedule C)
+   Elyse's online coaching, courses, and digital products business.
    Valid tax categories: ${Object.keys(SCHEDULE_C_CATEGORIES).join(', ')}
 
-2. **Whitford House Rental Activity** (short-term rental host → Schedule E)
-   Runs the Whitford House short-term rental; tracks rental income and all associated expenses.
+2. **Jeremy's Coaching** (entity: jeremy_coaching — sole proprietor → Schedule C)
+   Jeremy's coaching business, separate Schedule C.
+   Valid tax categories: ${Object.keys(SCHEDULE_C_CATEGORIES).join(', ')}
+
+3. **Whitford House Rental Activity** (entity: airbnb_activity → Schedule E)
+   Whitford House short-term rental; tracks rental income and all associated expenses.
    Valid tax categories: ${Object.keys(AIRBNB_CATEGORIES).join(', ')}
 
-3. **Family / Personal** (not deductible unless noted)
+4. **Family / Personal** (entity: family_personal — not deductible unless noted)
    Everything else, including potentially deductible personal items.
    Valid budget categories: ${Object.keys(FAMILY_CATEGORIES).join(', ')}
 
@@ -88,12 +92,13 @@ const SYSTEM_PROMPT = `You are an expert US tax and accounting classification ag
 - HARD RULES override model judgment:
   * Personal mortgage interest → family_personal / interest_mortgage
   * Airbnb / VRBO platform fees → airbnb_activity / commissions
-  * Zoom / Loom / coaching-tool SaaS → coaching_business / office_expense or supplies
+  * Zoom / Loom / coaching-tool SaaS on Elyse's accounts → elyse_coaching / office_expense or supplies
   * Amazon orders shipped to 912 Grandey Rd or Grandey Road are likely Whitford House expenses and should usually be classified as airbnb_activity
   * Amazon orders shipped to Edna Street are usually family_personal unless stronger evidence says otherwise
   * Elyse coaching income is usually a positive deposit into Elyse's Checking (Wells Fargo 9953) or Elyse's Venmo
-  * Some 2025 Elyse coaching deposits arrived in Wells Fargo 3204 from Square Inc. and were then transferred out; treat the Square deposit as coaching_business income and the outbound movement as a transfer/internal move, not an expense
+  * Some 2025 Elyse coaching deposits arrived in Wells Fargo 3204 from Square Inc. and were then transferred out; treat the Square deposit as elyse_coaching income and the outbound movement as a transfer/internal move, not an expense
   * Elyse coaching expenses are usually negative amounts on Delta Skymiles Platinum card 8005; recurring coaching merchants include Google Workspace/Storage/Cloud, LinkedIn, QuickBooks, Dropbox, Typeform, Zoom, USPS, Apple billing, Dreamhost, Tiller, Doodle, and similar business tools
+  * Jeremy coaching income/expenses go to jeremy_coaching — use account context and merchant to distinguish from Elyse's coaching
   * Whitford House income usually deposits into Wells Fargo 3204 and includes Airbnb, Booking.com, Square Inc., mobile deposits, ATM check deposits, and guest booking descriptions
   * Whitford House expenses are usually paid from Wells Fargo 3204, Chase Sapphire 9026, or Jeremy's Venmo
   * Jeremy's Venmo often pays Whitford expenses; if the Venmo balance was empty and the payment pulled from Wells Fargo 3204, still treat it as Whitford House activity

@@ -17,7 +17,7 @@ export interface Env {
 
 export type BankProvider = 'teller';
 
-export type Entity = 'coaching_business' | 'airbnb_activity' | 'family_personal';
+export type Entity = 'elyse_coaching' | 'jeremy_coaching' | 'airbnb_activity' | 'family_personal';
 export type ClassificationMethod = 'rule' | 'ai' | 'manual' | 'historical';
 export type ReviewReason = 'low_confidence' | 'no_match' | 'conflict' | 'flagged' | 'unclassified';
 

@@ -6,10 +6,10 @@ import { computeDedupHash, cleanDescription, parseCsv } from '../lib/dedup';
 // Tiller category → { entity, category_tax } mapping
 //
 // Tiller conventions found in this export:
-//   c -  prefix  →  coaching_business  (Schedule C)
+//   c -  prefix  →  elyse_coaching  (Schedule C)
 //   m -  prefix  →  airbnb_activity    (rental property, likely "main" house)
 //   w -  prefix  →  airbnb_activity    (rental property, "w" property)
-//   Sch C ...    →  coaching_business
+//   Sch C ...    →  elyse_coaching
 //   (no prefix)  →  family_personal
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -233,18 +233,18 @@ export function mapCategory(raw: string): Mapping | null {
   // Skip transfers/payments
   if (SKIP_CATEGORIES.has(lower)) return null;
 
-  // --- coaching_business (c - prefix) ---
+  // --- elyse_coaching (c - prefix) ---
   if (lower.startsWith('c - ') || lower.startsWith('c-')) {
     const suffix = lower.replace(/^c\s*-\s*/, '').trim();
     const taxCat = COACHING_MAP[suffix] ?? 'other_expenses';
-    return { entity: 'coaching_business', category_tax: taxCat };
+    return { entity: 'elyse_coaching', category_tax: taxCat };
   }
 
   // "Sch C ..." variants
   if (lower.startsWith('sch c ')) {
     const suffix = lower.replace(/^sch c\s*/, '').trim();
     const taxCat = COACHING_MAP[suffix] ?? 'other_expenses';
-    return { entity: 'coaching_business', category_tax: taxCat };
+    return { entity: 'elyse_coaching', category_tax: taxCat };
   }
 
   // --- airbnb_activity (m - or w - prefix) ---
