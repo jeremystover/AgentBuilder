@@ -1,0 +1,25 @@
+{
+  "name": "@agentbuilder/app-graphic-designer",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "build": "wrangler deploy --dry-run --outdir=dist",
+    "typecheck": "tsc --noEmit",
+    "db:migrate": "wrangler d1 migrations apply graphic-designer-db"
+  },
+  "dependencies": {
+    "@agentbuilder/core": "workspace:*",
+    "@agentbuilder/llm": "workspace:*",
+    "@agentbuilder/auth-google": "workspace:*",
+    "agents": "^0.0.95",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250410.0",
+    "typescript": "^5.6.3",
+    "wrangler": "^3.90.0"
+  }
+}
