@@ -10,6 +10,8 @@
 - "What does my research say about [question]?"
 - "Add a Bluesky account as a feed source"
 - "What articles have I bookmarked from [source]?"
+- "Watch this page for when tickets go on sale / a release shows up / text X appears"
+- "List my page watches" / "pause the watch for …"
 
 ## Non-goals
 - Calendar, tasks, goals, or stakeholder management (that's Chief of Staff)
@@ -38,6 +40,7 @@ All 10 tools are available via the standard MCP endpoint and via POST /chat.
 | `manage_interests` | View or edit interest profile (topic weights, source scores, settings). |
 | `list_sources` | List, add, remove, or toggle ingestion sources (Bluesky, RSS, email). |
 | `score_content` | Score an article's relevance against the current interest profile. |
+| `manage_watches` | Create/list/update/pause/resume/delete page-monitoring watches. Checks URL on a 5m–1d interval, emails when the match condition fires (contains / not_contains / regex / hash). |
 
 ## REST endpoints
 - `POST /ingest` — quick-ingest from bookmarklet or browser extension
@@ -48,6 +51,24 @@ All 10 tools are available via the standard MCP endpoint and via POST /chat.
 - **Bluesky** — polled every 30 min via cron; stores liked/timeline posts, extracts linked URLs
 - **Email** — forward any email to the agent's Email Workers address; URLs are extracted and ingested
 - **Manual** — `ingest_url` tool or `POST /ingest` endpoint; browser bookmarklet
+
+## Page monitoring (watches)
+
+Use `manage_watches` to have the agent poll a URL on a schedule and email you
+when a match condition fires. Useful for concert presales, product restocks,
+"coming soon" pages flipping to available, etc.
+
+- Intervals: `5`, `15`, `30`, `60`, `240`, or `1440` minutes
+- Match types:
+  - `contains` — notify when text appears (e.g., "BUY TICKETS")
+  - `not_contains` — notify when text disappears (e.g., "Sold Out" gone)
+  - `regex` — notify on regex match (case-insensitive)
+  - `hash` — notify on any change to page content
+- Notify modes: `once` (default, de-dupes until match resets) or `every`
+- Delivery: Cloudflare Email Workers `send_email` binding. The destination
+  address must be verified in the Cloudflare dashboard before first use; the
+  From address comes from `WATCH_NOTIFY_FROM` in `wrangler.toml`.
+- Cron: runs every 5 min; each watch's own interval gates whether it's due.
 
 ## Shared packages
 - None (uses Workers AI directly for `edge`-tier inference; no Anthropic API key required)

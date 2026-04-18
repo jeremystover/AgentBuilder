@@ -203,6 +203,16 @@ async function handleScheduled(controller: ScheduledController, env: Env, ctx: E
       }
     })());
   }
+  if (controller.cron === "*/5 * * * *") {
+    ctx.waitUntil((async () => {
+      try {
+        const { runCheckWatches } = await import("./cron/check_watches");
+        await runCheckWatches(env, ctx);
+      } catch (e) {
+        console.error("[cron/check_watches] failed:", e);
+      }
+    })());
+  }
 }
 
 async function handleEmail(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext): Promise<void> {

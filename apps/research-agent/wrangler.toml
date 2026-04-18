@@ -32,12 +32,23 @@ index_name = "research-agent-content"
 binding = "CONTENT_STORE"
 bucket_name = "research-agent-content"
 
-# Cron — poll Bluesky sources every 30 minutes
+# Cron triggers:
+#   */5  — page-monitoring watches (check_watches)
+#   */30 — Bluesky source polling (poll_bluesky)
 [triggers]
-crons = ["*/30 * * * *"]
+crons = ["*/5 * * * *", "*/30 * * * *"]
+
+# Outbound email for watch notifications. The destination address(es) must be
+# verified in the Cloudflare dashboard (Email > Destination addresses) before
+# Workers can send to them.
+[[send_email]]
+name = "SEND_EMAIL"
 
 [vars]
 ENVIRONMENT = "production"
+# The verified From address for watch-notification emails.
+# Override in prod via `wrangler secret put WATCH_NOTIFY_FROM` if you prefer.
+WATCH_NOTIFY_FROM = "research-agent@example.com"
 
 # Inbound email routing is configured in the Cloudflare dashboard (Email > Email Workers).
 # The email() handler in src/index.ts processes forwarded messages automatically.

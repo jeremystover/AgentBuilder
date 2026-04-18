@@ -4,6 +4,13 @@ import type {
   VectorizeIndex,
 } from "@cloudflare/workers-types";
 
+// Cloudflare Email Workers outbound binding. Used with a `[[send_email]]`
+// binding in wrangler.toml; the argument is an `EmailMessage` instance from
+// `cloudflare:email`. Typed loosely to avoid version coupling.
+export interface SendEmailBinding {
+  send(message: unknown): Promise<void>;
+}
+
 // ── Workers AI ─────────────────────────────────────────────────
 
 export type AiTextGenerationModel =
@@ -67,12 +74,14 @@ export interface Env {
   CONTENT_STORE:   R2Bucket;
   AI:              Ai;
   CHAT_SESSION:    DurableObjectNamespace;
+  SEND_EMAIL?:     SendEmailBinding;
 
   // Secrets
   MCP_BEARER_TOKEN:     string;
   BLUESKY_IDENTIFIER:   string;
   BLUESKY_APP_PASSWORD: string;
   ENVIRONMENT:          string;
+  WATCH_NOTIFY_FROM?:   string;
 }
 
 // ── MCP protocol types ─────────────────────────────────────────

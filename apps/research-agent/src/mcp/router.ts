@@ -19,6 +19,7 @@ import { ManageCategoriesInput, manageCategories }   from "./tools/manage_catego
 import { TagContentInput,       tagContent }         from "./tools/tag_content";
 import { UploadFileInput,       uploadFile }         from "./tools/upload_file";
 import { CleanupInput,          cleanup }            from "./tools/cleanup";
+import { ManageWatchesInput,    manageWatches }      from "./tools/manage_watches";
 
 const TOOL_MANIFESTS = [
   {
@@ -216,6 +217,26 @@ const TOOL_MANIFESTS = [
       },
     },
   },
+  {
+    name: "manage_watches",
+    description: "Create, list, get, update, pause, resume, or delete page-monitoring watches. A watch periodically fetches a URL on a 5/15/30/60/240/1440-minute interval and emails notify_email when the match condition (contains / not_contains / regex / hash) triggers.",
+    inputSchema: {
+      type: "object", required: ["action"], additionalProperties: false,
+      properties: {
+        action:           { type: "string", enum: ["create", "list", "get", "update", "pause", "resume", "delete"] },
+        name:             { type: "string", minLength: 1, maxLength: 120 },
+        url:              { type: "string", format: "uri" },
+        interval_minutes: { type: "integer", enum: [5, 15, 30, 60, 240, 1440] },
+        match_type:       { type: "string", enum: ["contains", "not_contains", "regex", "hash"] },
+        match_value:      { type: "string", maxLength: 500 },
+        notify_email:     { type: "string", format: "email" },
+        notify_mode:      { type: "string", enum: ["once", "every"], default: "once" },
+        enabled_only:     { type: "boolean", default: false },
+        watch_id:         { type: "string", format: "uuid" },
+        include_hits:     { type: "boolean", default: false },
+      },
+    },
+  },
 ] as const;
 
 const RPC_ERRORS = {
@@ -254,6 +275,7 @@ async function dispatchTool(
     case "tag_content":        return tagContent(TagContentInput.parse(args), env);
     case "upload_file":        return uploadFile(UploadFileInput.parse(args), env);
     case "cleanup":            return cleanup(CleanupInput.parse(args), env);
+    case "manage_watches":     return manageWatches(ManageWatchesInput.parse(args), env);
     default:                   return null;
   }
 }
