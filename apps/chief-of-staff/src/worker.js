@@ -594,6 +594,78 @@ export default {
       }
     }
 
+    // Internal: auth diagnostic — tests SA JSON parse, JWT sign, token exchange,
+    // and a live Sheets API call. Each step is reported independently so the
+    // exact failure point is visible without needing Cloudflare log tail.
+    //   curl -s "https://<worker>/internal/auth-check?key=<INTERNAL_CRON_KEY>" | jq
+    if (request.method === "GET" && urlObj.pathname === "/internal/auth-check") {
+      const auth = requireAuth(request, env, { scope: "internal" });
+      if (!auth.ok) return auth.response;
+
+      const steps = [];
+
+      // Step 1: parse GOOGLE_SERVICE_ACCOUNT_JSON
+      let saJson = null;
+      try {
+        const raw = env.GOOGLE_SERVICE_ACCOUNT_JSON || "";
+        saJson = JSON.parse(raw);
+        const pk = saJson.private_key || "";
+        steps.push({
+          step: "1_json_parse",
+          ok: !!(saJson.client_email && pk),
+          client_email: saJson.client_email || null,
+          private_key_length: pk.length,
+          private_key_starts_with: pk.slice(0, 27),
+          has_real_newlines: pk.includes("\n"),
+          type: saJson.type || null,
+        });
+      } catch (e) {
+        steps.push({ step: "1_json_parse", ok: false, error: e.message });
+        return jsonResponse({ ok: false, steps });
+      }
+
+      if (!saJson.client_email || !saJson.private_key) {
+        steps.push({ step: "2_get_access_token", ok: false, error: "Skipped — missing client_email or private_key" });
+        return jsonResponse({ ok: false, steps });
+      }
+
+      // Step 2: JWT sign + token exchange (getAccessToken does both)
+      let gfetch2;
+      try {
+        const { gfetch: gf, getAccessToken } = createGfetch(env);
+        gfetch2 = gf;
+        const token = await getAccessToken();
+        steps.push({ step: "2_get_access_token", ok: true, token_prefix: token.slice(0, 10) + "…" });
+      } catch (e) {
+        steps.push({ step: "2_get_access_token", ok: false, error: e.message });
+        return jsonResponse({ ok: false, steps });
+      }
+
+      // Step 3: Sheets API — fetch spreadsheet metadata (lightweight, no data read)
+      const spreadsheetId = env.PPP_SHEETS_SPREADSHEET_ID || "";
+      if (!spreadsheetId || spreadsheetId === "d1") {
+        steps.push({ step: "3_sheets_api", ok: null, skipped: "PPP_SHEETS_SPREADSHEET_ID not set or using D1" });
+      } else {
+        try {
+          const res = await gfetch2(
+            `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=spreadsheetId,properties.title`
+          );
+          const meta = await res.json();
+          steps.push({
+            step: "3_sheets_api",
+            ok: true,
+            spreadsheet_id: meta.spreadsheetId,
+            spreadsheet_title: meta.properties?.title,
+          });
+        } catch (e) {
+          steps.push({ step: "3_sheets_api", ok: false, error: e.message });
+        }
+      }
+
+      const allOk = steps.every((s) => s.ok === true || s.ok === null);
+      return jsonResponse({ ok: allOk, steps });
+    }
+
     if (request.method !== "POST" || urlObj.pathname !== "/mcp") {
       return jsonResponse({ error: "Not found" }, 404);
     }
