@@ -1,6 +1,6 @@
 {
   "$schemaVersion": 1,
-  "updatedAt": "2026-04-14T00:00:00.000Z",
+  "updatedAt": "2026-04-18T02:34:34.887Z",
   "agents": [
     {
       "id": "agent-builder",
@@ -9,9 +9,23 @@
       "owner": "jeremystover",
       "status": "draft",
       "kind": "headless",
-      "skills": ["scaffold-agent", "register-agent", "flag-overlap", "propagate-shared-changes"],
-      "tools": ["file-system", "wrangler", "pnpm", "git", "github-app", "registry-rw"],
-      "mcpServers": ["github"],
+      "skills": [
+        "scaffold-agent",
+        "register-agent",
+        "flag-overlap",
+        "propagate-shared-changes"
+      ],
+      "tools": [
+        "file-system",
+        "wrangler",
+        "pnpm",
+        "git",
+        "github-app",
+        "registry-rw"
+      ],
+      "mcpServers": [
+        "github"
+      ],
       "sharedPackages": [
         "@agentbuilder/core",
         "@agentbuilder/llm",
@@ -21,8 +35,12 @@
       "oauthScopes": [],
       "cloudflare": {
         "workerName": "agent-builder",
-        "durableObjects": ["AgentBuilderDO"],
-        "d1": ["agentbuilder_core"],
+        "durableObjects": [
+          "AgentBuilderDO"
+        ],
+        "d1": [
+          "agentbuilder_core"
+        ],
         "kv": [],
         "r2": [],
         "queues": [],
@@ -185,9 +203,13 @@
       "cloudflare": {
         "workerName": "cfo",
         "durableObjects": [],
-        "d1": ["cfo-db"],
+        "d1": [
+          "cfo-db"
+        ],
         "kv": [],
-        "r2": ["cfo-files"],
+        "r2": [
+          "cfo-files"
+        ],
         "queues": [],
         "hasAssets": true
       },
@@ -253,11 +275,19 @@
       "oauthScopes": [],
       "cloudflare": {
         "workerName": "guest-booking",
-        "durableObjects": ["GuestBookingDO"],
-        "d1": ["guest-booking-db"],
-        "kv": ["guest-booking-cache"],
+        "durableObjects": [
+          "GuestBookingDO"
+        ],
+        "d1": [
+          "guest-booking-db"
+        ],
+        "kv": [
+          "guest-booking-cache"
+        ],
         "r2": [],
-        "queues": ["guest-booking-sync-queue"],
+        "queues": [
+          "guest-booking-sync-queue"
+        ],
         "hasAssets": true
       },
       "routing": {
@@ -325,10 +355,16 @@
       "oauthScopes": [],
       "cloudflare": {
         "workerName": "research-agent",
-        "durableObjects": ["ChatSession"],
-        "d1": ["research-agent-db"],
+        "durableObjects": [
+          "ChatSession"
+        ],
+        "d1": [
+          "research-agent-db"
+        ],
         "kv": [],
-        "r2": ["research-agent-content"],
+        "r2": [
+          "research-agent-content"
+        ],
         "queues": [],
         "hasAssets": false
       },
@@ -358,6 +394,99 @@
           "Guest booking or property management (that's Guest Booking)",
           "Building or modifying other agents (that's Agent Builder)",
           "Real-time web search — this agent searches ingested content only"
+        ]
+      },
+      "version": "0.0.1"
+    },
+    {
+      "id": "graphic-designer",
+      "name": "Graphic Designer",
+      "purpose": "Designs and produces visual artifacts — Google Slides from templates, Cloudflare Pages websites, logos and brand guides, image/icon sourcing, and brand-compliance audits.",
+      "owner": "jeremystover",
+      "status": "draft",
+      "kind": "app",
+      "skills": [
+        "presentation-design",
+        "template-analysis",
+        "site-design",
+        "logo-design",
+        "brand-style-guide-creation",
+        "brand-compliance-audit",
+        "image-icon-sourcing",
+        "ai-image-generation",
+        "cloudflare-pages-deploy"
+      ],
+      "tools": [
+        "analyze-template",
+        "plan-presentation",
+        "build-presentation",
+        "search-media",
+        "check-brand-compliance",
+        "plan-site",
+        "build-and-deploy-site",
+        "generate-logo-concepts",
+        "finalize-logo-package",
+        "manage-brand-assets",
+        "canva-export"
+      ],
+      "mcpServers": [],
+      "sharedPackages": [
+        "@agentbuilder/core",
+        "@agentbuilder/llm",
+        "@agentbuilder/auth-google"
+      ],
+      "oauthScopes": [
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/presentations",
+        "https://www.googleapis.com/auth/documents.readonly"
+      ],
+      "cloudflare": {
+        "workerName": "graphic-designer",
+        "durableObjects": [
+          "GraphicDesignerDO"
+        ],
+        "d1": [
+          "graphic-designer-db"
+        ],
+        "kv": [],
+        "r2": [
+          "graphic-designer-assets"
+        ],
+        "queues": [],
+        "hasAssets": true
+      },
+      "routing": {
+        "triggerPhrases": [
+          "build a deck",
+          "build a presentation",
+          "design a logo",
+          "build a website",
+          "deploy a landing page",
+          "find an image",
+          "find an icon",
+          "check brand compliance",
+          "create a brand style guide",
+          "make a slide"
+        ],
+        "examples": [
+          "Build a pitch deck from this outline using my template",
+          "Design a logo for my new company",
+          "Build a landing page for the product launch and deploy it",
+          "Find me 5 icons that match our brand style for the services page",
+          "Check if this Google Doc follows our brand guidelines",
+          "Create a brand style guide to go with this logo",
+          "Iterate on logo concept #3 — make it more minimal",
+          "Update slide 4 to use a two-column layout with an image"
+        ],
+        "nonGoals": [
+          "Print design, packaging, or video/motion graphics (out of scope v1)",
+          "Long-form copywriting or content strategy (user provides the outline)",
+          "Calendar, tasks, goals, or stakeholder management (that's Chief of Staff)",
+          "Financial accounting, bookkeeping, or tax work (that's CFO)",
+          "Building or modifying other agents (that's Agent Builder)",
+          "Persistent article/knowledge ingestion (that's Research Agent)",
+          "Dynamic web apps with backends — this builds static Cloudflare Pages sites only",
+          "Guest booking or property management (that's Guest Booking)"
         ]
       },
       "version": "0.0.1"
