@@ -48,7 +48,7 @@ name = "SEND_EMAIL"
 ENVIRONMENT = "production"
 # The verified From address for watch-notification emails.
 # Override in prod via `wrangler secret put WATCH_NOTIFY_FROM` if you prefer.
-WATCH_NOTIFY_FROM = "research-agent@example.com"
+WATCH_NOTIFY_FROM = "jsstover@gmail.com"
 
 # Inbound email routing is configured in the Cloudflare dashboard (Email > Email Workers).
 # The email() handler in src/index.ts processes forwarded messages automatically.
