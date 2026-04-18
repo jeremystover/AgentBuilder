@@ -81,14 +81,45 @@ wrangler login
 wrangler d1 create agentbuilder-core
 # → copy the database_id into apps/agent-builder/wrangler.toml and any agent
 #   that declares the DB binding
-
-# Store shared secrets (these flow to Workers via env)
-wrangler secret put ANTHROPIC_API_KEY --name agent-builder
-wrangler secret put GITHUB_APP_ID --name agent-builder
-wrangler secret put GITHUB_APP_INSTALLATION_ID --name agent-builder
-wrangler secret put GITHUB_APP_PRIVATE_KEY --name agent-builder
-wrangler secret put GOOGLE_TOKEN_VAULT_KEK --name agent-builder
 ```
+
+### Fleet-shared secrets (Secrets Store)
+
+Fleet-shared secrets (ANTHROPIC_API_KEY, Google OAuth credentials, token vault
+KEK) are stored once in a Cloudflare Secrets Store and bound to every agent
+via `[[secrets_store_secrets]]` in their wrangler.toml. Run the setup script:
+
+```bash
+# Creates the store, prompts for each secret value, patches all wrangler.toml files
+pnpm fleet:setup-secrets
+```
+
+The script creates a store named `agentbuilder-fleet` and manages these secrets:
+
+| Secrets Store name | Env binding | Used by |
+|---|---|---|
+| `anthropic-api-key` | `ANTHROPIC_API_KEY` | agent-builder, cfo, graphic-designer |
+| `google-oauth-client-id` | `GOOGLE_OAUTH_CLIENT_ID` | chief-of-staff, graphic-designer |
+| `google-oauth-client-secret` | `GOOGLE_OAUTH_CLIENT_SECRET` | agent-builder, chief-of-staff, graphic-designer |
+| `google-token-vault-kek` | `GOOGLE_TOKEN_VAULT_KEK` | graphic-designer |
+
+To generate the `GOOGLE_TOKEN_VAULT_KEK` (random 32-byte AES-256 key, base64):
+
+```bash
+node -e "const b=crypto.getRandomValues(new Uint8Array(32));console.log(btoa(String.fromCharCode(...b)))"
+```
+
+### Per-agent secrets
+
+Secrets unique to a single agent stay as plain worker secrets:
+
+```bash
+wrangler secret put MCP_HTTP_KEY --name <agent-id>
+```
+
+See each agent's `wrangler.toml` comments for the full list.
+
+### D1 token vault schema
 
 D1 schema for the shared token vault lives in
 `packages/auth-google/src/schema.ts`. Apply it with:
