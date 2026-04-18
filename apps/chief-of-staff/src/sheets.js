@@ -94,6 +94,43 @@ export function createSheets(gfetch, spreadsheetId) {
   }
 
   /**
+   * Delete a specific row (1-indexed; header = row 1, first data = row 2).
+   * Uses the Sheets API batchUpdate deleteRange to remove the row and shift up.
+   */
+  async function deleteRow(sheetName, rowNum) {
+    if (!spreadsheetId) throw new Error("spreadsheetId is not set");
+    // Need the sheetId (numeric) for batchUpdate. Fetch it from spreadsheet metadata.
+    const metaUrl = `${SHEETS_BASE}/${encodeURIComponent(spreadsheetId)}?fields=sheets.properties`;
+    const metaRes = await withRetry(() => gfetch(metaUrl));
+    const meta = await metaRes.json();
+    const sheet = (meta.sheets || []).find(
+      (s) => s.properties?.title === sheetName
+    );
+    if (!sheet) throw new Error(`Sheet tab '${sheetName}' not found`);
+    const sheetId = sheet.properties.sheetId;
+
+    const url = `${SHEETS_BASE}/${encodeURIComponent(spreadsheetId)}:batchUpdate`;
+    await withRetry(() =>
+      gfetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          requests: [{
+            deleteDimension: {
+              range: {
+                sheetId,
+                dimension: "ROWS",
+                startIndex: rowNum - 1,
+                endIndex: rowNum,
+              },
+            },
+          }],
+        }),
+      })
+    );
+  }
+
+  /**
    * Update a specific row (1-indexed; header = row 1, first data = row 2).
    */
   async function updateRow(sheetName, rowNum, values) {
@@ -210,6 +247,7 @@ export function createSheets(gfetch, spreadsheetId) {
     readSheetsAsObjects,
     appendRows,
     updateRow,
+    deleteRow,
     findRowByKey,
     findRowsByKey,
     listSheetTabs,

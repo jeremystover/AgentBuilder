@@ -95,6 +95,27 @@ export function createD1Sheets(db) {
   }
 
   /**
+   * Fetch multiple tables as objects in parallel.
+   * Returns { [tableName]: object[] } — same shape as readSheetAsObjects per table.
+   * D1 reads are local (<10ms each) so parallel queries are fine.
+   */
+  async function readSheetsAsObjects(tableNames) {
+    if (!tableNames || tableNames.length === 0) return {};
+    const entries = await Promise.all(
+      tableNames.map(async (name) => [name, await readSheetAsObjects(name)])
+    );
+    return Object.fromEntries(entries);
+  }
+
+  /**
+   * Delete a specific row by its rowNum (1-indexed, header = row 1).
+   */
+  async function deleteRow(tableName, rowNum) {
+    const rowId = rowNum - 1;
+    await db.prepare(`DELETE FROM ${qTable(tableName)} WHERE _row_id = ?`).bind(rowId).run();
+  }
+
+  /**
    * Append rows to a table.
    * rows: array of arrays (values in column order).
    */
@@ -288,8 +309,10 @@ export function createD1Sheets(db) {
   return {
     readSheet,
     readSheetAsObjects,
+    readSheetsAsObjects,
     appendRows,
     updateRow,
+    deleteRow,
     findRowByKey,
     findRowsByKey,
     listSheetTabs,

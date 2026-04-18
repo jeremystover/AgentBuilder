@@ -36,7 +36,7 @@ import { generateMorningBrief, generateCommitmentNudges, createAutomationTools }
 import { createContentTools } from "./content-tools.js";
 import { readContent } from "./content.js";
 import { runCron, logError } from "./observability.js";
-import { bootstrapSheets } from "./bootstrap.js";
+import { bootstrapSheets, SHEET_SCHEMAS } from "./bootstrap.js";
 import { createGoalsTools } from "./goals.js";
 import { createStateExportTools, generateStateExport, renderStateMarkdown } from "./state-export.js";
 import { createEmailFilterMCPTools } from "./email-filters.js";
@@ -595,6 +595,45 @@ export default {
         await logError({ sheets: sh, spreadsheetId: sid, scope: "internal:bootstrap-sheets", err: e });
         return jsonResponse({ error: e.message }, 500);
       }
+    }
+
+    // Internal: migrate all data from Google Sheets → D1.
+    //
+    // Reads every tab defined in SHEET_SCHEMAS from the Google Sheets spreadsheet
+    // and upserts it into the D1 database. Safe to re-run (clears and reloads
+    // each table). Requires both env.DB (D1 binding) and PPP_SHEETS_SPREADSHEET_ID.
+    //
+    //   curl -s -X POST "https://<worker>/internal/migrate-sheets-to-d1?key=<key>" | jq
+    if (request.method === "POST" && urlObj.pathname === "/internal/migrate-sheets-to-d1") {
+      const auth = requireAuth(request, env, { scope: "internal" });
+      if (!auth.ok) return auth.response;
+      if (!env.DB) return jsonResponse({ error: "D1 binding (DB) not available" }, 400);
+      const sheetsId = env.PPP_SHEETS_SPREADSHEET_ID || "";
+      if (!sheetsId) return jsonResponse({ error: "PPP_SHEETS_SPREADSHEET_ID not set" }, 400);
+
+      const { gfetch: gf } = createGfetch(env);
+      const source = createSheets(gf, sheetsId);
+      const { sheets: dest } = resolveDataStore(env, gf); // resolves to D1 since env.DB present
+      const report = {};
+
+      for (const tableName of Object.keys(SHEET_SCHEMAS)) {
+        try {
+          const rows = await source.readSheetAsObjects(tableName);
+          const cols = SHEET_SCHEMAS[tableName];
+          // Clear existing rows then re-insert.
+          await env.DB.prepare(`DELETE FROM "${tableName}"`).run();
+          if (rows.length > 0) {
+            const arrayRows = rows.map((obj) => cols.map((c) => obj[c] ?? ""));
+            await dest.appendRows(tableName, arrayRows);
+          }
+          report[tableName] = { ok: true, rows: rows.length };
+        } catch (e) {
+          report[tableName] = { ok: false, error: e.message };
+        }
+      }
+
+      const failed = Object.values(report).filter((r) => !r.ok);
+      return jsonResponse({ ok: failed.length === 0, report });
     }
 
     // Internal: auth diagnostic — tests SA JSON parse, JWT sign, token exchange,
