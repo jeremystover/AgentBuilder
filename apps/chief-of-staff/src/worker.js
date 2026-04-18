@@ -318,10 +318,13 @@ async function handleJsonRpc(message, tools, loaders) {
     const name = params?.name;
     const tool = tools[name];
     if (!tool) return { jsonrpc: "2.0", id, error: asError(-32601, `Unknown tool: ${name}`) };
+    const t0 = Date.now();
     try {
       const result = await tool.run(params?.arguments || {});
+      console.log(`[tool] ${name} ok ${Date.now() - t0}ms`);
       return { jsonrpc: "2.0", id, result };
     } catch (e) {
+      console.error(`[tool] ${name} error ${Date.now() - t0}ms: ${e.message}`);
       return { jsonrpc: "2.0", id, error: asError(-32000, e.message) };
     }
   }
