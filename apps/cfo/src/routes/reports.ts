@@ -7,11 +7,16 @@ export async function handleScheduleC(request: Request, env: Env): Promise<Respo
   const userId = getUserId(request);
   const url = new URL(request.url);
   const year = url.searchParams.get('year') ?? new Date().getFullYear().toString();
+  const entity = url.searchParams.get('entity') ?? 'elyse_coaching';
 
+  if (entity !== 'elyse_coaching' && entity !== 'jeremy_coaching') {
+    return jsonError('entity must be elyse_coaching or jeremy_coaching');
+  }
+
+  const coaSlug = entity;
   const dateFrom = `${year}-01-01`;
   const dateTo   = `${year}-12-31`;
 
-  // Category totals
   const totals = await env.DB.prepare(
     `SELECT c.category_tax, coa.name AS category_name, coa.form_line,
             SUM(t.amount) AS total_amount, COUNT(*) AS transaction_count
@@ -19,23 +24,18 @@ export async function handleScheduleC(request: Request, env: Env): Promise<Respo
      JOIN classifications c ON c.transaction_id = t.id
      LEFT JOIN chart_of_accounts coa ON coa.code = c.category_tax
        AND coa.business_entity_id = (
-         SELECT id FROM business_entities WHERE user_id = ? AND slug = 'coaching' LIMIT 1
+         SELECT id FROM business_entities WHERE user_id = ? AND slug = ? LIMIT 1
        )
-     WHERE t.user_id = ? AND c.entity = 'coaching_business'
+     WHERE t.user_id = ? AND c.entity = ?
        AND t.posted_date BETWEEN ? AND ?
        AND c.review_required = 0
      GROUP BY c.category_tax
      ORDER BY coa.form_line`,
-  ).bind(userId, userId, dateFrom, dateTo).all<{
+  ).bind(userId, coaSlug, userId, entity, dateFrom, dateTo).all<{
     category_tax: string; category_name: string; form_line: string;
     total_amount: number; transaction_count: number;
   }>();
 
-  // DB convention: expenses are stored as NEGATIVE amounts (Teller-native;
-  // Chase/Venmo importers normalize to match). Schedule C wants positive
-  // dollar figures for both income and expense lines, so flip the sign on
-  // expense rows before rolling up. Using `-total_amount` (rather than Math.abs)
-  // preserves the correct direction for refund edge cases.
   const income = totals.results.filter(r => r.category_tax === 'income');
   const expenses = totals.results
     .filter(r => r.category_tax !== 'income')
@@ -44,17 +44,16 @@ export async function handleScheduleC(request: Request, env: Env): Promise<Respo
   const totalExpense = expenses.reduce((s, r) => s + r.total_amount, 0);
   const netProfit    = totalIncome - totalExpense;
 
-  // Unreviewed count (excluded from totals above)
   const unreviewedRow = await env.DB.prepare(
     `SELECT COUNT(*) AS cnt FROM transactions t
      JOIN classifications c ON c.transaction_id = t.id
-     WHERE t.user_id = ? AND c.entity = 'coaching_business'
+     WHERE t.user_id = ? AND c.entity = ?
        AND t.posted_date BETWEEN ? AND ? AND c.review_required = 1`,
-  ).bind(userId, dateFrom, dateTo).first<{ cnt: number }>();
+  ).bind(userId, entity, dateFrom, dateTo).first<{ cnt: number }>();
 
   return jsonOk({
     tax_year: year,
-    entity: 'coaching_business',
+    entity,
     schedule: 'C',
     income: { categories: income, total: totalIncome },
     expenses: { categories: expenses, total: totalExpense },
