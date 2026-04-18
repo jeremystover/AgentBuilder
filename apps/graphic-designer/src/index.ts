@@ -11,6 +11,7 @@
  */
 
 import type { Env } from '../worker-configuration';
+import { handleOAuthCallback, handleOAuthStart } from './lib/oauth.js';
 export { GraphicDesignerDO } from './durable-object.js';
 
 function jsonResponse(obj: unknown, status = 200): Response {
@@ -316,6 +317,13 @@ export default {
 
     if (request.method === 'GET' && url.pathname === '/health') {
       return jsonResponse({ status: 'ok', agent: 'graphic-designer' });
+    }
+
+    if (url.pathname === '/api/auth/google/start') {
+      return handleOAuthStart(request, env);
+    }
+    if (url.pathname === '/api/auth/google/callback') {
+      return handleOAuthCallback(request, env);
     }
 
     if (url.pathname === '/mcp' && request.method === 'POST') {

@@ -1,7 +1,12 @@
 import { DurableObject } from 'cloudflare:workers';
-import { createLogger } from '@agentbuilder/core';
+import { AgentError, createLogger } from '@agentbuilder/core';
 import { LLMClient } from '@agentbuilder/llm';
 import type { Env } from '../worker-configuration';
+import { analyzeTemplate, type AnalyzeTemplateArgs } from './tools/analyze-template.js';
+import {
+  manageBrandAssets,
+  type ManageBrandAssetsArgs,
+} from './tools/manage-brand-assets.js';
 
 const SYSTEM_PROMPT = `You are Graphic Designer, a creative design agent.
 
@@ -86,33 +91,64 @@ export class GraphicDesignerDO extends DurableObject<Env> {
   ): Promise<Response> {
     logger.info(`tool.${req.tool}`);
 
-    switch (req.tool) {
-      case 'chat':
-        return this.handleChat(
-          { message: req.args.message as string, sessionId: req.sessionId },
-          logger,
+    try {
+      switch (req.tool) {
+        case 'chat':
+          return this.handleChat(
+            { message: req.args.message as string, sessionId: req.sessionId },
+            logger,
+          );
+
+        case 'manage_brand_assets': {
+          const result = await manageBrandAssets(
+            this.env,
+            req.args as unknown as ManageBrandAssetsArgs,
+          );
+          return Response.json({ ...result, sessionId: req.sessionId });
+        }
+
+        case 'analyze_template': {
+          const result = await analyzeTemplate(
+            this.env,
+            req.args as unknown as AnalyzeTemplateArgs,
+          );
+          return Response.json({ ...result, sessionId: req.sessionId });
+        }
+
+        case 'plan_presentation':
+        case 'build_presentation':
+        case 'search_media':
+        case 'check_brand_compliance':
+        case 'plan_site':
+        case 'build_and_deploy_site':
+        case 'generate_logo_concepts':
+        case 'finalize_logo_package':
+        case 'canva_export':
+          return Response.json({
+            ok: false,
+            status: 'not_implemented',
+            tool: req.tool,
+            message: `Tool "${req.tool}" is registered but not yet implemented. Coming in Slice 3-4.`,
+            sessionId: req.sessionId,
+          });
+
+        default:
+          return new Response(`Unknown tool: ${req.tool}`, { status: 400 });
+      }
+    } catch (err) {
+      if (err instanceof AgentError) {
+        logger.warn(`tool.${req.tool}.error`, { code: err.code, message: err.message });
+        return Response.json(
+          { ok: false, error: err.message, code: err.code, sessionId: req.sessionId },
+          { status: err.status },
         );
-
-      case 'analyze_template':
-      case 'plan_presentation':
-      case 'build_presentation':
-      case 'search_media':
-      case 'check_brand_compliance':
-      case 'plan_site':
-      case 'build_and_deploy_site':
-      case 'generate_logo_concepts':
-      case 'finalize_logo_package':
-      case 'manage_brand_assets':
-      case 'canva_export':
-        return Response.json({
-          status: 'not_implemented',
-          tool: req.tool,
-          message: `Tool "${req.tool}" is registered but not yet implemented. Coming in Slice 2-4.`,
-          sessionId: req.sessionId,
-        });
-
-      default:
-        return new Response(`Unknown tool: ${req.tool}`, { status: 400 });
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error(`tool.${req.tool}.unexpected`, { message });
+      return Response.json(
+        { ok: false, error: message, sessionId: req.sessionId },
+        { status: 500 },
+      );
     }
   }
 }

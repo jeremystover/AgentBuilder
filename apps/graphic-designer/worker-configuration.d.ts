@@ -11,4 +11,6 @@ export interface Env {
   CANVA_API_KEY: string;
   MCP_HTTP_KEY: string;
   GOOGLE_TOKEN_VAULT_KEK: string;
+  GOOGLE_OAUTH_CLIENT_ID: string;
+  GOOGLE_OAUTH_CLIENT_SECRET: string;
 }
