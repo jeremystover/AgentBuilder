@@ -14,3 +14,4 @@ coverage
 # Migration staging — legacy-repo source cloned locally for porting.
 # Should never land in a commit. Deleted post-migration.
 .migration-staging/
+apps/chief-of-staff/key.json
