@@ -4,9 +4,18 @@ import { LLMClient } from '@agentbuilder/llm';
 import type { Env } from '../worker-configuration';
 import { analyzeTemplate, type AnalyzeTemplateArgs } from './tools/analyze-template.js';
 import {
+  buildPresentation,
+  type BuildPresentationArgs,
+} from './tools/build-presentation.js';
+import {
   manageBrandAssets,
   type ManageBrandAssetsArgs,
 } from './tools/manage-brand-assets.js';
+import {
+  planPresentation,
+  type PlanPresentationArgs,
+} from './tools/plan-presentation.js';
+import { searchMedia, type SearchMediaArgs } from './tools/search-media.js';
 
 const SYSTEM_PROMPT = `You are Graphic Designer, a creative design agent.
 
@@ -115,9 +124,30 @@ export class GraphicDesignerDO extends DurableObject<Env> {
           return Response.json({ ...result, sessionId: req.sessionId });
         }
 
-        case 'plan_presentation':
-        case 'build_presentation':
-        case 'search_media':
+        case 'search_media': {
+          const result = await searchMedia(
+            this.env,
+            req.args as unknown as SearchMediaArgs,
+          );
+          return Response.json({ ...result, sessionId: req.sessionId });
+        }
+
+        case 'plan_presentation': {
+          const result = await planPresentation(
+            this.env,
+            req.args as unknown as PlanPresentationArgs,
+          );
+          return Response.json({ ...result, sessionId: req.sessionId });
+        }
+
+        case 'build_presentation': {
+          const result = await buildPresentation(
+            this.env,
+            req.args as unknown as BuildPresentationArgs,
+          );
+          return Response.json({ ...result, sessionId: req.sessionId });
+        }
+
         case 'check_brand_compliance':
         case 'plan_site':
         case 'build_and_deploy_site':
