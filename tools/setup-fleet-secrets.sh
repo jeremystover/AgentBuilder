@@ -62,6 +62,8 @@ FLEET_SECRETS=(
   "google-oauth-client-id:GOOGLE_OAUTH_CLIENT_ID"
   "google-oauth-client-secret:GOOGLE_OAUTH_CLIENT_SECRET"
   "google-token-vault-kek:GOOGLE_TOKEN_VAULT_KEK"
+  "cloudflare-account-id:CLOUDFLARE_ACCOUNT_ID"
+  "cloudflare-api-token:CLOUDFLARE_API_TOKEN"
 )
 
 echo ""
@@ -110,7 +112,7 @@ declare -A AGENT_SECRETS
 AGENT_SECRETS[agent-builder]="anthropic-api-key:ANTHROPIC_API_KEY google-oauth-client-secret:GOOGLE_OAUTH_CLIENT_SECRET"
 AGENT_SECRETS[cfo]="anthropic-api-key:ANTHROPIC_API_KEY"
 AGENT_SECRETS[chief-of-staff]="google-oauth-client-id:GOOGLE_OAUTH_CLIENT_ID google-oauth-client-secret:GOOGLE_OAUTH_CLIENT_SECRET"
-AGENT_SECRETS[graphic-designer]="anthropic-api-key:ANTHROPIC_API_KEY google-oauth-client-id:GOOGLE_OAUTH_CLIENT_ID google-oauth-client-secret:GOOGLE_OAUTH_CLIENT_SECRET google-token-vault-kek:GOOGLE_TOKEN_VAULT_KEK"
+AGENT_SECRETS[graphic-designer]="anthropic-api-key:ANTHROPIC_API_KEY google-oauth-client-id:GOOGLE_OAUTH_CLIENT_ID google-oauth-client-secret:GOOGLE_OAUTH_CLIENT_SECRET google-token-vault-kek:GOOGLE_TOKEN_VAULT_KEK cloudflare-account-id:CLOUDFLARE_ACCOUNT_ID cloudflare-api-token:CLOUDFLARE_API_TOKEN"
 # guest-booking and research-agent don't use fleet-shared secrets yet
 
 for AGENT in "${!AGENT_SECRETS[@]}"; do

@@ -13,4 +13,7 @@ export interface Env {
   GOOGLE_TOKEN_VAULT_KEK: string;
   GOOGLE_OAUTH_CLIENT_ID: string;
   GOOGLE_OAUTH_CLIENT_SECRET: string;
+  CLOUDFLARE_ACCOUNT_ID: string;
+  CLOUDFLARE_API_TOKEN: string;
+  R2_PUBLIC_BASE_URL?: string;
 }

@@ -4,6 +4,10 @@ import { LLMClient } from '@agentbuilder/llm';
 import type { Env } from '../worker-configuration';
 import { analyzeTemplate, type AnalyzeTemplateArgs } from './tools/analyze-template.js';
 import {
+  buildAndDeploySite,
+  type BuildAndDeploySiteArgs,
+} from './tools/build-and-deploy-site.js';
+import {
   buildPresentation,
   type BuildPresentationArgs,
 } from './tools/build-presentation.js';
@@ -24,6 +28,7 @@ import {
   planPresentation,
   type PlanPresentationArgs,
 } from './tools/plan-presentation.js';
+import { planSite, type PlanSiteArgs } from './tools/plan-site.js';
 import { searchMedia, type SearchMediaArgs } from './tools/search-media.js';
 
 const SYSTEM_PROMPT = `You are Graphic Designer, a creative design agent.
@@ -229,14 +234,28 @@ export class GraphicDesignerDO extends DurableObject<Env> {
           return Response.json({ ...result, sessionId: req.sessionId });
         }
 
+        case 'plan_site': {
+          const result = await planSite(
+            this.env,
+            req.args as unknown as PlanSiteArgs,
+          );
+          return Response.json({ ...result, sessionId: req.sessionId });
+        }
+
+        case 'build_and_deploy_site': {
+          const result = await buildAndDeploySite(
+            this.env,
+            req.args as unknown as BuildAndDeploySiteArgs,
+          );
+          return Response.json({ ...result, sessionId: req.sessionId });
+        }
+
         case 'check_brand_compliance':
-        case 'plan_site':
-        case 'build_and_deploy_site':
           return Response.json({
             ok: false,
             status: 'not_implemented',
             tool: req.tool,
-            message: `Tool "${req.tool}" is registered but not yet implemented. Coming in Slice 4b-4c.`,
+            message: `Tool "${req.tool}" is registered but not yet implemented. Coming in Slice 4c.`,
             sessionId: req.sessionId,
           });
 
