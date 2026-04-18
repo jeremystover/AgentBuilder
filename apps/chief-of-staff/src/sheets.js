@@ -46,6 +46,36 @@ export function createSheets(gfetch, spreadsheetId) {
   }
 
   /**
+   * Fetch multiple sheets in a single batchGet HTTP call.
+   * Returns { [sheetName]: object[] } — same shape as readSheetAsObjects per sheet.
+   * Use this instead of multiple readSheetAsObjects calls to avoid per-sheet
+   * round-trip latency.
+   */
+  async function readSheetsAsObjects(sheetNames) {
+    if (!spreadsheetId) throw new Error("spreadsheetId is not set");
+    if (!sheetNames || sheetNames.length === 0) return {};
+    const rangesParam = sheetNames
+      .map((n) => `ranges=${encodeURIComponent(`${n}!A1:ZZ`)}`)
+      .join("&");
+    const url = `${SHEETS_BASE}/${encodeURIComponent(spreadsheetId)}/values:batchGet?${rangesParam}`;
+    const res = await withRetry(() => gfetch(url));
+    const json = await res.json();
+    const valueRanges = json.valueRanges || [];
+    const result = {};
+    sheetNames.forEach((name, i) => {
+      const values = valueRanges[i]?.values || [];
+      if (values.length === 0) { result[name] = []; return; }
+      const headers = values[0] || [];
+      result[name] = values.slice(1).map((row) => {
+        const obj = {};
+        headers.forEach((h, j) => { obj[h] = row[j] ?? ""; });
+        return obj;
+      });
+    });
+    return result;
+  }
+
+  /**
    * Append rows to a named sheet.
    * rows: array of arrays (values in header column order).
    */
@@ -177,6 +207,7 @@ export function createSheets(gfetch, spreadsheetId) {
   return {
     readSheet,
     readSheetAsObjects,
+    readSheetsAsObjects,
     appendRows,
     updateRow,
     findRowByKey,

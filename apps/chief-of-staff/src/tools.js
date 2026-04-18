@@ -327,35 +327,21 @@ export function createTools({ spreadsheetId, sheets }) {
         // makes every downstream tool look "empty" instead of "broken".
         const warnings = [];
 
-        // Fetch all four sheets in parallel — sequential reads added ~2s of
-        // latency per hydrate call, enough to push the MCP session over timeout.
-        const [tasksResult, commitmentsResult, intakeResult, flaggedResult] =
-          await Promise.allSettled([
-            readSheetAsObjects("Tasks"),
-            readSheetAsObjects("Commitments"),
-            readSheetAsObjects("IntakeQueue"),
-            readSheetAsObjects("FlaggedEmails"),
-          ]);
-
-        const tasks = tasksResult.status === "fulfilled" ? tasksResult.value : [];
-        if (tasksResult.status === "rejected") {
-          console.warn("hydrate: tasks read failed", tasksResult.reason?.message);
-          warnings.push({ sheet: "Tasks", message: tasksResult.reason?.message });
-        }
-        const commitments = commitmentsResult.status === "fulfilled" ? commitmentsResult.value : [];
-        if (commitmentsResult.status === "rejected") {
-          console.warn("hydrate: commitments read failed", commitmentsResult.reason?.message);
-          warnings.push({ sheet: "Commitments", message: commitmentsResult.reason?.message });
-        }
-        const intake = intakeResult.status === "fulfilled" ? intakeResult.value : [];
-        if (intakeResult.status === "rejected") {
-          console.warn("hydrate: intake read failed", intakeResult.reason?.message);
-          warnings.push({ sheet: "IntakeQueue", message: intakeResult.reason?.message });
-        }
-        const flaggedEmails = flaggedResult.status === "fulfilled" ? flaggedResult.value : [];
-        if (flaggedResult.status === "rejected") {
-          console.warn("hydrate: flagged emails read failed", flaggedResult.reason?.message);
-          warnings.push({ sheet: "FlaggedEmails", message: flaggedResult.reason?.message });
+        // Fetch all four sheets in one batchGet HTTP call — four sequential
+        // individual reads added ~2s of latency per hydrate invocation, enough
+        // to push the full MCP session over Claude.ai's timeout budget.
+        let tasks = [], commitments = [], intake = [], flaggedEmails = [];
+        try {
+          const batch = await sheets.readSheetsAsObjects(
+            ["Tasks", "Commitments", "IntakeQueue", "FlaggedEmails"]
+          );
+          tasks = batch["Tasks"] || [];
+          commitments = batch["Commitments"] || [];
+          intake = batch["IntakeQueue"] || [];
+          flaggedEmails = batch["FlaggedEmails"] || [];
+        } catch (e) {
+          console.warn("hydrate: batch read failed", e.message);
+          warnings.push({ sheet: "batch", message: e.message });
         }
 
         const openTasks = tasks.filter((t) => isOpen(t.status));
