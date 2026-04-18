@@ -22,7 +22,7 @@ new_sqlite_classes = ["GraphicDesignerDO"]
 [[d1_databases]]
 binding = "DB"
 database_name = "graphic-designer-db"
-database_id = ""
+database_id = "c8ce3cda-69a8-4045-a05d-7bfd899aa19e"
 
 # Create with: wrangler r2 bucket create graphic-designer-assets
 [[r2_buckets]]
