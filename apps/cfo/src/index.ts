@@ -49,6 +49,13 @@ import {
   handleBudgetStatus,
 } from './routes/budget';
 import { handlePnL, handlePnLAll, handlePnLTrend } from './routes/pnl';
+import {
+  handleBookkeepingSession,
+  handleBookkeepingBatch,
+  handleBookkeepingCommit,
+  handleGetBookkeepingNotes,
+  handleSaveBookkeepingNotes,
+} from './routes/bookkeeping';
 import { handleCreateTaxYearWorkflow, handleGetTaxYearWorkflow } from './routes/workflow';
 import { handleClaudeHealth } from './routes/health';
 
@@ -133,6 +140,13 @@ const ROUTES: Route[] = [
   { method: 'GET',    pattern: /^\/pnl$/,                                handler: (req, env) => handlePnL(req, env) },
   { method: 'GET',    pattern: /^\/pnl\/all$/,                           handler: (req, env) => handlePnLAll(req, env) },
   { method: 'GET',    pattern: /^\/pnl\/trend$/,                         handler: (req, env) => handlePnLTrend(req, env) },
+
+  // Bookkeeping sessions
+  { method: 'GET',    pattern: /^\/bookkeeping\/session$/,               handler: (req, env) => handleBookkeepingSession(req, env) },
+  { method: 'GET',    pattern: /^\/bookkeeping\/batch$/,                 handler: (req, env) => handleBookkeepingBatch(req, env) },
+  { method: 'POST',   pattern: /^\/bookkeeping\/commit$/,                handler: (req, env) => handleBookkeepingCommit(req, env) },
+  { method: 'GET',    pattern: /^\/bookkeeping\/notes$/,                 handler: (req, env) => handleGetBookkeepingNotes(req, env) },
+  { method: 'PUT',    pattern: /^\/bookkeeping\/notes$/,                 handler: (req, env) => handleSaveBookkeepingNotes(req, env) },
 
   // Cron triggers — manual entry points for testing/debugging the scheduled handler
   { method: 'POST',   pattern: /^\/cron\/nightly-sync$/,                 handler: async (_req, env) => Response.json(await runNightlyTellerSync(env)) },

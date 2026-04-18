@@ -3,8 +3,9 @@
  *
  * Three endpoints:
  *   - GET /pnl              — income statement for a single entity
- *   - GET /pnl/all          — all three entities (coaching_business,
- *                             airbnb_activity, family_personal) side by side
+ *   - GET /pnl/all          — all four entities (elyse_coaching,
+ *                             jeremy_coaching, airbnb_activity,
+ *                             family_personal) side by side
  *   - GET /pnl/trend        — monthly totals for an entity across N months
  *
  * Sign convention: the DB stores expenses as NEGATIVE and income as
@@ -21,7 +22,7 @@ import type { Env } from '../types';
 import { getUserId, jsonError, jsonOk } from '../types';
 import { resolvePeriod, type ResolvedPeriod } from '../lib/budget';
 
-const ENTITIES = ['coaching_business', 'airbnb_activity', 'family_personal'] as const;
+const ENTITIES = ['elyse_coaching', 'jeremy_coaching', 'airbnb_activity', 'family_personal'] as const;
 type Entity = typeof ENTITIES[number];
 
 interface CategoryLine {
@@ -75,8 +76,9 @@ async function computeEntityPnL(
   // accounts if one exists. LEFT JOIN so family_personal (no COA) still
   // returns rows with null category_name.
   const coaSlug =
-    entity === 'coaching_business' ? 'coaching' :
-    entity === 'airbnb_activity'   ? 'airbnb'   :
+    entity === 'elyse_coaching'   ? 'elyse_coaching'  :
+    entity === 'jeremy_coaching'  ? 'jeremy_coaching'  :
+    entity === 'airbnb_activity'  ? 'airbnb'           :
     null;
 
   const totals = await env.DB.prepare(
@@ -156,7 +158,7 @@ async function computeEntityPnL(
 
 // ── GET /pnl ──────────────────────────────────────────────────────────────────
 // Query params:
-//   ?entity=coaching_business|airbnb_activity|family_personal   (required)
+//   ?entity=elyse_coaching|jeremy_coaching|airbnb_activity|family_personal   (required)
 //   ?preset=this_month|last_month|ytd|trailing_30d|...          (default this_month)
 //   ?start=YYYY-MM-DD&end=YYYY-MM-DD                            (overrides preset)
 export async function handlePnL(request: Request, env: Env): Promise<Response> {
