@@ -2,7 +2,7 @@
  * Google OAuth bootstrap.
  *
  * One-time setup to populate the token vault for a user:
- *   GET /api/auth/google/start?userId=default
+ *   GET /api/auth/google/start?userId=defaultwrangler secret put GOOGLE_OAUTH_CLIENT_ID
  *     -> redirects to Google consent screen
  *   GET /api/auth/google/callback?code=...&state=<userId>
  *     -> exchanges code for tokens, stores via GoogleClient
@@ -18,7 +18,7 @@ const SCOPES = [
   'https://www.googleapis.com/auth/drive',
   'https://www.googleapis.com/auth/presentations',
   'https://www.googleapis.com/auth/documents.readonly',
-].join(' ');
+].join(' '); 
 
 function redirectUri(request: Request): string {
   const url = new URL(request.url);
