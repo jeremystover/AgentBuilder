@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "mcp-server-488019",
+  "private_key_id": "29751d5eb45129c51ce064b38d3069c2d6cbb936",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvwIBADANBgkqhkiG9w0BAQEFAASCBKkwggSlAgEAAoIBAQDT3kO+pfexAcq1\n/TH0lzp12Za+FrqbqnyYr/w0IFEVMgxHKr4U9cIudbvlH/bMDCfOfW1CLFW/mzYL\n/JzJm2L9LdPYYEJaBughFbKdXN2DQoYWeygk5ggPaatpV74bl6f34NH5ZoGzvL1f\n4k6sbB7DZrlOzXwUPKL1/KIO9UqVk4hpaZM7BwvigcDBJvth5v1ZW2RBK+5lvHKi\nktNQp6hf5XXPKvEUiuhD6TSfiS6vk5FrxLwJjaHGpX5UTVLeEgIJuEcb57AeMUzg\n2HWER5NGlZG9/+M9b0yZ+BXcVG5bhzSHDSaywtfL2kq5U69cJ56Lup/YA1IzYyzu\n8LGwUWVbAgMBAAECggEAXXkoRkqO9wclWhl1GsZFwozXFtKMTfVvtyWdjZncbA+C\nnztaVYD/xOOonDP3/Jo4Tb/EnndU9Y4S0EMJIWFu0OiRGFuPqox1iXM7NHYuPKTy\n56Q6V90tHS+vsnBFrYLBVnlX6kKxYo0Yt97uet/QysDdbMj3vy3pb8Gf9h1+ZHK+\nVchlaqKA/VpB88gezh21OSYGzW/HF5qFMu6MA8EidZHd1KPYZ54tQ5ghvNk8yCq7\nAOE7Wo4d4+6rwLdedEcOd7CjnKAR3bZUfWzEjRY7vblN6l7OoiVai9vxs0a6StSk\nIJN3/ufzhBO2dmoAemtVTz3ic5oFWQpEybSXVphoMQKBgQD/OB6HsvxScJ65GbFm\nBMCSbDlasiYCIVPJVQYGndzj8q4NHnN+UKHTX7ON0EbAvW/Cbc8IUrr7EY1bdfmT\noGGgaN7KjH8OUoyAn/tKwv6pgSj/aSgy+8U3jC+szOLHnKcjDEy6i/h35aZ2sl7P\nXV9DM/PiAZJ0ZQW5WfW6ZrWczwKBgQDUhDGtUUFI/BEKZgLVHARD8bDC/5FrXFph\nwEM7xqroxjZel6nAQkRyCTBGPa0M+92fZbB2gCVuQT7iJv1Suz2ljGMrhMTrjMec\nAInaQdXuCgOxMuP3/+XtlyMT4CSXYRZMZl+poRkU3xvGw1OoBHx2zWpmELHqgsY6\nuQnm6kXJtQKBgQDU0X4b1/Ox5vlkDnmwQXw3XQmCiJVLJ3FPrJeGwvKkHgRnKiJS\njXgz41S9h5TIOe9MqPZ/0UTcAWnnf3vrT0y5T1mgewGj9s/0nfMVB38F549BU/XS\ndcGhrUNAC+V7YDS69BGzaO57REPILLsEna7HQjY3Gup+JpNcWRigI++DXwKBgQCA\neo8h7h7fBe0zcSrDNhXqEcNAkIuU8Zd+w2KiT+Bhq/uQwnYQ0r9Yhe+Wd5EYaWi6\nBhth+OUoO+/Nf67lBmglnrMRy0nV8h13VegBeI3iRFGpHlAuTZnvQtElIfxdPIfj\nlny9K7TjJmM/jjUUPeoVVOi/XdaCJZ+8PsQaw4V/hQKBgQDifbbY3R5eNPmAyx74\n1BA3XxhVZnHI7J9QwqIL/yDRqSzSxaOGfPbWN5gm/J5cnfAQhZvyW8FiUxl/mdSr\nHROOmRjtK1wanQ1zUZ4M2oOjQzyNwbDs/BaKaMw+/OZfaIAig2110YXVbGCy68FM\n7eDFlORcakBDADZ4BDNmfRWTCQ==\n-----END PRIVATE KEY-----\n",
+  "client_email": "personal-productivity-mcp@mcp-server-488019.iam.gserviceaccount.com",
+  "client_id": "102164776533655182505",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/personal-productivity-mcp%40mcp-server-488019.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}
