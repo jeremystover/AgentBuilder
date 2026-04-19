@@ -1,17 +1,249 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Graphic Designer</title>
-    <style>
-      body { font-family: system-ui, sans-serif; margin: 2rem; max-width: 42rem; }
-      h1 { font-size: 1.25rem; }
-    </style>
-  </head>
-  <body>
-    <h1>Graphic Designer</h1>
-    <p>Designs and produces visual artifacts — Google Slides from templates, Cloudflare Pages websites, logos and brand guides, image/icon sourcing, and brand-compliance audits.</p>
-    <p>Replace this static placeholder with your UI — Vite/React, plain HTML, whatever.</p>
-  </body>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Graphic Designer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    [x-cloak] { display: none !important; }
+    .fade-in { animation: fadeIn 0.3s ease-in; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  </style>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="bg-gray-50 text-gray-900 antialiased">
+
+<div x-data="app()" x-cloak class="min-h-screen">
+  <!-- Nav -->
+  <nav class="bg-white border-b sticky top-0 z-10">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+      <h1 class="text-lg font-bold">Graphic Designer</h1>
+      <div class="flex gap-1">
+        <template x-for="t in tabs" :key="t.id">
+          <button
+            @click="tab = t.id"
+            :class="tab === t.id ? 'bg-gray-900 text-white' : 'text-gray-600 hover:bg-gray-100'"
+            class="px-3 py-1.5 rounded-lg text-sm font-medium transition"
+            x-text="t.label"
+          ></button>
+        </template>
+      </div>
+    </div>
+  </nav>
+
+  <main class="max-w-6xl mx-auto px-4 py-6">
+
+    <!-- Projects -->
+    <div x-show="tab === 'projects'" class="fade-in">
+      <div class="flex items-center justify-between mb-6">
+        <h2 class="text-2xl font-bold">Projects</h2>
+        <button @click="loadProjects()" class="text-sm text-blue-600 hover:underline">Refresh</button>
+      </div>
+      <div x-show="projects.length === 0" class="text-gray-500 text-center py-12">
+        No projects yet. Use the MCP tools to create presentations, sites, or logos.
+      </div>
+      <div class="grid gap-4">
+        <template x-for="p in projects" :key="p.id">
+          <div class="bg-white rounded-xl border p-5 hover:shadow-sm transition">
+            <div class="flex items-start justify-between">
+              <div>
+                <h3 class="font-semibold" x-text="p.name"></h3>
+                <div class="flex gap-2 mt-1">
+                  <span class="text-xs px-2 py-0.5 rounded-full bg-blue-50 text-blue-700" x-text="p.kind"></span>
+                  <span
+                    :class="{
+                      'bg-yellow-50 text-yellow-700': p.status === 'planning',
+                      'bg-orange-50 text-orange-700': p.status === 'building',
+                      'bg-green-50 text-green-700': p.status === 'completed',
+                      'bg-gray-50 text-gray-600': p.status === 'draft' || p.status === 'archived',
+                    }"
+                    class="text-xs px-2 py-0.5 rounded-full"
+                    x-text="p.status"
+                  ></span>
+                </div>
+              </div>
+              <a x-show="p.output_url" :href="p.output_url" target="_blank"
+                 class="text-sm text-blue-600 hover:underline">Open &rarr;</a>
+            </div>
+            <p class="text-xs text-gray-400 mt-3" x-text="'Created ' + new Date(p.created_at).toLocaleDateString()"></p>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- Logo Concepts -->
+    <div x-show="tab === 'logos'" class="fade-in">
+      <div class="flex items-center justify-between mb-6">
+        <h2 class="text-2xl font-bold">Logo Concepts</h2>
+        <button @click="loadConcepts()" class="text-sm text-blue-600 hover:underline">Refresh</button>
+      </div>
+      <div x-show="concepts.length === 0" class="text-gray-500 text-center py-12">
+        No logo concepts yet. Run a logo interview via the chat tool, then generate_logo_concepts.
+      </div>
+      <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+        <template x-for="c in concepts" :key="c.id">
+          <div
+            class="bg-white rounded-xl border overflow-hidden hover:shadow-md transition cursor-pointer"
+            :class="c.selected ? 'ring-2 ring-blue-500' : ''"
+          >
+            <div class="aspect-square bg-gray-100 flex items-center justify-center">
+              <img
+                x-show="c.preview_url"
+                :src="c.preview_url.startsWith('r2://') ? '/api/r2/' + c.preview_url.slice(5) : c.preview_url"
+                :alt="c.style + ' concept'"
+                class="w-full h-full object-contain"
+                loading="lazy"
+              />
+              <span x-show="!c.preview_url" class="text-gray-400 text-sm">No preview</span>
+            </div>
+            <div class="p-3">
+              <div class="flex items-center justify-between">
+                <span class="text-sm font-medium capitalize" x-text="c.style"></span>
+                <span x-show="c.selected" class="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Selected</span>
+              </div>
+              <p class="text-xs text-gray-400 mt-1 line-clamp-2" x-text="c.prompt"></p>
+              <p class="text-xs text-gray-400 mt-1">Iteration <span x-text="c.iteration"></span></p>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- Brand Guides -->
+    <div x-show="tab === 'brands'" class="fade-in">
+      <div class="flex items-center justify-between mb-6">
+        <h2 class="text-2xl font-bold">Brand Guides</h2>
+        <button @click="loadBrands()" class="text-sm text-blue-600 hover:underline">Refresh</button>
+      </div>
+      <div x-show="brands.length === 0" class="text-gray-500 text-center py-12">
+        No brand guides yet. Create one via finalize_logo_package or manage_brand_assets.
+      </div>
+      <div class="grid gap-4">
+        <template x-for="b in brands" :key="b.id">
+          <div class="bg-white rounded-xl border p-5">
+            <h3 class="font-semibold text-lg" x-text="b.name"></h3>
+            <div class="flex gap-2 mt-3">
+              <template x-for="(hex, name) in (b.palette || {})" :key="name">
+                <div class="flex items-center gap-1.5">
+                  <div class="w-6 h-6 rounded-full border" :style="'background:' + hex" :title="name + ': ' + hex"></div>
+                  <span class="text-xs text-gray-500" x-text="name"></span>
+                </div>
+              </template>
+            </div>
+            <div class="mt-3 text-sm text-gray-600">
+              <span x-show="b.typography">
+                Fonts: <span class="font-medium" x-text="(b.typography?.heading || '') + ' / ' + (b.typography?.body || '')"></span>
+              </span>
+            </div>
+            <p class="text-xs text-gray-400 mt-2" x-text="'ID: ' + b.id"></p>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- Compliance Reports -->
+    <div x-show="tab === 'compliance'" class="fade-in">
+      <div class="flex items-center justify-between mb-6">
+        <h2 class="text-2xl font-bold">Compliance Reports</h2>
+        <button @click="loadReports()" class="text-sm text-blue-600 hover:underline">Refresh</button>
+      </div>
+      <div x-show="reports.length === 0" class="text-gray-500 text-center py-12">
+        No compliance reports yet. Run check_brand_compliance to audit a Doc or Slides file.
+      </div>
+      <div class="grid gap-4">
+        <template x-for="r in reports" :key="r.id">
+          <div class="bg-white rounded-xl border p-5">
+            <div class="flex items-start justify-between">
+              <div>
+                <h3 class="font-semibold">Report <span class="font-mono text-sm" x-text="r.id.slice(0,12)"></span></h3>
+                <p class="text-sm text-gray-500 mt-1">
+                  <span class="capitalize" x-text="r.file_type"></span> &middot; File <span class="font-mono text-xs" x-text="r.file_id.slice(0,16)"></span>
+                </p>
+              </div>
+              <div
+                :class="{
+                  'bg-green-100 text-green-800': r.score >= 90,
+                  'bg-yellow-100 text-yellow-800': r.score >= 70 && r.score < 90,
+                  'bg-orange-100 text-orange-800': r.score >= 50 && r.score < 70,
+                  'bg-red-100 text-red-800': r.score < 50,
+                }"
+                class="text-2xl font-bold px-4 py-2 rounded-xl"
+                x-text="r.score"
+              ></div>
+            </div>
+            <p class="text-sm text-gray-600 mt-3" x-text="r.summary"></p>
+            <div x-show="r.violations && r.violations.length > 0" class="mt-4">
+              <h4 class="text-sm font-semibold mb-2">Violations (<span x-text="r.violations.length"></span>)</h4>
+              <div class="space-y-2">
+                <template x-for="(v, i) in r.violations" :key="i">
+                  <div class="text-sm border-l-2 pl-3 py-1"
+                    :class="{
+                      'border-red-400': v.severity === 'error',
+                      'border-yellow-400': v.severity === 'warning',
+                      'border-blue-400': v.severity === 'info',
+                    }"
+                  >
+                    <div class="flex items-center gap-2">
+                      <span class="font-medium" x-text="v.rule"></span>
+                      <span class="text-xs text-gray-400" x-text="v.location"></span>
+                    </div>
+                    <p class="text-gray-500 mt-0.5" x-text="v.suggestion"></p>
+                  </div>
+                </template>
+              </div>
+            </div>
+            <p class="text-xs text-gray-400 mt-3" x-text="'Audited ' + new Date(r.created_at).toLocaleDateString()"></p>
+          </div>
+        </template>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script>
+function app() {
+  return {
+    tab: 'projects',
+    tabs: [
+      { id: 'projects', label: 'Projects' },
+      { id: 'logos', label: 'Logos' },
+      { id: 'brands', label: 'Brands' },
+      { id: 'compliance', label: 'Compliance' },
+    ],
+    projects: [],
+    concepts: [],
+    brands: [],
+    reports: [],
+
+    init() {
+      this.loadProjects();
+    },
+
+    async api(path) {
+      try {
+        const res = await fetch('/api' + path);
+        if (!res.ok) return [];
+        const data = await res.json();
+        return data.results ?? data.items ?? data ?? [];
+      } catch { return []; }
+    },
+
+    async loadProjects() {
+      this.projects = await this.api('/projects');
+    },
+    async loadConcepts() {
+      this.concepts = await this.api('/concepts');
+    },
+    async loadBrands() {
+      this.brands = await this.api('/brands');
+    },
+    async loadReports() {
+      this.reports = await this.api('/reports');
+    },
+  };
+}
+</script>
+</body>
 </html>

@@ -13,6 +13,10 @@ import {
 } from './tools/build-presentation.js';
 import { canvaExport, type CanvaExportArgs } from './tools/canva-export.js';
 import {
+  checkBrandCompliance,
+  type CheckBrandComplianceArgs,
+} from './tools/check-brand-compliance.js';
+import {
   finalizeLogoPackage,
   type FinalizeLogoPackageArgs,
 } from './tools/finalize-logo-package.js';
@@ -250,14 +254,13 @@ export class GraphicDesignerDO extends DurableObject<Env> {
           return Response.json({ ...result, sessionId: req.sessionId });
         }
 
-        case 'check_brand_compliance':
-          return Response.json({
-            ok: false,
-            status: 'not_implemented',
-            tool: req.tool,
-            message: `Tool "${req.tool}" is registered but not yet implemented. Coming in Slice 4c.`,
-            sessionId: req.sessionId,
-          });
+        case 'check_brand_compliance': {
+          const result = await checkBrandCompliance(
+            this.env,
+            req.args as unknown as CheckBrandComplianceArgs,
+          );
+          return Response.json({ ...result, sessionId: req.sessionId });
+        }
 
         default:
           return new Response(`Unknown tool: ${req.tool}`, { status: 400 });

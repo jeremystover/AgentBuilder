@@ -310,6 +310,77 @@ async function handleMcp(
   return { jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } };
 }
 
+// ── SPA read-only API ────────────────────────────────────────────────────────
+
+async function handleSpaApi(pathname: string, env: Env): Promise<Response> {
+  const userId = 'default';
+
+  if (pathname === '/api/projects') {
+    const rows = await env.DB.prepare(
+      `SELECT id, name, kind, status, output_url, created_at, updated_at
+         FROM projects WHERE user_id = ?1 ORDER BY updated_at DESC LIMIT 50`,
+    ).bind(userId).all();
+    return jsonResponse({ results: rows.results ?? [] });
+  }
+
+  if (pathname === '/api/concepts') {
+    const rows = await env.DB.prepare(
+      `SELECT c.id, c.project_id, c.iteration, c.style, c.prompt, c.image_r2_key, c.preview_url, c.selected, c.created_at
+         FROM logo_concepts c
+         JOIN projects p ON c.project_id = p.id
+        WHERE p.user_id = ?1
+        ORDER BY c.created_at DESC LIMIT 50`,
+    ).bind(userId).all();
+    return jsonResponse({ results: rows.results ?? [] });
+  }
+
+  if (pathname === '/api/brands') {
+    const rows = await env.DB.prepare(
+      `SELECT id, name, palette, typography, voice, created_at FROM brand_guides
+        WHERE user_id = ?1 ORDER BY updated_at DESC LIMIT 20`,
+    ).bind(userId).all();
+    const results = (rows.results ?? []).map((r: Record<string, unknown>) => ({
+      ...r,
+      palette: safeJsonParse(r.palette as string),
+      typography: safeJsonParse(r.typography as string),
+      voice: safeJsonParse(r.voice as string),
+    }));
+    return jsonResponse({ results });
+  }
+
+  if (pathname === '/api/reports') {
+    const rows = await env.DB.prepare(
+      `SELECT id, brand_id, file_id, file_type, score, violations, summary, created_at
+         FROM compliance_reports WHERE user_id = ?1 ORDER BY created_at DESC LIMIT 20`,
+    ).bind(userId).all();
+    const results = (rows.results ?? []).map((r: Record<string, unknown>) => ({
+      ...r,
+      violations: safeJsonParse(r.violations as string),
+    }));
+    return jsonResponse({ results });
+  }
+
+  // R2 proxy for logo concept previews
+  if (pathname.startsWith('/api/r2/')) {
+    const key = pathname.slice('/api/r2/'.length);
+    const obj = await env.BUCKET.get(decodeURIComponent(key));
+    if (!obj) return new Response('Not found', { status: 404 });
+    return new Response(obj.body, {
+      headers: {
+        'content-type': obj.httpMetadata?.contentType ?? 'image/png',
+        'cache-control': 'public, max-age=86400',
+      },
+    });
+  }
+
+  return jsonResponse({ error: 'Not found' }, 404);
+}
+
+function safeJsonParse(s: string | null | undefined): unknown {
+  if (!s) return null;
+  try { return JSON.parse(s); } catch { return null; }
+}
+
 // ── Worker ───────────────────────────────────────────────────────────────────
 
 export default {
@@ -353,6 +424,11 @@ export default {
         const errMsg = err instanceof Error ? err.message : String(err);
         return jsonResponse({ jsonrpc: '2.0', id: msg.id ?? null, error: { code: -32000, message: errMsg } });
       }
+    }
+
+    // SPA read-only API endpoints (bypass DO)
+    if (request.method === 'GET' && url.pathname.startsWith('/api/')) {
+      return handleSpaApi(url.pathname, env);
     }
 
     if (url.pathname.startsWith('/api/')) {
