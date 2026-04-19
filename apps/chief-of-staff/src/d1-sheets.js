@@ -285,11 +285,17 @@ export function createD1Sheets(db) {
     COLUMNS_CACHE.set(tableName, headers.filter((h) => h !== "_row_id"));
   }
 
+  async function deleteRow(tableName, rowNum) {
+    const rowId = rowNum - 1;
+    await db.prepare(`DELETE FROM ${qTable(tableName)} WHERE _row_id = ?`).bind(rowId).run();
+  }
+
   return {
     readSheet,
     readSheetAsObjects,
     appendRows,
     updateRow,
+    deleteRow,
     findRowByKey,
     findRowsByKey,
     listSheetTabs,
