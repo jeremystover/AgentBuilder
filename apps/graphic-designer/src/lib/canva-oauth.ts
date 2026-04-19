@@ -27,8 +27,6 @@ const REFRESH_SKEW_MS = 60_000;
 const SCOPES = [
   'asset:write',
   'folder:write',
-  'design:content:read',
-  'design:content:write',
 ].join(' ');
 
 function redirectUri(request: Request): string {
