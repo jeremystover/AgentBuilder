@@ -8,7 +8,8 @@ export interface Env {
   OPENAI_API_KEY: string;
   UNSPLASH_ACCESS_KEY: string;
   PEXELS_API_KEY: string;
-  CANVA_API_KEY: string;
+  CANVA_CLIENT_ID: string;
+  CANVA_CLIENT_SECRET: string;
   MCP_HTTP_KEY: string;
   GOOGLE_TOKEN_VAULT_KEK: string;
   GOOGLE_OAUTH_CLIENT_ID: string;

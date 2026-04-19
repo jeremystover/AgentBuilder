@@ -12,13 +12,13 @@
  *        - hex palette + font specs formatted for copy-paste into
  *          Canva's Brand Kit UI.
  *
- * Auth: expects env.CANVA_API_KEY to be a Canva Connect OAuth access token.
- * Token management (refresh, per-user OAuth) is left to the caller — for now
- * this uses a single shared token since Canva is a secondary integration.
+ * Auth: uses OAuth tokens stored in canva_tokens (D1) with auto-refresh.
+ * Complete OAuth at /api/auth/canva/start first.
  */
 
 import { AgentError, createLogger } from '@agentbuilder/core';
 import type { Env } from '../../worker-configuration';
+import { getCanvaAccessToken } from '../lib/canva-oauth.js';
 
 const CANVA_API = 'https://api.canva.com/rest/v1';
 const MAX_POLL_MS = 30_000;
@@ -71,9 +71,7 @@ export async function canvaExport(
   const logger = createLogger({ base: { agent: 'graphic-designer', tool: 'canva_export' } });
   const userId = args.userId ?? 'default';
 
-  if (!env.CANVA_API_KEY) {
-    throw new AgentError('CANVA_API_KEY not set.', { code: 'internal' });
-  }
+  const canvaToken = await getCanvaAccessToken(env, userId);
 
   const brand = await env.DB.prepare(
     `SELECT id, user_id, name, palette, typography FROM brand_guides
@@ -95,7 +93,7 @@ export async function canvaExport(
   // 1) Create/reuse a folder
   let folderId: string | null = null;
   try {
-    folderId = await ensureFolder(env.CANVA_API_KEY, `${brand.name} — Brand Kit`);
+    folderId = await ensureFolder(canvaToken, `${brand.name} — Brand Kit`);
   } catch (err) {
     logger.warn('folder.failed', { error: err instanceof Error ? err.message : String(err) });
   }
@@ -123,7 +121,7 @@ export async function canvaExport(
         if (!r2Key) continue;
 
         try {
-          const assetId = await uploadAsset(env, r2Key, `${brand.name} — ${kind}.png`, folderId);
+          const assetId = await uploadAsset(env, canvaToken, r2Key, `${brand.name} — ${kind}.png`, folderId);
           uploadedAssets.push({ kind, canvaAssetId: assetId, r2Key });
         } catch (err) {
           logger.warn('asset.failed', {
@@ -200,6 +198,7 @@ async function ensureFolder(token: string, name: string): Promise<string> {
 
 async function uploadAsset(
   env: Env,
+  token: string,
   r2Key: string,
   name: string,
   folderId: string | null,
@@ -218,7 +217,7 @@ async function uploadAsset(
   const createRes = await fetch(`${CANVA_API}/asset-uploads`, {
     method: 'POST',
     headers: {
-      authorization: `Bearer ${env.CANVA_API_KEY}`,
+      authorization: `Bearer ${token}`,
       'content-type': 'application/octet-stream',
       'asset-upload-metadata': JSON.stringify(metadata),
     },
@@ -246,7 +245,7 @@ async function uploadAsset(
   while (Date.now() - start < MAX_POLL_MS) {
     await sleep(POLL_INTERVAL_MS);
     const pollRes = await fetch(`${CANVA_API}/asset-uploads/${jobId}`, {
-      headers: { authorization: `Bearer ${env.CANVA_API_KEY}` },
+      headers: { authorization: `Bearer ${token}` },
     });
     if (!pollRes.ok) continue;
     const poll = (await pollRes.json()) as AssetUploadJob;

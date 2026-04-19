@@ -11,6 +11,7 @@
  */
 
 import type { Env } from '../worker-configuration';
+import { handleCanvaOAuthCallback, handleCanvaOAuthStart } from './lib/canva-oauth.js';
 import { handleOAuthCallback, handleOAuthStart } from './lib/oauth.js';
 export { GraphicDesignerDO } from './durable-object.js';
 
@@ -324,6 +325,13 @@ export default {
     }
     if (url.pathname === '/api/auth/google/callback') {
       return handleOAuthCallback(request, env);
+    }
+
+    if (url.pathname === '/api/auth/canva/start') {
+      return handleCanvaOAuthStart(request, env);
+    }
+    if (url.pathname === '/api/auth/canva/callback') {
+      return handleCanvaOAuthCallback(request, env);
     }
 
     if (url.pathname === '/mcp' && request.method === 'POST') {
