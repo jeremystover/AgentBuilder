@@ -161,7 +161,7 @@ export async function analyzeTemplate(
 
 function extractPresentationId(input: string): string {
   // Accept full URL or raw ID
-  const match = input.match(/\/presentations\/([a-zA-Z0-9_-]+)/);
+  const match = input.match(/\/d\/([a-zA-Z0-9_-]+)/);
   if (match) return match[1] ?? input;
   return input;
 }
