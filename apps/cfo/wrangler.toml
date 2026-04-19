@@ -48,10 +48,7 @@ TELLER_ENV = "development"
 binding = "TELLER_MTLS"
 certificate_id = "1c40bf07-6ba7-4e8c-b95f-27df8e7adfda"
 
-# ANTHROPIC_API_KEY was bound via secrets_store in the source tax-prep
-# worker (wrangler 4.x). The AgentBuilder monorepo is still on wrangler
-# 3.x, which doesn't support secrets_store bindings — re-enter it as a
-# plain worker secret during migration step 6:
-#   wrangler secret put ANTHROPIC_API_KEY
-# Once the monorepo upgrades to wrangler 4.x we can reattach the
-# secrets_store binding.
+# Fleet-shared secrets (ANTHROPIC_API_KEY) are managed via Cloudflare
+# Secrets Store after running `pnpm fleet:setup-secrets`.
+# Per-agent secrets (TELLER_APPLICATION_ID, MCP_HTTP_KEY) stay as
+# plain worker secrets via `wrangler secret put`.
