@@ -7,6 +7,10 @@
  * Factory: createEmailFilterTools({ sheets }) returns the email filter MCP tools.
  */
 
+function formatContent(obj) {
+  return { content: [{ type: "text", text: JSON.stringify(obj, null, 2) }] };
+}
+
 function nowIso() { return new Date().toISOString(); }
 
 function generateId(prefix = "filter") {
@@ -307,7 +311,12 @@ export function createEmailFilterMCPTools({ sheets }) {
         required: ["name"],
       },
       handler: async (input) => {
-        return await createFilter(input);
+        try {
+          const result = await createFilter(input);
+          return formatContent(result);
+        } catch (e) {
+          return formatContent({ error: e.message });
+        }
       },
     },
     {
@@ -323,7 +332,12 @@ export function createEmailFilterMCPTools({ sheets }) {
         },
       },
       handler: async (input) => {
-        return await listFilters({ enabled: input.enabledOnly ? true : null });
+        try {
+          const result = await listFilters({ enabled: input.enabledOnly ? true : null });
+          return formatContent(result);
+        } catch (e) {
+          return formatContent({ error: e.message });
+        }
       },
     },
     {
@@ -340,7 +354,12 @@ export function createEmailFilterMCPTools({ sheets }) {
         required: ["filterId"],
       },
       handler: async (input) => {
-        return await deleteFilter(input.filterId);
+        try {
+          const result = await deleteFilter(input.filterId);
+          return formatContent(result);
+        } catch (e) {
+          return formatContent({ error: e.message });
+        }
       },
     },
     {
@@ -369,8 +388,13 @@ export function createEmailFilterMCPTools({ sheets }) {
         required: ["filterId"],
       },
       handler: async (input) => {
-        const { filterId, ...updates } = input;
-        return await updateFilter(filterId, updates);
+        try {
+          const { filterId, ...updates } = input;
+          const result = await updateFilter(filterId, updates);
+          return formatContent(result);
+        } catch (e) {
+          return formatContent({ error: e.message });
+        }
       },
     },
     {
@@ -391,10 +415,15 @@ export function createEmailFilterMCPTools({ sheets }) {
         },
       },
       handler: async (input) => {
-        return await getFlaggedEmails({
-          status: input.status || "new",
-          limit: input.limit || 10,
-        });
+        try {
+          const result = await getFlaggedEmails({
+            status: input.status || "new",
+            limit: input.limit || 10,
+          });
+          return formatContent(result);
+        } catch (e) {
+          return formatContent({ error: e.message });
+        }
       },
     },
     {
@@ -420,7 +449,12 @@ export function createEmailFilterMCPTools({ sheets }) {
         required: ["flagId", "status"],
       },
       handler: async (input) => {
-        return await updateFlaggedEmailStatus(input.flagId, input.status, input.actionNotes);
+        try {
+          const result = await updateFlaggedEmailStatus(input.flagId, input.status, input.actionNotes);
+          return formatContent(result);
+        } catch (e) {
+          return formatContent({ error: e.message });
+        }
       },
     },
   ];
