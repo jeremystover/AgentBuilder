@@ -54,6 +54,7 @@ interface PresentationMetadata {
 interface SlidesPage {
   objectId: string;
   pageElements?: PageElement[];
+  layoutProperties?: { name?: string; displayName?: string };
   slideProperties?: {
     notesPage?: {
       pageElements?: PageElement[];
@@ -72,6 +73,7 @@ interface PageElement {
 interface PresentationResource {
   presentationId: string;
   slides?: SlidesPage[];
+  layouts?: SlidesPage[];
 }
 
 export async function buildPresentation(
@@ -110,31 +112,51 @@ export async function buildPresentation(
   const copied = (await copyRes.json()) as { id: string };
   const newPresentationId = copied.id;
 
-  // 2. Fetch copy to discover existing slide IDs -------------------------
+  // 2. Fetch copy to discover existing slide IDs + actual layout IDs ----
   const initial = await getPresentation(google, newPresentationId);
   const existingSlideIds = (initial.slides ?? []).map((s) => s.objectId);
+  const availableLayoutIds = new Set((initial.layouts ?? []).map((l) => l.objectId));
 
   // 3. Batch #1 — delete old slides + create new ones --------------------
   const slideIdFor = (i: number) => `gdslide_${i}`;
-  const bigShapeIdFor = (i: number) => `gdbignum_${i}`;
 
   const structuralRequests: Record<string, unknown>[] = [];
   for (const id of existingSlideIds) {
     structuralRequests.push({ deleteObject: { objectId: id } });
   }
+
+  // Track which slides will end up BLANK because their layout was missing —
+  // we reuse that knowledge when populating text so big-number-style slides
+  // get a centered TEXT_BOX even if the ORIGINAL intent wasn't big-number.
+  const blankSlides = new Set<number>();
+
   for (let i = 0; i < plan.length; i++) {
     const entry = plan[i]!;
     const slideObjectId = slideIdFor(i);
+
+    let useLayoutId: string | null = null;
     if (entry.layoutObjectId) {
+      if (availableLayoutIds.has(entry.layoutObjectId)) {
+        useLayoutId = entry.layoutObjectId;
+      } else {
+        warnings.push(
+          `Slide ${i + 1} (${entry.intent}): layout ${entry.layoutObjectId} not present in copied template ` +
+            `(${availableLayoutIds.size} layouts available) — falling back to predefinedLayout BLANK. ` +
+            `Run analyze_template against this template or adjust the intent map.`,
+        );
+      }
+    }
+
+    if (useLayoutId) {
       structuralRequests.push({
         createSlide: {
           objectId: slideObjectId,
           insertionIndex: i,
-          slideLayoutReference: { layoutId: entry.layoutObjectId },
+          slideLayoutReference: { layoutId: useLayoutId },
         },
       });
     } else {
-      // big-number or no-layouts-available: use BLANK
+      blankSlides.add(i);
       structuralRequests.push({
         createSlide: {
           objectId: slideObjectId,
@@ -144,6 +166,11 @@ export async function buildPresentation(
       });
     }
   }
+
+  logger.info('slides.layouts.validated', {
+    availableLayouts: availableLayoutIds.size,
+    slidesFallingBackToBlank: blankSlides.size,
+  });
 
   logger.info('slides.batchUpdate.structural', {
     deletes: existingSlideIds.length,
@@ -168,54 +195,50 @@ export async function buildPresentation(
     }
 
     const placeholders = collectPlaceholders(slide);
+    const isBlankFallback = blankSlides.has(i);
 
-    // Title
-    if (entry.title) {
-      const titleId = pickPlaceholder(placeholders, ['TITLE', 'CENTERED_TITLE']);
-      if (titleId) {
-        textRequests.push({ insertText: { objectId: titleId, text: entry.title } });
-      } else if (entry.layoutObjectId) {
-        warnings.push(`Slide ${i + 1}: no TITLE placeholder; skipped title "${truncate(entry.title)}".`);
-      }
-    }
-
-    // Subtitle
-    if (entry.subtitle) {
-      const subId = pickPlaceholder(placeholders, ['SUBTITLE']);
-      if (subId) {
-        textRequests.push({ insertText: { objectId: subId, text: entry.subtitle } });
-      } else {
-        warnings.push(`Slide ${i + 1}: no SUBTITLE placeholder; skipped subtitle "${truncate(entry.subtitle)}".`);
-      }
-    }
-
-    // Body — distribute across all BODY placeholders (supports two-columns, three-ideas).
-    if (entry.body && entry.body.length > 0) {
-      const bodyIds = placeholders.filter((p) => p.type === 'BODY').map((p) => p.objectId);
-      if (bodyIds.length > 0) {
-        const chunks = distribute(entry.body, bodyIds.length);
-        for (let c = 0; c < bodyIds.length; c++) {
-          const text = chunks[c]?.join('\n') ?? '';
-          if (text.length > 0) {
-            textRequests.push({ insertText: { objectId: bodyIds[c]!, text } });
-          }
+    // Slides that fell back to BLANK (either big-number by design, or a missing
+    // layout) have no placeholders. Render all of their text via text-boxes so
+    // nothing is lost.
+    if (isBlankFallback) {
+      textRequests.push(...renderBlankSlide(slideObjectId, i, entry));
+    } else {
+      // Title
+      if (entry.title) {
+        const titleId = pickPlaceholder(placeholders, ['TITLE', 'CENTERED_TITLE']);
+        if (titleId) {
+          textRequests.push({ insertText: { objectId: titleId, text: entry.title } });
+        } else {
+          warnings.push(`Slide ${i + 1}: no TITLE placeholder; skipped title "${truncate(entry.title)}".`);
         }
-      } else if (entry.intent === 'big-number') {
-        // big-number path — create a centered shape and fill it.
-        const shapeId = bigShapeIdFor(i);
-        textRequests.push(...bigNumberShapeRequests(slideObjectId, shapeId, entry.body.join('\n')));
-      } else {
-        warnings.push(
-          `Slide ${i + 1}: no BODY placeholder on layout; skipped ${entry.body.length} body item(s).`,
-        );
       }
-    } else if (entry.intent === 'big-number' && entry.title) {
-      // big-number slide with number provided in title — render the title as the big shape
-      // only if the layout had no TITLE placeholder to accept it.
-      const hadTitleSlot = placeholders.some((p) => p.type === 'TITLE' || p.type === 'CENTERED_TITLE');
-      if (!hadTitleSlot) {
-        const shapeId = bigShapeIdFor(i);
-        textRequests.push(...bigNumberShapeRequests(slideObjectId, shapeId, entry.title));
+
+      // Subtitle
+      if (entry.subtitle) {
+        const subId = pickPlaceholder(placeholders, ['SUBTITLE']);
+        if (subId) {
+          textRequests.push({ insertText: { objectId: subId, text: entry.subtitle } });
+        } else {
+          warnings.push(`Slide ${i + 1}: no SUBTITLE placeholder; skipped subtitle "${truncate(entry.subtitle)}".`);
+        }
+      }
+
+      // Body — distribute across all BODY placeholders (supports two-columns, three-ideas).
+      if (entry.body && entry.body.length > 0) {
+        const bodyIds = placeholders.filter((p) => p.type === 'BODY').map((p) => p.objectId);
+        if (bodyIds.length > 0) {
+          const chunks = distribute(entry.body, bodyIds.length);
+          for (let c = 0; c < bodyIds.length; c++) {
+            const text = chunks[c]?.join('\n') ?? '';
+            if (text.length > 0) {
+              textRequests.push({ insertText: { objectId: bodyIds[c]!, text } });
+            }
+          }
+        } else {
+          warnings.push(
+            `Slide ${i + 1}: no BODY placeholder on layout; skipped ${entry.body.length} body item(s).`,
+          );
+        }
       }
     }
 
@@ -264,7 +287,9 @@ async function getPresentation(
   presentationId: string,
 ): Promise<PresentationResource> {
   const fields =
-    'presentationId,slides(objectId,pageElements(objectId,shape(placeholder)),' +
+    'presentationId,' +
+    'layouts(objectId,layoutProperties(name,displayName)),' +
+    'slides(objectId,pageElements(objectId,shape(placeholder)),' +
     'slideProperties(notesPage(pageElements(objectId,shape(placeholder)),notesProperties)))';
   const res = await google.gfetch(
     `${SLIDES_API}/presentations/${presentationId}?fields=${encodeURIComponent(fields)}`,
@@ -335,7 +360,7 @@ function distribute<T>(items: T[], buckets: number): T[][] {
   return out;
 }
 
-// ── big-number rendering ────────────────────────────────────────────────────
+// ── big-number + blank-fallback rendering ───────────────────────────────────
 
 // Standard widescreen slide is 10" x 5.625" at 914400 EMU/inch = 9144000 x 5143500.
 // Centered textbox ≈ 8" wide x 2.5" tall, positioned ~1.56" from top.
@@ -344,6 +369,116 @@ const BIG_NUMBER_WIDTH_EMU = 7315200; // 8 inches
 const BIG_NUMBER_HEIGHT_EMU = 2286000; // 2.5 inches
 const BIG_NUMBER_TRANSLATE_X_EMU = 914400; // 1 inch from left
 const BIG_NUMBER_TRANSLATE_Y_EMU = 1428750; // ~1.56 inches from top (vertically centered-ish)
+
+// For plain blank-fallback slides we stack a title, subtitle, and body box top→down.
+const BLANK_MARGIN_X_EMU = 457200; // 0.5 inch
+const BLANK_INNER_WIDTH_EMU = 8229600; // 9 inches
+const BLANK_TITLE_Y_EMU = 457200;
+const BLANK_TITLE_H_EMU = 914400;
+const BLANK_SUBTITLE_Y_EMU = 1371600;
+const BLANK_SUBTITLE_H_EMU = 457200;
+const BLANK_BODY_Y_EMU = 1905000;
+const BLANK_BODY_H_EMU = 2743200;
+
+function renderBlankSlide(
+  slideObjectId: string,
+  slideIndex: number,
+  entry: { intent: string; title?: string; subtitle?: string; body?: string[] },
+): Record<string, unknown>[] {
+  const reqs: Record<string, unknown>[] = [];
+
+  // big-number: one huge centered shape carrying either the body (e.g. "40%")
+  // or the title when no body is present.
+  if (entry.intent === 'big-number') {
+    const text = entry.body && entry.body.length > 0
+      ? entry.body.join('\n')
+      : (entry.title ?? '');
+    if (text) {
+      const shapeId = `gdbignum_${slideIndex}`;
+      reqs.push(...bigNumberShapeRequests(slideObjectId, shapeId, text));
+    }
+    return reqs;
+  }
+
+  // Anything else that landed on BLANK: stack title/subtitle/body.
+  if (entry.title) {
+    const id = `gdbtitle_${slideIndex}`;
+    reqs.push(
+      stackedTextBox(id, slideObjectId, BLANK_TITLE_Y_EMU, BLANK_TITLE_H_EMU),
+      { insertText: { objectId: id, text: entry.title } },
+      styleText(id, { bold: true, fontSize: 36 }),
+    );
+  }
+  if (entry.subtitle) {
+    const id = `gdbsub_${slideIndex}`;
+    reqs.push(
+      stackedTextBox(id, slideObjectId, BLANK_SUBTITLE_Y_EMU, BLANK_SUBTITLE_H_EMU),
+      { insertText: { objectId: id, text: entry.subtitle } },
+      styleText(id, { fontSize: 20 }),
+    );
+  }
+  if (entry.body && entry.body.length > 0) {
+    const id = `gdbbody_${slideIndex}`;
+    reqs.push(
+      stackedTextBox(id, slideObjectId, BLANK_BODY_Y_EMU, BLANK_BODY_H_EMU),
+      { insertText: { objectId: id, text: entry.body.join('\n') } },
+      styleText(id, { fontSize: 14 }),
+    );
+  }
+  return reqs;
+}
+
+function stackedTextBox(
+  objectId: string,
+  pageObjectId: string,
+  translateY: number,
+  height: number,
+): Record<string, unknown> {
+  return {
+    createShape: {
+      objectId,
+      shapeType: 'TEXT_BOX',
+      elementProperties: {
+        pageObjectId,
+        size: {
+          width: { magnitude: BLANK_INNER_WIDTH_EMU, unit: 'EMU' },
+          height: { magnitude: height, unit: 'EMU' },
+        },
+        transform: {
+          scaleX: 1,
+          scaleY: 1,
+          translateX: BLANK_MARGIN_X_EMU,
+          translateY,
+          unit: 'EMU',
+        },
+      },
+    },
+  };
+}
+
+function styleText(
+  objectId: string,
+  opts: { bold?: boolean; fontSize?: number },
+): Record<string, unknown> {
+  const fields: string[] = [];
+  const style: Record<string, unknown> = {};
+  if (opts.bold !== undefined) {
+    style.bold = opts.bold;
+    fields.push('bold');
+  }
+  if (opts.fontSize !== undefined) {
+    style.fontSize = { magnitude: opts.fontSize, unit: 'PT' };
+    fields.push('fontSize');
+  }
+  return {
+    updateTextStyle: {
+      objectId,
+      textRange: { type: 'ALL' },
+      style,
+      fields: fields.join(','),
+    },
+  };
+}
 
 function bigNumberShapeRequests(
   slideObjectId: string,

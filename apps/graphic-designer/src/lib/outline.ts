@@ -64,7 +64,18 @@ export function parseOutline(input: unknown): OutlineSlide[] {
     return parsed.map((s, i) => normalizeSlide(s, i, parsed.length));
   }
 
-  return parseMarkdownOutline(trimmed);
+  return parseTextOutline(trimmed);
+}
+
+// Dispatch between numbered-list and markdown outline formats.
+function parseTextOutline(text: string): OutlineSlide[] {
+  // Numbered-list outline (common LLM output: "1. Title Slide\nTitle: ...\n\n2. ...").
+  // Detect when at least two lines start with "<n>." or "<n>)".
+  const numberedMatches = text.match(/^\s*\d+[.)]\s/gm);
+  if (numberedMatches && numberedMatches.length >= 2) {
+    return parseNumberedOutline(text);
+  }
+  return parseMarkdownOutline(text);
 }
 
 function normalizeSlide(raw: unknown, index: number, total: number): OutlineSlide {
@@ -197,4 +208,165 @@ function parseMarkdownSlide(chunk: string, index: number, total: number): Outlin
   if (body.length > 0) slide.body = body;
   if (speakerNotes) slide.speakerNotes = speakerNotes;
   return slide;
+}
+
+// ── Numbered-list parser ────────────────────────────────────────────────────
+//
+// Accepts outlines like:
+//
+//   1. Title Slide
+//   Title: "AI in Talent Development"
+//   Subtitle: "A Landscape Guide"
+//   Speaker Notes: Welcome...
+//
+//   2. Chapter Divider
+//   Title: "AI Coaching & Mentoring"
+//
+//   3. Content Slide
+//   Title: "Tools"
+//   Subtitle: "Category 1 of 6"
+//   Body:
+//     - CoachHub, BetterUp, Torch
+//     - 24/7 AI coaching
+
+function parseNumberedOutline(text: string): OutlineSlide[] {
+  // Split on a newline immediately preceding "<n>." or "<n>)".
+  const chunks = text
+    .split(/\n(?=\s*\d+[.)]\s)/)
+    .map((c) => c.trim())
+    .filter(Boolean);
+
+  if (chunks.length === 0) {
+    throw new AgentError('Numbered outline has no slide chunks.', { code: 'invalid_input' });
+  }
+
+  return chunks.map((chunk, i) => parseNumberedSlide(chunk, i, chunks.length));
+}
+
+function parseNumberedSlide(chunk: string, index: number, total: number): OutlineSlide {
+  const lines = chunk.split(/\r?\n/);
+  let intent: string | undefined;
+  let title: string | undefined;
+  let subtitle: string | undefined;
+  const body: string[] = [];
+  const notesLines: string[] = [];
+  let inNotes = false;
+  let inBody = false;
+
+  // First line: "1. Title Slide" — we use the label after the number to guess intent.
+  const firstMatch = (lines[0] ?? '').match(/^\s*\d+[.)]\s+(.+)$/);
+  const headerLabel = firstMatch?.[1]?.trim();
+  if (headerLabel) {
+    const intentFromLabel = inferIntentFromLabel(headerLabel);
+    if (intentFromLabel) intent = intentFromLabel;
+  }
+
+  for (let i = 1; i < lines.length; i++) {
+    const rawLine = lines[i] ?? '';
+    const line = rawLine.trim();
+    if (line.length === 0) {
+      if (inNotes) notesLines.push('');
+      continue;
+    }
+
+    const intentMatch = line.match(/^intent\s*[:=]\s*([a-z0-9-]+)\s*$/i);
+    if (intentMatch) {
+      intent = intentMatch[1]!.toLowerCase();
+      inBody = false;
+      inNotes = false;
+      continue;
+    }
+
+    const titleMatch = line.match(/^title\s*[:=]\s*(.+)$/i);
+    if (titleMatch) {
+      title = stripQuotes(titleMatch[1]!.trim());
+      inBody = false;
+      inNotes = false;
+      continue;
+    }
+
+    const subMatch = line.match(/^sub(?:title)?\s*[:=]\s*(.+)$/i);
+    if (subMatch) {
+      subtitle = stripQuotes(subMatch[1]!.trim());
+      inBody = false;
+      inNotes = false;
+      continue;
+    }
+
+    const notesMatch = line.match(/^(?:speaker\s*notes?|notes)\s*[:=]?\s*(.*)$/i);
+    if (notesMatch) {
+      inNotes = true;
+      inBody = false;
+      const rest = notesMatch[1]!.trim();
+      if (rest) notesLines.push(rest);
+      continue;
+    }
+
+    const bodyHeader = line.match(/^body\s*[:=]?\s*$/i);
+    if (bodyHeader) {
+      inBody = true;
+      inNotes = false;
+      continue;
+    }
+
+    const bullet = line.match(/^[-*•]\s+(.+)$/);
+    if (bullet) {
+      body.push(bullet[1]!.trim());
+      inBody = true;
+      inNotes = false;
+      continue;
+    }
+
+    if (inNotes) {
+      notesLines.push(rawLine);
+      continue;
+    }
+    if (inBody) {
+      body.push(line);
+      continue;
+    }
+    // Unlabeled prose line after the header — treat as body.
+    body.push(line);
+  }
+
+  const speakerNotes = notesLines.join('\n').trim() || undefined;
+  const resolvedIntent = intent ?? inferIntent(
+    { body: body.length > 0 ? body : undefined },
+    index,
+    total,
+  );
+
+  const slide: OutlineSlide = { intent: resolvedIntent };
+  if (title) slide.title = title;
+  if (subtitle) slide.subtitle = subtitle;
+  if (body.length > 0) slide.body = body;
+  if (speakerNotes) slide.speakerNotes = speakerNotes;
+  return slide;
+}
+
+function inferIntentFromLabel(label: string): string | undefined {
+  const l = label.toLowerCase();
+  if (/title\s*slide/.test(l)) return 'title-slide';
+  if (/(chapter|section)\s*(divider|break|header)/.test(l)) return 'section-break';
+  if (/\bdivider\b/.test(l)) return 'section-break';
+  if (/closing|thank\s*you|final\s*slide/.test(l)) return 'closing';
+  if (/two[-\s]column/.test(l)) return 'two-columns';
+  if (/three[-\s](idea|column|up)/.test(l)) return 'three-ideas';
+  if (/big[-\s]number|hero\s*number/.test(l)) return 'big-number';
+  if (/bullet|content|list/.test(l)) return 'bullets';
+  return undefined;
+}
+
+function stripQuotes(s: string): string {
+  const trimmed = s.trim();
+  if (trimmed.length < 2) return trimmed;
+  const first = trimmed.charCodeAt(0);
+  const last = trimmed.charCodeAt(trimmed.length - 1);
+  // ASCII double/single, curly double (\u201C/\u201D), curly single (\u2018/\u2019)
+  const isDouble = (first === 0x22 && last === 0x22) ||
+    (first === 0x201c && last === 0x201d);
+  const isSingle = (first === 0x27 && last === 0x27) ||
+    (first === 0x2018 && last === 0x2019);
+  if (isDouble || isSingle) return trimmed.slice(1, -1).trim();
+  return trimmed;
 }
