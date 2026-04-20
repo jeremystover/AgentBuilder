@@ -148,17 +148,18 @@ export async function buildPresentation(
     planLayoutIds: plan.map((p) => p.layoutObjectId ?? null),
   });
 
-  // 3. Batch #1 — delete old slides + create new ones --------------------
+  // 3. Batch #1 — create new slides (BEFORE deleting old ones)
+  //
+  // IMPORTANT: creates must happen before deletes in a separate batch call.
+  // If deletes and creates run in the same batchUpdate, Google garbage-collects
+  // layout objects once all slides referencing them are deleted — causing every
+  // subsequent createSlide in the same batch to fail with "object not found"
+  // even though the layout appeared in the GET response moments earlier.
+  // By creating first (while old slides still hold references to the layouts)
+  // and deleting in a second batch, we avoid that GC window entirely.
   const slideIdFor = (i: number) => `gdslide_${i}`;
 
-  const structuralRequests: Record<string, unknown>[] = [];
-  for (const id of existingSlideIds) {
-    structuralRequests.push({ deleteObject: { objectId: id } });
-  }
-
-  // Track which slides will end up BLANK because their layout was missing —
-  // we reuse that knowledge when populating text so big-number-style slides
-  // get a centered TEXT_BOX even if the ORIGINAL intent wasn't big-number.
+  // Track which slides will end up BLANK because their layout was missing.
   const blankSlides = new Set<number>();
 
   const slideDecisions: Array<{
@@ -168,6 +169,8 @@ export async function buildPresentation(
     decision: 'layout' | 'blank';
     layoutIdSent: string | null;
   }> = [];
+
+  const createRequests: Record<string, unknown>[] = [];
 
   for (let i = 0; i < plan.length; i++) {
     const entry = plan[i]!;
@@ -187,7 +190,7 @@ export async function buildPresentation(
     }
 
     if (useLayoutId) {
-      structuralRequests.push({
+      createRequests.push({
         createSlide: {
           objectId: slideObjectId,
           insertionIndex: i,
@@ -203,7 +206,7 @@ export async function buildPresentation(
       });
     } else {
       blankSlides.add(i);
-      structuralRequests.push({
+      createRequests.push({
         createSlide: {
           objectId: slideObjectId,
           insertionIndex: i,
@@ -220,34 +223,21 @@ export async function buildPresentation(
     }
   }
 
-  // Defensive: right before we send the batch, re-verify every layoutId we're
-  // about to send is actually in availableLayoutIds. If the validation above
-  // is ever bypassed, this catches it loudly instead of letting the Slides
-  // API emit a cryptic "object not found" error.
-  for (const req of structuralRequests) {
-    const create = (req as { createSlide?: { slideLayoutReference?: { layoutId?: string } } }).createSlide;
-    const layoutId = create?.slideLayoutReference?.layoutId;
-    if (layoutId && !availableLayoutIds.has(layoutId)) {
-      throw new AgentError(
-        `Internal check failed: about to send createSlide with layoutId=${layoutId} but it's not in the ` +
-          `copied presentation's layouts (${Array.from(availableLayoutIds).join(', ') || '<none>'}). ` +
-          `This is a bug in build_presentation — file it.`,
-        { code: 'tool_failure' },
-      );
-    }
-  }
-
   logger.info('slides.layouts.validated', {
     availableLayouts: availableLayoutIds.size,
     slidesFallingBackToBlank: blankSlides.size,
     decisions: slideDecisions,
   });
 
-  logger.info('slides.batchUpdate.structural', {
-    deletes: existingSlideIds.length,
-    creates: plan.length,
-  });
-  await batchUpdate(google, newPresentationId, structuralRequests);
+  logger.info('slides.batchUpdate.creates', { creates: plan.length });
+  await batchUpdate(google, newPresentationId, createRequests);
+
+  // 3b. Batch #2 — delete old slides (now safe: new slides hold layout refs)
+  if (existingSlideIds.length > 0) {
+    const deleteRequests = existingSlideIds.map((id) => ({ deleteObject: { objectId: id } }));
+    logger.info('slides.batchUpdate.deletes', { deletes: existingSlideIds.length });
+    await batchUpdate(google, newPresentationId, deleteRequests);
+  }
 
   // 4. Re-fetch to discover placeholder IDs + speaker-notes IDs ----------
   const populated = await getPresentation(google, newPresentationId);
