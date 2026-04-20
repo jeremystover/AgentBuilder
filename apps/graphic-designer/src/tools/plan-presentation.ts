@@ -150,22 +150,13 @@ function buildSlidePlan(
     warnings.push(`Slide ${index + 1} (${slide.intent}): ${selection.reason}`);
   } else if (selection.strategy === 'blank' && slide.intent !== 'big-number') {
     warnings.push(`Slide ${index + 1} (${slide.intent}): ${selection.reason}`);
-  } else if (selection.strategy === 'explicit' && !layouts.some((l) => l.layoutObjectId === selection.layoutObjectId)) {
-    // Default-map ID not present in the template — mark a warning so the
-    // caller knows to verify this template has the expected layouts.
-    warnings.push(
-      `Slide ${index + 1}: default-map layout ${selection.layoutObjectId} for intent ${slide.intent} is not present in template analysis.`,
-    );
-  }
-
-  // Detect default-map use against an un-analyzed template (warn once per intent).
-  if (
+  } else if (
     selection.strategy === 'explicit' &&
     layouts.length === 0 &&
     DEFAULT_LAYOUT_MAP[slide.intent] === selection.layoutObjectId
   ) {
     warnings.push(
-      `Slide ${index + 1}: using default-map layout for "${slide.intent}" without template analysis.`,
+      `Slide ${index + 1}: using default-map layout ${selection.layoutObjectId} for "${slide.intent}" without template analysis — run analyze_template to verify.`,
     );
   }
 
