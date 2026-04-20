@@ -112,6 +112,16 @@ export async function buildPresentation(
   const copied = (await copyRes.json()) as { id: string; name?: string; mimeType?: string };
   const newPresentationId = copied.id;
 
+  // Source === target would mean we're about to mutate the template in place.
+  // That's never what we want — fail loudly rather than corrupting the template.
+  if (newPresentationId === googleSlidesId) {
+    throw new AgentError(
+      `Drive copy returned the source file's ID (${googleSlidesId}) — refusing to mutate the template. ` +
+        `This indicates an unexpected API response; check Drive API status and scopes.`,
+      { code: 'upstream_failure' },
+    );
+  }
+
   // Diagnostic: explicitly record that this deck came from drive.files.copy,
   // not presentations.create, plus the source → target mapping. If these two
   // IDs are ever equal, or if this line is missing from logs entirely, the
@@ -133,7 +143,9 @@ export async function buildPresentation(
     newPresentationId,
     slidesInCopy: existingSlideIds.length,
     layoutsInCopy: availableLayoutIds.size,
-    sampleLayoutIds: Array.from(availableLayoutIds).slice(0, 5),
+    // Full list, not a sample — we need this to debug "object not found" on createSlide.
+    allLayoutIds: Array.from(availableLayoutIds),
+    planLayoutIds: plan.map((p) => p.layoutObjectId ?? null),
   });
 
   // 3. Batch #1 — delete old slides + create new ones --------------------
@@ -148,6 +160,14 @@ export async function buildPresentation(
   // we reuse that knowledge when populating text so big-number-style slides
   // get a centered TEXT_BOX even if the ORIGINAL intent wasn't big-number.
   const blankSlides = new Set<number>();
+
+  const slideDecisions: Array<{
+    index: number;
+    intent: string;
+    plannedLayoutId: string | null;
+    decision: 'layout' | 'blank';
+    layoutIdSent: string | null;
+  }> = [];
 
   for (let i = 0; i < plan.length; i++) {
     const entry = plan[i]!;
@@ -174,6 +194,13 @@ export async function buildPresentation(
           slideLayoutReference: { layoutId: useLayoutId },
         },
       });
+      slideDecisions.push({
+        index: i,
+        intent: entry.intent,
+        plannedLayoutId: entry.layoutObjectId ?? null,
+        decision: 'layout',
+        layoutIdSent: useLayoutId,
+      });
     } else {
       blankSlides.add(i);
       structuralRequests.push({
@@ -183,12 +210,37 @@ export async function buildPresentation(
           slideLayoutReference: { predefinedLayout: 'BLANK' },
         },
       });
+      slideDecisions.push({
+        index: i,
+        intent: entry.intent,
+        plannedLayoutId: entry.layoutObjectId ?? null,
+        decision: 'blank',
+        layoutIdSent: null,
+      });
+    }
+  }
+
+  // Defensive: right before we send the batch, re-verify every layoutId we're
+  // about to send is actually in availableLayoutIds. If the validation above
+  // is ever bypassed, this catches it loudly instead of letting the Slides
+  // API emit a cryptic "object not found" error.
+  for (const req of structuralRequests) {
+    const create = (req as { createSlide?: { slideLayoutReference?: { layoutId?: string } } }).createSlide;
+    const layoutId = create?.slideLayoutReference?.layoutId;
+    if (layoutId && !availableLayoutIds.has(layoutId)) {
+      throw new AgentError(
+        `Internal check failed: about to send createSlide with layoutId=${layoutId} but it's not in the ` +
+          `copied presentation's layouts (${Array.from(availableLayoutIds).join(', ') || '<none>'}). ` +
+          `This is a bug in build_presentation — file it.`,
+        { code: 'tool_failure' },
+      );
     }
   }
 
   logger.info('slides.layouts.validated', {
     availableLayouts: availableLayoutIds.size,
     slidesFallingBackToBlank: blankSlides.size,
+    decisions: slideDecisions,
   });
 
   logger.info('slides.batchUpdate.structural', {
