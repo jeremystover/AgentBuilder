@@ -66,7 +66,8 @@ interface SlidesPage {
 interface PageElement {
   objectId: string;
   shape?: {
-    placeholder?: { type?: string; index?: number };
+    shapeType?: string;
+    placeholder?: { type?: string; index?: number; parentObjectId?: string };
   };
 }
 
@@ -262,8 +263,27 @@ export async function buildPresentation(
   const populated = await getPresentation(google, newPresentationId);
   const slidesById = new Map((populated.slides ?? []).map((s) => [s.objectId, s]));
 
-  // 5. Batch #2 — fill text, speaker notes, and big-number shapes --------
+  // Build a lookup of layout placeholders (objectId → type/index) so we can
+  // resolve the type of an inherited slide placeholder whose own `type` field
+  // is omitted by the API.
+  const layoutPlaceholdersById = new Map<string, { type: string; index: number }>();
+  for (const layout of populated.layouts ?? []) {
+    for (const el of layout.pageElements ?? []) {
+      const ph = el.shape?.placeholder;
+      if (!ph?.type) continue;
+      layoutPlaceholdersById.set(el.objectId, { type: ph.type, index: ph.index ?? 0 });
+    }
+  }
+
+  // 5. Batch #3 — fill text, speaker notes, and big-number shapes --------
   const textRequests: Record<string, unknown>[] = [];
+  const textDiagnostics: Array<{
+    slideIndex: number;
+    slideObjectId: string;
+    intent: string;
+    placeholders: Array<{ objectId: string; type: string; index: number; parentObjectId?: string }>;
+    actions: string[];
+  }> = [];
 
   for (let i = 0; i < plan.length; i++) {
     const entry = plan[i]!;
@@ -274,22 +294,27 @@ export async function buildPresentation(
       continue;
     }
 
-    const placeholders = collectPlaceholders(slide);
+    const placeholders = collectPlaceholders(slide, layoutPlaceholdersById);
     const isBlankFallback = blankSlides.has(i);
+    const actions: string[] = [];
 
     // Slides that fell back to BLANK (either big-number by design, or a missing
     // layout) have no placeholders. Render all of their text via text-boxes so
     // nothing is lost.
     if (isBlankFallback) {
-      textRequests.push(...renderBlankSlide(slideObjectId, i, entry));
+      const blankReqs = renderBlankSlide(slideObjectId, i, entry);
+      textRequests.push(...blankReqs);
+      actions.push(`blank-render:${blankReqs.length}`);
     } else {
       // Title
       if (entry.title) {
-        const titleId = pickPlaceholder(placeholders, ['TITLE', 'CENTERED_TITLE']);
+        const titleId = findTitlePlaceholder(placeholders);
         if (titleId) {
-          textRequests.push({ insertText: { objectId: titleId, text: entry.title } });
+          textRequests.push({ insertText: { objectId: titleId, text: entry.title, insertionIndex: 0 } });
+          actions.push(`title→${titleId}`);
         } else {
           warnings.push(`Slide ${i + 1}: no TITLE placeholder; skipped title "${truncate(entry.title)}".`);
+          actions.push('title:skip');
         }
       }
 
@@ -297,27 +322,31 @@ export async function buildPresentation(
       if (entry.subtitle) {
         const subId = pickPlaceholder(placeholders, ['SUBTITLE']);
         if (subId) {
-          textRequests.push({ insertText: { objectId: subId, text: entry.subtitle } });
+          textRequests.push({ insertText: { objectId: subId, text: entry.subtitle, insertionIndex: 0 } });
+          actions.push(`subtitle→${subId}`);
         } else {
           warnings.push(`Slide ${i + 1}: no SUBTITLE placeholder; skipped subtitle "${truncate(entry.subtitle)}".`);
+          actions.push('subtitle:skip');
         }
       }
 
-      // Body — distribute across all BODY placeholders (supports two-columns, three-ideas).
+      // Body — distribute across all BODY placeholders (supports two-columns).
       if (entry.body && entry.body.length > 0) {
-        const bodyIds = placeholders.filter((p) => p.type === 'BODY').map((p) => p.objectId);
+        const bodyIds = findBodyPlaceholders(placeholders);
         if (bodyIds.length > 0) {
           const chunks = distribute(entry.body, bodyIds.length);
           for (let c = 0; c < bodyIds.length; c++) {
             const text = chunks[c]?.join('\n') ?? '';
             if (text.length > 0) {
-              textRequests.push({ insertText: { objectId: bodyIds[c]!, text } });
+              textRequests.push({ insertText: { objectId: bodyIds[c]!, text, insertionIndex: 0 } });
+              actions.push(`body[${c}]→${bodyIds[c]}`);
             }
           }
         } else {
           warnings.push(
             `Slide ${i + 1}: no BODY placeholder on layout; skipped ${entry.body.length} body item(s).`,
           );
+          actions.push('body:skip');
         }
       }
     }
@@ -326,12 +355,34 @@ export async function buildPresentation(
     if (entry.speakerNotes) {
       const notesObjectId = slide.slideProperties?.notesPage?.notesProperties?.speakerNotesObjectId;
       if (notesObjectId) {
-        textRequests.push({ insertText: { objectId: notesObjectId, text: entry.speakerNotes } });
+        textRequests.push({ insertText: { objectId: notesObjectId, text: entry.speakerNotes, insertionIndex: 0 } });
+        actions.push(`notes→${notesObjectId}`);
       } else {
         warnings.push(`Slide ${i + 1}: no speaker-notes shape; skipped ${entry.speakerNotes.length} chars of notes.`);
+        actions.push('notes:skip');
       }
     }
+
+    textDiagnostics.push({
+      slideIndex: i,
+      slideObjectId,
+      intent: entry.intent,
+      placeholders: placeholders.map((p) => ({
+        objectId: p.objectId,
+        type: p.type,
+        index: p.index,
+        parentObjectId: p.parentObjectId,
+      })),
+      actions,
+    });
   }
+
+  logger.info('slides.text.diagnostics', {
+    totalRequests: textRequests.length,
+    slidesRefetched: slidesById.size,
+    layoutPlaceholdersIndexed: layoutPlaceholdersById.size,
+    perSlide: textDiagnostics,
+  });
 
   if (textRequests.length > 0) {
     logger.info('slides.batchUpdate.text', { requests: textRequests.length });
@@ -369,8 +420,9 @@ async function getPresentation(
   const fields =
     'presentationId,' +
     'masters(objectId),' +
-    'layouts(objectId,layoutProperties(name,displayName,masterObjectId)),' +
-    'slides(objectId,pageElements(objectId,shape(placeholder)),' +
+    'layouts(objectId,layoutProperties(name,displayName,masterObjectId),' +
+    'pageElements(objectId,shape(shapeType,placeholder))),' +
+    'slides(objectId,pageElements(objectId,shape(shapeType,placeholder)),' +
     'slideProperties(notesPage(pageElements(objectId,shape(placeholder)),notesProperties)))';
   const res = await google.gfetch(
     `${SLIDES_API}/presentations/${presentationId}?fields=${encodeURIComponent(fields)}`,
@@ -408,14 +460,30 @@ interface PlaceholderInfo {
   objectId: string;
   type: string;
   index: number;
+  parentObjectId?: string;
+  shapeType?: string;
 }
 
-function collectPlaceholders(slide: SlidesPage): PlaceholderInfo[] {
+function collectPlaceholders(
+  slide: SlidesPage,
+  layoutPlaceholdersById: Map<string, { type: string; index: number }>,
+): PlaceholderInfo[] {
   const out: PlaceholderInfo[] = [];
   for (const el of slide.pageElements ?? []) {
     const ph = el.shape?.placeholder;
-    if (!ph?.type) continue;
-    out.push({ objectId: el.objectId, type: ph.type, index: ph.index ?? 0 });
+    if (!ph) continue;
+    // Inherited placeholders may omit `type`/`index` — resolve them by walking
+    // to the parent layout placeholder so custom Gong layouts still match.
+    const parent = ph.parentObjectId ? layoutPlaceholdersById.get(ph.parentObjectId) : undefined;
+    const type = ph.type ?? parent?.type ?? 'UNSPECIFIED';
+    const index = ph.index ?? parent?.index ?? 0;
+    out.push({
+      objectId: el.objectId,
+      type,
+      index,
+      parentObjectId: ph.parentObjectId,
+      shapeType: el.shape?.shapeType,
+    });
   }
   // Stable ordering: by type then index so "two-columns" bodies fill left→right.
   out.sort((a, b) => (a.type === b.type ? a.index - b.index : a.type.localeCompare(b.type)));
@@ -428,6 +496,27 @@ function pickPlaceholder(placeholders: PlaceholderInfo[], types: string[]): stri
     if (match) return match.objectId;
   }
   return null;
+}
+
+// Ordered by desirability: types that typically hold body copy first, then
+// generic text-holding shapes. Lets custom templates still get their body
+// content populated when the placeholder.type is OBJECT or UNSPECIFIED.
+function findBodyPlaceholders(placeholders: PlaceholderInfo[]): string[] {
+  const primary = placeholders.filter((p) => p.type === 'BODY').map((p) => p.objectId);
+  if (primary.length > 0) return primary;
+  const secondary = placeholders
+    .filter((p) => p.type === 'OBJECT' || p.type === 'UNSPECIFIED')
+    .map((p) => p.objectId);
+  return secondary;
+}
+
+function findTitlePlaceholder(placeholders: PlaceholderInfo[]): string | null {
+  const byType = pickPlaceholder(placeholders, ['TITLE', 'CENTERED_TITLE']);
+  if (byType) return byType;
+  // Fallback: the placeholder at index 0 is conventionally the title slot,
+  // whether or not the template labels it as TITLE.
+  const atIndex0 = placeholders.find((p) => p.index === 0);
+  return atIndex0?.objectId ?? null;
 }
 
 function distribute<T>(items: T[], buckets: number): T[][] {
