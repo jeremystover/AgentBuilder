@@ -165,3 +165,106 @@ test('parseOutline normalizes body given as string', () => {
   const parsed = parseOutline([{ intent: 'bullets', title: 'X', body: 'one\ntwo\n' }]);
   assert.deepEqual(parsed[0]?.body, ['one', 'two']);
 });
+
+test('parseOutline splits numbered-list outlines into individual slides', () => {
+  const outline = `1. Title Slide
+Title: "AI in Talent Development: What Teams Are Using Now"
+Subtitle: "A Landscape Guide for L&D Leaders"
+Speaker Notes: Welcome everyone to this overview of AI in L&D.
+
+2. Chapter Divider
+Title: AI Coaching & Mentoring
+Speaker Notes: In this first section we'll look at conversational coaching tools.
+
+3. Content Slide
+Title: AI Coaching & Mentoring
+Subtitle: Category 1 of 6
+Body:
+  - CoachHub, BetterUp, Torch
+  - 24/7 conversational AI coaching
+  - Scales beyond executive level
+Speaker Notes: Call out pricing and adoption benchmarks.
+
+4. Closing
+Title: Thank You
+Speaker Notes: Wrap up with Q&A invitation.
+`;
+
+  const parsed = parseOutline(outline);
+  assert.equal(parsed.length, 4);
+
+  assert.equal(parsed[0]?.intent, 'title-slide');
+  assert.equal(parsed[0]?.title, 'AI in Talent Development: What Teams Are Using Now');
+  assert.equal(parsed[0]?.subtitle, 'A Landscape Guide for L&D Leaders');
+  assert.match(parsed[0]?.speakerNotes ?? '', /Welcome everyone/);
+
+  assert.equal(parsed[1]?.intent, 'section-break');
+  assert.equal(parsed[1]?.title, 'AI Coaching & Mentoring');
+
+  assert.equal(parsed[2]?.intent, 'bullets');
+  assert.equal(parsed[2]?.subtitle, 'Category 1 of 6');
+  assert.deepEqual(parsed[2]?.body, [
+    'CoachHub, BetterUp, Torch',
+    '24/7 conversational AI coaching',
+    'Scales beyond executive level',
+  ]);
+
+  assert.equal(parsed[3]?.intent, 'closing');
+  assert.equal(parsed[3]?.title, 'Thank You');
+});
+
+test('parseOutline numbered-list: intent-from-label handles common aliases', () => {
+  const outline = `1. Title Slide
+Title: Opener
+
+2. Section Divider
+Title: Part One
+
+3. Two-Column Content
+Title: Comparison
+
+4. Three-Up Idea
+Title: Trio
+
+5. Big-Number Highlight
+Body:
+  - 87%
+
+6. Closing Slide
+Title: Fin
+`;
+  const parsed = parseOutline(outline);
+  assert.equal(parsed.length, 6);
+  assert.equal(parsed[0]?.intent, 'title-slide');
+  assert.equal(parsed[1]?.intent, 'section-break');
+  assert.equal(parsed[2]?.intent, 'two-columns');
+  assert.equal(parsed[3]?.intent, 'three-ideas');
+  assert.equal(parsed[4]?.intent, 'big-number');
+  assert.equal(parsed[5]?.intent, 'closing');
+});
+
+test('parseOutline numbered-list: explicit intent: tag overrides label inference', () => {
+  const outline = `1. Random header
+Title: Foo
+Intent: two-columns
+
+2. Another header
+Title: Bar
+Intent: closing
+`;
+  const parsed = parseOutline(outline);
+  assert.equal(parsed[0]?.intent, 'two-columns');
+  assert.equal(parsed[1]?.intent, 'closing');
+});
+
+test('parseOutline numbered-list: single item is NOT split (falls back to markdown)', () => {
+  // Only one numbered item — should fall back to markdown parser.
+  const outline = `1. Title Slide
+Title: Solo
+`;
+  const parsed = parseOutline(outline);
+  // Markdown parser sees no `#` heading or `---` and treats everything as body
+  // of a single slide. That's fine — the point is we didn't pretend a single-
+  // item numbered list was a multi-slide outline.
+  assert.equal(parsed.length, 1);
+});
