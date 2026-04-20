@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   DEFAULT_LAYOUT_MAP,
+  FALLBACK_LAYOUT_ID,
   selectLayoutForIntent,
   type TemplateLayout,
 } from '../lib/layout-map.js';
@@ -10,13 +11,13 @@ import { parseOutline } from '../lib/outline.js';
 
 // ── layout-map ──────────────────────────────────────────────────────────────
 
+// Fixture that mirrors a fully-analyzed Gong template: every ID in the default
+// map is present, plus a generic 'other' layout for override tests.
 const GONG_LAYOUTS: TemplateLayout[] = [
-  { layoutObjectId: 'g3cae6f62d46_1_3525', name: 'TITLE', displayName: 'Title with image' },
-  { layoutObjectId: 'g3cae6f62d46_1_3598', name: 'SECTION', displayName: 'Section divider' },
-  { layoutObjectId: 'g3cae6f62d46_1_3607', name: 'TITLE_AND_BODY', displayName: 'Title + body' },
-  { layoutObjectId: 'g3cae6f62d46_1_3610', name: 'TWO_COLUMNS', displayName: 'Two-column body' },
-  { layoutObjectId: 'g3cae6f62d46_1_3575', name: 'CLOSING', displayName: 'Title + subtitle' },
-  { layoutObjectId: 'other', name: 'OTHER', bestFitIntents: ['quote', 'image-hero'] },
+  ...Array.from(new Set(Object.values(DEFAULT_LAYOUT_MAP))).map((id) => ({
+    layoutObjectId: id,
+  })),
+  { layoutObjectId: 'other', name: 'OTHER', bestFitIntents: ['image-hero'] },
 ];
 
 test('selectLayoutForIntent resolves every mapped intent via default map', () => {
@@ -27,8 +28,17 @@ test('selectLayoutForIntent resolves every mapped intent via default map', () =>
   }
 });
 
-test('selectLayoutForIntent returns BLANK for big-number', () => {
+test('selectLayoutForIntent resolves big-number to its explicit layout when present', () => {
   const pick = selectLayoutForIntent('big-number', GONG_LAYOUTS);
+  assert.equal(pick.strategy, 'explicit');
+  assert.equal(pick.layoutObjectId, DEFAULT_LAYOUT_MAP['big-number']);
+});
+
+test('selectLayoutForIntent falls back to BLANK for big-number when no layout available', () => {
+  // Template without the big-number layout in best-fit or default-map scope.
+  const pick = selectLayoutForIntent('big-number', [
+    { layoutObjectId: 'irrelevant', bestFitIntents: [] },
+  ]);
   assert.equal(pick.strategy, 'blank');
   assert.equal(pick.layoutObjectId, null);
 });
@@ -49,7 +59,13 @@ test('selectLayoutForIntent falls back to best-fit when default ID missing', () 
   assert.equal(pick.layoutObjectId, 'generic');
 });
 
-test('selectLayoutForIntent falls back to first layout when no match at all', () => {
+test('selectLayoutForIntent unknown intent prefers FALLBACK_LAYOUT_ID over first layout', () => {
+  const pick = selectLayoutForIntent('some-unknown-intent', GONG_LAYOUTS);
+  assert.equal(pick.strategy, 'fallback');
+  assert.equal(pick.layoutObjectId, FALLBACK_LAYOUT_ID);
+});
+
+test('selectLayoutForIntent unknown intent falls through to first layout when fallback ID absent', () => {
   const layouts: TemplateLayout[] = [
     { layoutObjectId: 'first', bestFitIntents: [] },
     { layoutObjectId: 'second', bestFitIntents: [] },
@@ -60,8 +76,6 @@ test('selectLayoutForIntent falls back to first layout when no match at all', ()
 });
 
 test('selectLayoutForIntent trusts default map when template has no analysis', () => {
-  // Without analysis, mapped intents should still return the default layoutObjectId
-  // so build_presentation doesn't fall back to BLANK slides on the Gong template.
   const pick = selectLayoutForIntent('bullets', []);
   assert.equal(pick.strategy, 'explicit');
   assert.equal(pick.layoutObjectId, DEFAULT_LAYOUT_MAP.bullets);
