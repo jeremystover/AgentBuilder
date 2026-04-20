@@ -54,7 +54,7 @@ interface PresentationMetadata {
 interface SlidesPage {
   objectId: string;
   pageElements?: PageElement[];
-  layoutProperties?: { name?: string; displayName?: string };
+  layoutProperties?: { name?: string; displayName?: string; masterObjectId?: string };
   slideProperties?: {
     notesPage?: {
       pageElements?: PageElement[];
@@ -74,6 +74,7 @@ interface PresentationResource {
   presentationId: string;
   slides?: SlidesPage[];
   layouts?: SlidesPage[];
+  masters?: SlidesPage[];
 }
 
 export async function buildPresentation(
@@ -138,13 +139,26 @@ export async function buildPresentation(
   const initial = await getPresentation(google, newPresentationId);
   const existingSlideIds = (initial.slides ?? []).map((s) => s.objectId);
   const availableLayoutIds = new Set((initial.layouts ?? []).map((l) => l.objectId));
+  const availableMasterIds = new Set((initial.masters ?? []).map((m) => m.objectId));
+
+  // Multi-master templates (e.g. Gong's dark/light/accent masters) require
+  // createSlide to specify BOTH the layoutId AND its owning masterId — the
+  // layout-only form fails with "object not found" because each layout only
+  // exists under one master.
+  const layoutToMaster = new Map<string, string>();
+  for (const l of initial.layouts ?? []) {
+    const masterId = l.layoutProperties?.masterObjectId;
+    if (masterId) layoutToMaster.set(l.objectId, masterId);
+  }
 
   logger.info('build.copy.inspected', {
     newPresentationId,
     slidesInCopy: existingSlideIds.length,
     layoutsInCopy: availableLayoutIds.size,
+    mastersInCopy: availableMasterIds.size,
     // Full list, not a sample — we need this to debug "object not found" on createSlide.
     allLayoutIds: Array.from(availableLayoutIds),
+    allMasterIds: Array.from(availableMasterIds),
     planLayoutIds: plan.map((p) => p.layoutObjectId ?? null),
   });
 
@@ -168,6 +182,7 @@ export async function buildPresentation(
     plannedLayoutId: string | null;
     decision: 'layout' | 'blank';
     layoutIdSent: string | null;
+    masterIdSent: string | null;
   }> = [];
 
   const createRequests: Record<string, unknown>[] = [];
@@ -177,9 +192,19 @@ export async function buildPresentation(
     const slideObjectId = slideIdFor(i);
 
     let useLayoutId: string | null = null;
+    let useMasterId: string | null = null;
     if (entry.layoutObjectId) {
       if (availableLayoutIds.has(entry.layoutObjectId)) {
-        useLayoutId = entry.layoutObjectId;
+        const masterId = layoutToMaster.get(entry.layoutObjectId);
+        if (masterId && availableMasterIds.has(masterId)) {
+          useLayoutId = entry.layoutObjectId;
+          useMasterId = masterId;
+        } else {
+          warnings.push(
+            `Slide ${i + 1} (${entry.intent}): layout ${entry.layoutObjectId} has no resolvable master ` +
+              `(masterObjectId=${masterId ?? '<missing>'}) — falling back to predefinedLayout BLANK.`,
+          );
+        }
       } else {
         warnings.push(
           `Slide ${i + 1} (${entry.intent}): layout ${entry.layoutObjectId} not present in copied template ` +
@@ -189,12 +214,12 @@ export async function buildPresentation(
       }
     }
 
-    if (useLayoutId) {
+    if (useLayoutId && useMasterId) {
       createRequests.push({
         createSlide: {
           objectId: slideObjectId,
           insertionIndex: i,
-          slideLayoutReference: { layoutId: useLayoutId },
+          slideLayoutReference: { masterId: useMasterId, layoutId: useLayoutId },
         },
       });
       slideDecisions.push({
@@ -203,6 +228,7 @@ export async function buildPresentation(
         plannedLayoutId: entry.layoutObjectId ?? null,
         decision: 'layout',
         layoutIdSent: useLayoutId,
+        masterIdSent: useMasterId,
       });
     } else {
       blankSlides.add(i);
@@ -219,6 +245,7 @@ export async function buildPresentation(
         plannedLayoutId: entry.layoutObjectId ?? null,
         decision: 'blank',
         layoutIdSent: null,
+        masterIdSent: null,
       });
     }
   }
@@ -349,7 +376,8 @@ async function getPresentation(
 ): Promise<PresentationResource> {
   const fields =
     'presentationId,' +
-    'layouts(objectId,layoutProperties(name,displayName)),' +
+    'masters(objectId),' +
+    'layouts(objectId,layoutProperties(name,displayName,masterObjectId)),' +
     'slides(objectId,pageElements(objectId,shape(placeholder)),' +
     'slideProperties(notesPage(pageElements(objectId,shape(placeholder)),notesProperties)))';
   const res = await google.gfetch(
