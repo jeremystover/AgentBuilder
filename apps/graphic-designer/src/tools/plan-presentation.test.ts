@@ -60,8 +60,17 @@ test('selectLayoutForIntent falls back to first layout when no match at all', ()
   assert.equal(pick.layoutObjectId, 'first');
 });
 
-test('selectLayoutForIntent on empty template collapses to blank', () => {
+test('selectLayoutForIntent trusts default map when template has no analysis', () => {
+  // Without analysis, mapped intents should still return the default layoutObjectId
+  // so build_presentation doesn't fall back to BLANK slides on the Gong template.
   const pick = selectLayoutForIntent('bullets', []);
+  assert.equal(pick.strategy, 'explicit');
+  assert.equal(pick.layoutObjectId, DEFAULT_LAYOUT_MAP.bullets);
+  assert.match(pick.reason, /unverified/);
+});
+
+test('selectLayoutForIntent on empty template collapses unknown intents to blank', () => {
+  const pick = selectLayoutForIntent('some-exotic-intent', []);
   assert.equal(pick.strategy, 'blank');
   assert.equal(pick.layoutObjectId, null);
 });

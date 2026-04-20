@@ -54,15 +54,29 @@ export function selectLayoutForIntent(
     };
   }
 
-  // 2. Default intent map, if the ID is present in the template.
+  // 2. Default intent map.
+  //    If we have analysis, require the mapped ID to be present in the template
+  //    (a mismatch means this isn't the Gong template and we should fall through
+  //    to best-fit). If we have no analysis at all, trust the default map —
+  //    running `analyze_template` is recommended but not required.
   const mapped = DEFAULT_LAYOUT_MAP[intent];
-  if (mapped && known.has(mapped)) {
-    return {
-      intent,
-      layoutObjectId: mapped,
-      strategy: 'explicit',
-      reason: `default map ${intent} → ${mapped}`,
-    };
+  if (mapped) {
+    if (templateLayouts.length === 0) {
+      return {
+        intent,
+        layoutObjectId: mapped,
+        strategy: 'explicit',
+        reason: `default map ${intent} → ${mapped} (unverified — template not analyzed)`,
+      };
+    }
+    if (known.has(mapped)) {
+      return {
+        intent,
+        layoutObjectId: mapped,
+        strategy: 'explicit',
+        reason: `default map ${intent} → ${mapped}`,
+      };
+    }
   }
 
   // 3. big-number has no explicit layout — always render BLANK + centered text.
