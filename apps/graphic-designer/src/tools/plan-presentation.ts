@@ -75,6 +75,19 @@ export async function planPresentation(
     throw new AgentError('Outline contains no slides.', { code: 'invalid_input' });
   }
 
+  logger.info('outline.parsed', {
+    slideCount: slides.length,
+    perSlide: slides.map((s, i) => ({
+      index: i,
+      intent: s.intent,
+      titleLen: s.title?.length ?? 0,
+      subtitleLen: s.subtitle?.length ?? 0,
+      bodyCount: s.body?.length ?? 0,
+      bodyChars: s.body?.reduce((n, b) => n + b.length, 0) ?? 0,
+      notesLen: s.speakerNotes?.length ?? 0,
+    })),
+  });
+
   const template = await resolveTemplate(env.DB, userId, args.templateId);
   const layouts = await loadLayouts(env.DB, template.id);
 
@@ -160,16 +173,21 @@ function buildSlidePlan(
     );
   }
 
-  return {
+  // Explicitly assemble the plan object so undefined fields aren't silently
+  // dropped by JSON.stringify. Empty string / empty array are safe sentinels
+  // that survive round-tripping and clearly distinguish "no content" from
+  // "serialization lost the field".
+  const planned: PlannedSlide = {
     index,
     intent: slide.intent,
     layoutObjectId: selection.layoutObjectId,
     layoutStrategy: selection.strategy,
-    title: slide.title,
-    subtitle: slide.subtitle,
-    body: slide.body,
-    speakerNotes: slide.speakerNotes,
+    title: slide.title ?? '',
+    subtitle: slide.subtitle ?? '',
+    body: slide.body ?? [],
+    speakerNotes: slide.speakerNotes ?? '',
   };
+  return planned;
 }
 
 async function resolveTemplate(

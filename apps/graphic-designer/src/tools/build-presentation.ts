@@ -46,15 +46,24 @@ interface ProjectRow {
   name: string;
 }
 
+interface OutlineContent {
+  intent?: string;
+  title?: string;
+  subtitle?: string;
+  body?: string[];
+  speakerNotes?: string;
+}
+
 interface PresentationMetadata {
   plan: PlannedSlide[];
+  outline?: OutlineContent[];
   googleSlidesId: string;
 }
 
 interface SlidesPage {
   objectId: string;
   pageElements?: PageElement[];
-  layoutProperties?: { name?: string; displayName?: string };
+  layoutProperties?: { name?: string; displayName?: string; masterObjectId?: string };
   slideProperties?: {
     notesPage?: {
       pageElements?: PageElement[];
@@ -66,7 +75,8 @@ interface SlidesPage {
 interface PageElement {
   objectId: string;
   shape?: {
-    placeholder?: { type?: string; index?: number };
+    shapeType?: string;
+    placeholder?: { type?: string; index?: number; parentObjectId?: string };
   };
 }
 
@@ -74,6 +84,7 @@ interface PresentationResource {
   presentationId: string;
   slides?: SlidesPage[];
   layouts?: SlidesPage[];
+  masters?: SlidesPage[];
 }
 
 export async function buildPresentation(
@@ -86,11 +97,42 @@ export async function buildPresentation(
 
   const project = await loadProject(env.DB, userId, args.planId);
   const metadata = parseMetadata(project.metadata);
-  const { plan, googleSlidesId } = metadata;
+  const { plan, googleSlidesId, outline } = metadata;
 
   if (plan.length === 0) {
     throw new AgentError(`Plan ${args.planId} has no slides.`, { code: 'invalid_input' });
   }
+
+  // Merge content: prefer the plan's fields, fall back to the stored outline
+  // at the same index. If the plan was serialized before we started emitting
+  // explicit empty-string defaults, its title/body/etc may be missing while
+  // the outline still has them.
+  const resolved: PlannedSlide[] = plan.map((p, i) => {
+    const o = outline?.[i] ?? {};
+    return {
+      ...p,
+      title: p.title || o.title,
+      subtitle: p.subtitle || o.subtitle,
+      body: p.body && p.body.length > 0 ? p.body : o.body,
+      speakerNotes: p.speakerNotes || o.speakerNotes,
+    };
+  });
+
+  logger.info('plan.loaded', {
+    planId: args.planId,
+    slideCount: resolved.length,
+    hasOutlineFallback: Array.isArray(outline),
+    perSlide: resolved.map((s, i) => ({
+      index: i,
+      intent: s.intent,
+      layoutObjectId: s.layoutObjectId,
+      layoutStrategy: s.layoutStrategy,
+      titleLen: s.title?.length ?? 0,
+      subtitleLen: s.subtitle?.length ?? 0,
+      bodyCount: s.body?.length ?? 0,
+      notesLen: s.speakerNotes?.length ?? 0,
+    })),
+  });
 
   const google = new GoogleClient({ env, userId });
 
@@ -109,35 +151,129 @@ export async function buildPresentation(
       { code: 'upstream_failure' },
     );
   }
-  const copied = (await copyRes.json()) as { id: string };
+  const copied = (await copyRes.json()) as { id: string; name?: string; mimeType?: string };
   const newPresentationId = copied.id;
+
+  // Source === target would mean we're about to mutate the template in place.
+  // That's never what we want — fail loudly rather than corrupting the template.
+  if (newPresentationId === googleSlidesId) {
+    throw new AgentError(
+      `Drive copy returned the source file's ID (${googleSlidesId}) — refusing to mutate the template. ` +
+        `This indicates an unexpected API response; check Drive API status and scopes.`,
+      { code: 'upstream_failure' },
+    );
+  }
+
+  // Diagnostic: explicitly record that this deck came from drive.files.copy,
+  // not presentations.create, plus the source → target mapping. If these two
+  // IDs are ever equal, or if this line is missing from logs entirely, the
+  // deploy is stale — the fix lives in this path.
+  logger.info('build.copy.success', {
+    method: 'drive.files.copy',
+    sourceTemplateId: googleSlidesId,
+    newPresentationId,
+    name: copied.name,
+    mimeType: copied.mimeType,
+  });
 
   // 2. Fetch copy to discover existing slide IDs + actual layout IDs ----
   const initial = await getPresentation(google, newPresentationId);
   const existingSlideIds = (initial.slides ?? []).map((s) => s.objectId);
   const availableLayoutIds = new Set((initial.layouts ?? []).map((l) => l.objectId));
+  const availableMasterIds = new Set((initial.masters ?? []).map((m) => m.objectId));
 
-  // 3. Batch #1 — delete old slides + create new ones --------------------
-  const slideIdFor = (i: number) => `gdslide_${i}`;
-
-  const structuralRequests: Record<string, unknown>[] = [];
-  for (const id of existingSlideIds) {
-    structuralRequests.push({ deleteObject: { objectId: id } });
+  // Multi-master templates (e.g. Gong's dark/light/accent masters) require
+  // createSlide to specify BOTH the layoutId AND its owning masterId — the
+  // layout-only form fails with "object not found" because each layout only
+  // exists under one master.
+  const layoutToMaster = new Map<string, string>();
+  for (const l of initial.layouts ?? []) {
+    const masterId = l.layoutProperties?.masterObjectId;
+    if (masterId) layoutToMaster.set(l.objectId, masterId);
   }
 
-  // Track which slides will end up BLANK because their layout was missing —
-  // we reuse that knowledge when populating text so big-number-style slides
-  // get a centered TEXT_BOX even if the ORIGINAL intent wasn't big-number.
+  // Map each layout's placeholder shapes so we can pass placeholderIdMappings
+  // to createSlide. WITHOUT these mappings, inherited placeholders exist on
+  // the new slide conceptually but aren't addressable via insertText — which
+  // is why every slide was coming out blank.
+  interface LayoutPlaceholder {
+    layoutPlaceholderObjectId: string;
+    type: string;
+    index: number;
+  }
+  const layoutToPlaceholders = new Map<string, LayoutPlaceholder[]>();
+  for (const l of initial.layouts ?? []) {
+    const phs: LayoutPlaceholder[] = [];
+    for (const el of l.pageElements ?? []) {
+      const ph = el.shape?.placeholder;
+      if (!ph?.type) continue;
+      phs.push({
+        layoutPlaceholderObjectId: el.objectId,
+        type: ph.type,
+        index: ph.index ?? 0,
+      });
+    }
+    layoutToPlaceholders.set(l.objectId, phs);
+  }
+
+  logger.info('build.copy.inspected', {
+    newPresentationId,
+    slidesInCopy: existingSlideIds.length,
+    layoutsInCopy: availableLayoutIds.size,
+    mastersInCopy: availableMasterIds.size,
+    // Full list, not a sample — we need this to debug "object not found" on createSlide.
+    allLayoutIds: Array.from(availableLayoutIds),
+    allMasterIds: Array.from(availableMasterIds),
+    planLayoutIds: plan.map((p) => p.layoutObjectId ?? null),
+  });
+
+  // 3. Batch #1 — create new slides (BEFORE deleting old ones)
+  //
+  // IMPORTANT: creates must happen before deletes in a separate batch call.
+  // If deletes and creates run in the same batchUpdate, Google garbage-collects
+  // layout objects once all slides referencing them are deleted — causing every
+  // subsequent createSlide in the same batch to fail with "object not found"
+  // even though the layout appeared in the GET response moments earlier.
+  // By creating first (while old slides still hold references to the layouts)
+  // and deleting in a second batch, we avoid that GC window entirely.
+  const slideIdFor = (i: number) => `gdslide_${i}`;
+  const placeholderIdFor = (i: number, layoutPhId: string) =>
+    // Keep combined length under Slides' 50-char objectId limit.
+    `gdph${i}_${layoutPhId}`.slice(0, 50);
+
+  // Track which slides will end up BLANK because their layout was missing.
   const blankSlides = new Set<number>();
+
+  // Per-slide map of placeholder type → objectId we assigned via
+  // placeholderIdMappings. This is our source of truth for the text-insert
+  // batch — no need to re-fetch + scan pageElements.
+  const slidePlaceholdersByIndex = new Map<
+    number,
+    Array<{ objectId: string; type: string; index: number }>
+  >();
+
+  const slideDecisions: Array<{
+    index: number;
+    intent: string;
+    plannedLayoutId: string | null;
+    decision: 'layout' | 'blank';
+    layoutIdSent: string | null;
+    masterIdSent: string | null;
+    placeholderMappingsSent: number;
+  }> = [];
+
+  const createRequests: Record<string, unknown>[] = [];
 
   for (let i = 0; i < plan.length; i++) {
     const entry = plan[i]!;
     const slideObjectId = slideIdFor(i);
 
     let useLayoutId: string | null = null;
+    let masterForLog: string | null = null;
     if (entry.layoutObjectId) {
       if (availableLayoutIds.has(entry.layoutObjectId)) {
         useLayoutId = entry.layoutObjectId;
+        masterForLog = layoutToMaster.get(entry.layoutObjectId) ?? null;
       } else {
         warnings.push(
           `Slide ${i + 1} (${entry.intent}): layout ${entry.layoutObjectId} not present in copied template ` +
@@ -148,21 +284,55 @@ export async function buildPresentation(
     }
 
     if (useLayoutId) {
-      structuralRequests.push({
+      const layoutPhs = layoutToPlaceholders.get(useLayoutId) ?? [];
+      const placeholderIdMappings = layoutPhs.map((lp) => ({
+        layoutPlaceholder: { type: lp.type, index: lp.index },
+        objectId: placeholderIdFor(i, lp.layoutPlaceholderObjectId),
+      }));
+
+      slidePlaceholdersByIndex.set(
+        i,
+        layoutPhs.map((lp) => ({
+          objectId: placeholderIdFor(i, lp.layoutPlaceholderObjectId),
+          type: lp.type,
+          index: lp.index,
+        })),
+      );
+
+      createRequests.push({
         createSlide: {
           objectId: slideObjectId,
           insertionIndex: i,
           slideLayoutReference: { layoutId: useLayoutId },
+          placeholderIdMappings,
         },
+      });
+      slideDecisions.push({
+        index: i,
+        intent: entry.intent,
+        plannedLayoutId: entry.layoutObjectId ?? null,
+        decision: 'layout',
+        layoutIdSent: useLayoutId,
+        masterIdSent: masterForLog,
+        placeholderMappingsSent: placeholderIdMappings.length,
       });
     } else {
       blankSlides.add(i);
-      structuralRequests.push({
+      createRequests.push({
         createSlide: {
           objectId: slideObjectId,
           insertionIndex: i,
           slideLayoutReference: { predefinedLayout: 'BLANK' },
         },
+      });
+      slideDecisions.push({
+        index: i,
+        intent: entry.intent,
+        plannedLayoutId: entry.layoutObjectId ?? null,
+        decision: 'blank',
+        layoutIdSent: null,
+        masterIdSent: null,
+        placeholderMappingsSent: 0,
       });
     }
   }
@@ -170,23 +340,47 @@ export async function buildPresentation(
   logger.info('slides.layouts.validated', {
     availableLayouts: availableLayoutIds.size,
     slidesFallingBackToBlank: blankSlides.size,
+    decisions: slideDecisions,
   });
 
-  logger.info('slides.batchUpdate.structural', {
-    deletes: existingSlideIds.length,
-    creates: plan.length,
-  });
-  await batchUpdate(google, newPresentationId, structuralRequests);
+  logger.info('slides.batchUpdate.creates', { creates: plan.length });
+  await batchUpdate(google, newPresentationId, createRequests);
+
+  // 3b. Batch #2 — delete old slides (now safe: new slides hold layout refs)
+  if (existingSlideIds.length > 0) {
+    const deleteRequests = existingSlideIds.map((id) => ({ deleteObject: { objectId: id } }));
+    logger.info('slides.batchUpdate.deletes', { deletes: existingSlideIds.length });
+    await batchUpdate(google, newPresentationId, deleteRequests);
+  }
 
   // 4. Re-fetch to discover placeholder IDs + speaker-notes IDs ----------
   const populated = await getPresentation(google, newPresentationId);
   const slidesById = new Map((populated.slides ?? []).map((s) => [s.objectId, s]));
 
-  // 5. Batch #2 — fill text, speaker notes, and big-number shapes --------
-  const textRequests: Record<string, unknown>[] = [];
+  // Build a lookup of layout placeholders (objectId → type/index) so we can
+  // resolve the type of an inherited slide placeholder whose own `type` field
+  // is omitted by the API.
+  const layoutPlaceholdersById = new Map<string, { type: string; index: number }>();
+  for (const layout of populated.layouts ?? []) {
+    for (const el of layout.pageElements ?? []) {
+      const ph = el.shape?.placeholder;
+      if (!ph?.type) continue;
+      layoutPlaceholdersById.set(el.objectId, { type: ph.type, index: ph.index ?? 0 });
+    }
+  }
 
-  for (let i = 0; i < plan.length; i++) {
-    const entry = plan[i]!;
+  // 5. Batch #3 — fill text, speaker notes, and big-number shapes --------
+  const textRequests: Record<string, unknown>[] = [];
+  const textDiagnostics: Array<{
+    slideIndex: number;
+    slideObjectId: string;
+    intent: string;
+    placeholders: Array<{ objectId: string; type: string; index: number; parentObjectId?: string }>;
+    actions: string[];
+  }> = [];
+
+  for (let i = 0; i < resolved.length; i++) {
+    const entry = resolved[i]!;
     const slideObjectId = slideIdFor(i);
     const slide = slidesById.get(slideObjectId);
     if (!slide) {
@@ -194,22 +388,35 @@ export async function buildPresentation(
       continue;
     }
 
-    const placeholders = collectPlaceholders(slide);
+    // Prefer the IDs we assigned via placeholderIdMappings in createSlide —
+    // these are authoritative and don't require the API to materialize inherited
+    // placeholders as pageElements. Fall back to scanning pageElements only if
+    // the mapping produced nothing (e.g. layout had no placeholders).
+    const mappedPhs = slidePlaceholdersByIndex.get(i) ?? [];
+    const placeholders: PlaceholderInfo[] =
+      mappedPhs.length > 0
+        ? mappedPhs.map((p) => ({ objectId: p.objectId, type: p.type, index: p.index }))
+        : collectPlaceholders(slide, layoutPlaceholdersById);
     const isBlankFallback = blankSlides.has(i);
+    const actions: string[] = [];
 
     // Slides that fell back to BLANK (either big-number by design, or a missing
     // layout) have no placeholders. Render all of their text via text-boxes so
     // nothing is lost.
     if (isBlankFallback) {
-      textRequests.push(...renderBlankSlide(slideObjectId, i, entry));
+      const blankReqs = renderBlankSlide(slideObjectId, i, entry);
+      textRequests.push(...blankReqs);
+      actions.push(`blank-render:${blankReqs.length}`);
     } else {
       // Title
       if (entry.title) {
-        const titleId = pickPlaceholder(placeholders, ['TITLE', 'CENTERED_TITLE']);
+        const titleId = findTitlePlaceholder(placeholders);
         if (titleId) {
-          textRequests.push({ insertText: { objectId: titleId, text: entry.title } });
+          textRequests.push({ insertText: { objectId: titleId, text: entry.title, insertionIndex: 0 } });
+          actions.push(`title→${titleId}`);
         } else {
           warnings.push(`Slide ${i + 1}: no TITLE placeholder; skipped title "${truncate(entry.title)}".`);
+          actions.push('title:skip');
         }
       }
 
@@ -217,27 +424,31 @@ export async function buildPresentation(
       if (entry.subtitle) {
         const subId = pickPlaceholder(placeholders, ['SUBTITLE']);
         if (subId) {
-          textRequests.push({ insertText: { objectId: subId, text: entry.subtitle } });
+          textRequests.push({ insertText: { objectId: subId, text: entry.subtitle, insertionIndex: 0 } });
+          actions.push(`subtitle→${subId}`);
         } else {
           warnings.push(`Slide ${i + 1}: no SUBTITLE placeholder; skipped subtitle "${truncate(entry.subtitle)}".`);
+          actions.push('subtitle:skip');
         }
       }
 
-      // Body — distribute across all BODY placeholders (supports two-columns, three-ideas).
+      // Body — distribute across all BODY placeholders (supports two-columns).
       if (entry.body && entry.body.length > 0) {
-        const bodyIds = placeholders.filter((p) => p.type === 'BODY').map((p) => p.objectId);
+        const bodyIds = findBodyPlaceholders(placeholders);
         if (bodyIds.length > 0) {
           const chunks = distribute(entry.body, bodyIds.length);
           for (let c = 0; c < bodyIds.length; c++) {
             const text = chunks[c]?.join('\n') ?? '';
             if (text.length > 0) {
-              textRequests.push({ insertText: { objectId: bodyIds[c]!, text } });
+              textRequests.push({ insertText: { objectId: bodyIds[c]!, text, insertionIndex: 0 } });
+              actions.push(`body[${c}]→${bodyIds[c]}`);
             }
           }
         } else {
           warnings.push(
             `Slide ${i + 1}: no BODY placeholder on layout; skipped ${entry.body.length} body item(s).`,
           );
+          actions.push('body:skip');
         }
       }
     }
@@ -246,12 +457,34 @@ export async function buildPresentation(
     if (entry.speakerNotes) {
       const notesObjectId = slide.slideProperties?.notesPage?.notesProperties?.speakerNotesObjectId;
       if (notesObjectId) {
-        textRequests.push({ insertText: { objectId: notesObjectId, text: entry.speakerNotes } });
+        textRequests.push({ insertText: { objectId: notesObjectId, text: entry.speakerNotes, insertionIndex: 0 } });
+        actions.push(`notes→${notesObjectId}`);
       } else {
         warnings.push(`Slide ${i + 1}: no speaker-notes shape; skipped ${entry.speakerNotes.length} chars of notes.`);
+        actions.push('notes:skip');
       }
     }
+
+    textDiagnostics.push({
+      slideIndex: i,
+      slideObjectId,
+      intent: entry.intent,
+      placeholders: placeholders.map((p) => ({
+        objectId: p.objectId,
+        type: p.type,
+        index: p.index,
+        parentObjectId: p.parentObjectId,
+      })),
+      actions,
+    });
   }
+
+  logger.info('slides.text.diagnostics', {
+    totalRequests: textRequests.length,
+    slidesRefetched: slidesById.size,
+    layoutPlaceholdersIndexed: layoutPlaceholdersById.size,
+    perSlide: textDiagnostics,
+  });
 
   if (textRequests.length > 0) {
     logger.info('slides.batchUpdate.text', { requests: textRequests.length });
@@ -288,8 +521,10 @@ async function getPresentation(
 ): Promise<PresentationResource> {
   const fields =
     'presentationId,' +
-    'layouts(objectId,layoutProperties(name,displayName)),' +
-    'slides(objectId,pageElements(objectId,shape(placeholder)),' +
+    'masters(objectId),' +
+    'layouts(objectId,layoutProperties(name,displayName,masterObjectId),' +
+    'pageElements(objectId,shape(shapeType,placeholder))),' +
+    'slides(objectId,pageElements(objectId,shape(shapeType,placeholder)),' +
     'slideProperties(notesPage(pageElements(objectId,shape(placeholder)),notesProperties)))';
   const res = await google.gfetch(
     `${SLIDES_API}/presentations/${presentationId}?fields=${encodeURIComponent(fields)}`,
@@ -327,14 +562,30 @@ interface PlaceholderInfo {
   objectId: string;
   type: string;
   index: number;
+  parentObjectId?: string;
+  shapeType?: string;
 }
 
-function collectPlaceholders(slide: SlidesPage): PlaceholderInfo[] {
+function collectPlaceholders(
+  slide: SlidesPage,
+  layoutPlaceholdersById: Map<string, { type: string; index: number }>,
+): PlaceholderInfo[] {
   const out: PlaceholderInfo[] = [];
   for (const el of slide.pageElements ?? []) {
     const ph = el.shape?.placeholder;
-    if (!ph?.type) continue;
-    out.push({ objectId: el.objectId, type: ph.type, index: ph.index ?? 0 });
+    if (!ph) continue;
+    // Inherited placeholders may omit `type`/`index` — resolve them by walking
+    // to the parent layout placeholder so custom Gong layouts still match.
+    const parent = ph.parentObjectId ? layoutPlaceholdersById.get(ph.parentObjectId) : undefined;
+    const type = ph.type ?? parent?.type ?? 'UNSPECIFIED';
+    const index = ph.index ?? parent?.index ?? 0;
+    out.push({
+      objectId: el.objectId,
+      type,
+      index,
+      parentObjectId: ph.parentObjectId,
+      shapeType: el.shape?.shapeType,
+    });
   }
   // Stable ordering: by type then index so "two-columns" bodies fill left→right.
   out.sort((a, b) => (a.type === b.type ? a.index - b.index : a.type.localeCompare(b.type)));
@@ -347,6 +598,27 @@ function pickPlaceholder(placeholders: PlaceholderInfo[], types: string[]): stri
     if (match) return match.objectId;
   }
   return null;
+}
+
+// Ordered by desirability: types that typically hold body copy first, then
+// generic text-holding shapes. Lets custom templates still get their body
+// content populated when the placeholder.type is OBJECT or UNSPECIFIED.
+function findBodyPlaceholders(placeholders: PlaceholderInfo[]): string[] {
+  const primary = placeholders.filter((p) => p.type === 'BODY').map((p) => p.objectId);
+  if (primary.length > 0) return primary;
+  const secondary = placeholders
+    .filter((p) => p.type === 'OBJECT' || p.type === 'UNSPECIFIED')
+    .map((p) => p.objectId);
+  return secondary;
+}
+
+function findTitlePlaceholder(placeholders: PlaceholderInfo[]): string | null {
+  const byType = pickPlaceholder(placeholders, ['TITLE', 'CENTERED_TITLE']);
+  if (byType) return byType;
+  // Fallback: the placeholder at index 0 is conventionally the title slot,
+  // whether or not the template labels it as TITLE.
+  const atIndex0 = placeholders.find((p) => p.index === 0);
+  return atIndex0?.objectId ?? null;
 }
 
 function distribute<T>(items: T[], buckets: number): T[][] {
@@ -572,7 +844,12 @@ function parseMetadata(raw: string | null): PresentationMetadata {
       { code: 'invalid_input' },
     );
   }
-  return { plan: obj.plan as PlannedSlide[], googleSlidesId: obj.googleSlidesId };
+  const outline = Array.isArray(obj.outline) ? (obj.outline as OutlineContent[]) : undefined;
+  return {
+    plan: obj.plan as PlannedSlide[],
+    outline,
+    googleSlidesId: obj.googleSlidesId,
+  };
 }
 
 function truncate(s: string, n = 40): string {

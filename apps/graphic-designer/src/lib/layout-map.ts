@@ -2,7 +2,9 @@
  * Intent → layout selection.
  *
  * The default map below lists the preferred layoutObjectId for each intent
- * on the Gong template registered as the user default. When building against
+ * on the Gong template registered as the user default. All IDs are chosen
+ * from the SAME master (g3cae6f62d46_1_*) — the Google Slides API rejects
+ * createSlide batches that mix layouts across masters. When building against
  * a different template we fall back to per-template `best_fit_intents`
  * populated by `analyze_template`, then to a BLANK slide for "big-number",
  * then finally to the first available layout.
@@ -14,11 +16,12 @@ export const BIG_NUMBER_INTENT = 'big-number';
 
 export const DEFAULT_LAYOUT_MAP: Record<string, string> = {
   'title-slide': 'g3cae6f62d46_1_3525',
-  'section-break': 'p26',
-  bullets: 'g2903e80e4ad_0_76',
-  'two-columns': 'g82b45e6254_1_233',
-  'three-ideas': 'g7c9a7880b0_0_473',
+  'section-break': 'g3cae6f62d46_1_3598',
+  bullets: 'g3cae6f62d46_1_3607',
+  'two-columns': 'g3cae6f62d46_1_3610',
   closing: 'g3cae6f62d46_1_3575',
+  // three-ideas intentionally omitted — no single-master equivalent on this
+  // template. Falls back to best-fit (if analyzed) or BLANK.
   // big-number intentionally omitted — handled as a BLANK slide with a centered textbox.
 };
 

@@ -12,10 +12,9 @@ import { parseOutline } from '../lib/outline.js';
 
 const GONG_LAYOUTS: TemplateLayout[] = [
   { layoutObjectId: 'g3cae6f62d46_1_3525', name: 'TITLE', displayName: 'Title with image' },
-  { layoutObjectId: 'p26', name: 'SECTION', displayName: 'Navy divider' },
-  { layoutObjectId: 'g2903e80e4ad_0_76', name: 'TITLE_AND_BODY', displayName: 'Title + body' },
-  { layoutObjectId: 'g82b45e6254_1_233', name: 'TWO_COLUMNS', displayName: 'Two-column body' },
-  { layoutObjectId: 'g7c9a7880b0_0_473', name: 'THREE_COLUMN', displayName: 'Title + 3 columns' },
+  { layoutObjectId: 'g3cae6f62d46_1_3598', name: 'SECTION', displayName: 'Section divider' },
+  { layoutObjectId: 'g3cae6f62d46_1_3607', name: 'TITLE_AND_BODY', displayName: 'Title + body' },
+  { layoutObjectId: 'g3cae6f62d46_1_3610', name: 'TWO_COLUMNS', displayName: 'Two-column body' },
   { layoutObjectId: 'g3cae6f62d46_1_3575', name: 'CLOSING', displayName: 'Title + subtitle' },
   { layoutObjectId: 'other', name: 'OTHER', bestFitIntents: ['quote', 'image-hero'] },
 ];
