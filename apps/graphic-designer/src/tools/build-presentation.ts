@@ -46,8 +46,17 @@ interface ProjectRow {
   name: string;
 }
 
+interface OutlineContent {
+  intent?: string;
+  title?: string;
+  subtitle?: string;
+  body?: string[];
+  speakerNotes?: string;
+}
+
 interface PresentationMetadata {
   plan: PlannedSlide[];
+  outline?: OutlineContent[];
   googleSlidesId: string;
 }
 
@@ -88,11 +97,42 @@ export async function buildPresentation(
 
   const project = await loadProject(env.DB, userId, args.planId);
   const metadata = parseMetadata(project.metadata);
-  const { plan, googleSlidesId } = metadata;
+  const { plan, googleSlidesId, outline } = metadata;
 
   if (plan.length === 0) {
     throw new AgentError(`Plan ${args.planId} has no slides.`, { code: 'invalid_input' });
   }
+
+  // Merge content: prefer the plan's fields, fall back to the stored outline
+  // at the same index. If the plan was serialized before we started emitting
+  // explicit empty-string defaults, its title/body/etc may be missing while
+  // the outline still has them.
+  const resolved: PlannedSlide[] = plan.map((p, i) => {
+    const o = outline?.[i] ?? {};
+    return {
+      ...p,
+      title: p.title || o.title,
+      subtitle: p.subtitle || o.subtitle,
+      body: p.body && p.body.length > 0 ? p.body : o.body,
+      speakerNotes: p.speakerNotes || o.speakerNotes,
+    };
+  });
+
+  logger.info('plan.loaded', {
+    planId: args.planId,
+    slideCount: resolved.length,
+    hasOutlineFallback: Array.isArray(outline),
+    perSlide: resolved.map((s, i) => ({
+      index: i,
+      intent: s.intent,
+      layoutObjectId: s.layoutObjectId,
+      layoutStrategy: s.layoutStrategy,
+      titleLen: s.title?.length ?? 0,
+      subtitleLen: s.subtitle?.length ?? 0,
+      bodyCount: s.body?.length ?? 0,
+      notesLen: s.speakerNotes?.length ?? 0,
+    })),
+  });
 
   const google = new GoogleClient({ env, userId });
 
@@ -339,8 +379,8 @@ export async function buildPresentation(
     actions: string[];
   }> = [];
 
-  for (let i = 0; i < plan.length; i++) {
-    const entry = plan[i]!;
+  for (let i = 0; i < resolved.length; i++) {
+    const entry = resolved[i]!;
     const slideObjectId = slideIdFor(i);
     const slide = slidesById.get(slideObjectId);
     if (!slide) {
@@ -804,7 +844,12 @@ function parseMetadata(raw: string | null): PresentationMetadata {
       { code: 'invalid_input' },
     );
   }
-  return { plan: obj.plan as PlannedSlide[], googleSlidesId: obj.googleSlidesId };
+  const outline = Array.isArray(obj.outline) ? (obj.outline as OutlineContent[]) : undefined;
+  return {
+    plan: obj.plan as PlannedSlide[],
+    outline,
+    googleSlidesId: obj.googleSlidesId,
+  };
 }
 
 function truncate(s: string, n = 40): string {
