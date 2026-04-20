@@ -413,9 +413,12 @@ export async function buildPresentation(
         const titleId = findTitlePlaceholder(placeholders);
         if (titleId) {
           textRequests.push({ insertText: { objectId: titleId, text: entry.title, insertionIndex: 0 } });
-          // Enable TEXT_AUTOFIT so long titles shrink to fit the placeholder
-          // instead of overflowing into body copy below.
-          textRequests.push(autofitRequest(titleId));
+          // Cap title font size on body-style slides so long titles don't
+          // overflow into the content area. Title and closing slides keep
+          // the layout's native (larger) size since they're the whole point.
+          if (entry.intent !== 'title-slide' && entry.intent !== 'closing') {
+            textRequests.push(capTitleFontRequest(titleId));
+          }
           actions.push(`title→${titleId}`);
         } else {
           warnings.push(`Slide ${i + 1}: no TITLE placeholder; skipped title "${truncate(entry.title)}".`);
@@ -859,14 +862,18 @@ function truncate(s: string, n = 40): string {
   return s.length > n ? `${s.slice(0, n)}…` : s;
 }
 
-// TEXT_AUTOFIT shrinks text that overflows the shape's bounds — prevents long
-// titles from bleeding into the body area on non-title-slide layouts.
-function autofitRequest(objectId: string): Record<string, unknown> {
+// The Slides API rejects autofitType: TEXT_AUTOFIT with "Autofit types other
+// than NONE are not supported", so we cap title font size directly instead.
+// 36pt fits a ~2-line title comfortably in the Gong layout's title bounds.
+const TITLE_FONT_CAP_PT = 36;
+
+function capTitleFontRequest(objectId: string): Record<string, unknown> {
   return {
-    updateShapeProperties: {
+    updateTextStyle: {
       objectId,
-      shapeProperties: { autofit: { autofitType: 'TEXT_AUTOFIT' } },
-      fields: 'autofit.autofitType',
+      style: { fontSize: { magnitude: TITLE_FONT_CAP_PT, unit: 'PT' } },
+      textRange: { type: 'ALL' },
+      fields: 'fontSize',
     },
   };
 }
