@@ -152,6 +152,30 @@ export async function buildPresentation(
     if (masterId) layoutToMaster.set(l.objectId, masterId);
   }
 
+  // Map each layout's placeholder shapes so we can pass placeholderIdMappings
+  // to createSlide. WITHOUT these mappings, inherited placeholders exist on
+  // the new slide conceptually but aren't addressable via insertText — which
+  // is why every slide was coming out blank.
+  interface LayoutPlaceholder {
+    layoutPlaceholderObjectId: string;
+    type: string;
+    index: number;
+  }
+  const layoutToPlaceholders = new Map<string, LayoutPlaceholder[]>();
+  for (const l of initial.layouts ?? []) {
+    const phs: LayoutPlaceholder[] = [];
+    for (const el of l.pageElements ?? []) {
+      const ph = el.shape?.placeholder;
+      if (!ph?.type) continue;
+      phs.push({
+        layoutPlaceholderObjectId: el.objectId,
+        type: ph.type,
+        index: ph.index ?? 0,
+      });
+    }
+    layoutToPlaceholders.set(l.objectId, phs);
+  }
+
   logger.info('build.copy.inspected', {
     newPresentationId,
     slidesInCopy: existingSlideIds.length,
@@ -173,9 +197,20 @@ export async function buildPresentation(
   // By creating first (while old slides still hold references to the layouts)
   // and deleting in a second batch, we avoid that GC window entirely.
   const slideIdFor = (i: number) => `gdslide_${i}`;
+  const placeholderIdFor = (i: number, layoutPhId: string) =>
+    // Keep combined length under Slides' 50-char objectId limit.
+    `gdph${i}_${layoutPhId}`.slice(0, 50);
 
   // Track which slides will end up BLANK because their layout was missing.
   const blankSlides = new Set<number>();
+
+  // Per-slide map of placeholder type → objectId we assigned via
+  // placeholderIdMappings. This is our source of truth for the text-insert
+  // batch — no need to re-fetch + scan pageElements.
+  const slidePlaceholdersByIndex = new Map<
+    number,
+    Array<{ objectId: string; type: string; index: number }>
+  >();
 
   const slideDecisions: Array<{
     index: number;
@@ -184,6 +219,7 @@ export async function buildPresentation(
     decision: 'layout' | 'blank';
     layoutIdSent: string | null;
     masterIdSent: string | null;
+    placeholderMappingsSent: number;
   }> = [];
 
   const createRequests: Record<string, unknown>[] = [];
@@ -208,11 +244,27 @@ export async function buildPresentation(
     }
 
     if (useLayoutId) {
+      const layoutPhs = layoutToPlaceholders.get(useLayoutId) ?? [];
+      const placeholderIdMappings = layoutPhs.map((lp) => ({
+        layoutPlaceholder: { type: lp.type, index: lp.index },
+        objectId: placeholderIdFor(i, lp.layoutPlaceholderObjectId),
+      }));
+
+      slidePlaceholdersByIndex.set(
+        i,
+        layoutPhs.map((lp) => ({
+          objectId: placeholderIdFor(i, lp.layoutPlaceholderObjectId),
+          type: lp.type,
+          index: lp.index,
+        })),
+      );
+
       createRequests.push({
         createSlide: {
           objectId: slideObjectId,
           insertionIndex: i,
           slideLayoutReference: { layoutId: useLayoutId },
+          placeholderIdMappings,
         },
       });
       slideDecisions.push({
@@ -222,6 +274,7 @@ export async function buildPresentation(
         decision: 'layout',
         layoutIdSent: useLayoutId,
         masterIdSent: masterForLog,
+        placeholderMappingsSent: placeholderIdMappings.length,
       });
     } else {
       blankSlides.add(i);
@@ -239,6 +292,7 @@ export async function buildPresentation(
         decision: 'blank',
         layoutIdSent: null,
         masterIdSent: null,
+        placeholderMappingsSent: 0,
       });
     }
   }
@@ -294,7 +348,15 @@ export async function buildPresentation(
       continue;
     }
 
-    const placeholders = collectPlaceholders(slide, layoutPlaceholdersById);
+    // Prefer the IDs we assigned via placeholderIdMappings in createSlide —
+    // these are authoritative and don't require the API to materialize inherited
+    // placeholders as pageElements. Fall back to scanning pageElements only if
+    // the mapping produced nothing (e.g. layout had no placeholders).
+    const mappedPhs = slidePlaceholdersByIndex.get(i) ?? [];
+    const placeholders: PlaceholderInfo[] =
+      mappedPhs.length > 0
+        ? mappedPhs.map((p) => ({ objectId: p.objectId, type: p.type, index: p.index }))
+        : collectPlaceholders(slide, layoutPlaceholdersById);
     const isBlankFallback = blankSlides.has(i);
     const actions: string[] = [];
 
