@@ -70,15 +70,30 @@ const MCP_TOOLS = [
   {
     name: 'plan_presentation',
     description:
-      'Given a content outline and an analyzed template, propose a slide-by-slide breakdown: story arc, layout per slide, text allocation, image/icon needs, and speaker-notes beats. Returns a reviewable plan for user approval before building.',
+      'Map a slide outline onto an analyzed template. Accepts JSON array, JSON string, or markdown. For each slide, selects the best-fit layout (intent→layoutObjectId map, with per-template best-fit fallback), allocates text to TITLE/SUBTITLE/BODY slots, and records speaker notes. Persists the plan and returns planId for build_presentation.',
     inputSchema: {
       type: 'object',
       properties: {
-        outline: { type: 'string', description: 'Content outline or key points to present.' },
-        templateId: { type: 'string', description: 'Google Slides template ID (must be analyzed first).' },
+        outline: {
+          description:
+            'Slide outline. Either a JSON array of {intent,title,subtitle,body,speakerNotes}, a JSON string of the same, or a markdown document with "---" dividers.',
+          oneOf: [
+            { type: 'string' },
+            { type: 'array', items: { type: 'object' } },
+          ],
+        },
+        templateId: {
+          type: 'string',
+          description: 'Template reference — accepts our tpl_* id or the raw Google Slides presentation ID.',
+        },
         brandId: { type: 'string', description: 'Optional brand_id for style constraints.' },
         audience: { type: 'string', description: 'Who will see this deck (e.g. "investors", "internal team").' },
         goal: { type: 'string', description: 'What the presentation should achieve.' },
+        layoutOverrides: {
+          type: 'object',
+          description: 'Optional per-call override map of intent → layoutObjectId.',
+          additionalProperties: { type: 'string' },
+        },
       },
       required: ['outline', 'templateId'],
       additionalProperties: false,
@@ -87,7 +102,7 @@ const MCP_TOOLS = [
   {
     name: 'build_presentation',
     description:
-      'Execute an approved presentation plan. Duplicates slides from template, populates text (auto-resize/reposition), sources images/icons via search_media, inserts media, writes speaker notes. Returns a Google Drive URL to the finished deck.',
+      'Execute an approved plan against Google Slides: copy the template, delete its slides, create one slide per plan entry from the chosen layoutObjectId (or a BLANK+centered-textbox for big-number), populate TITLE/SUBTITLE/BODY placeholders, write speaker notes, and return the edit URL.',
     inputSchema: {
       type: 'object',
       properties: {
