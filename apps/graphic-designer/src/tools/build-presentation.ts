@@ -192,19 +192,11 @@ export async function buildPresentation(
     const slideObjectId = slideIdFor(i);
 
     let useLayoutId: string | null = null;
-    let useMasterId: string | null = null;
+    let masterForLog: string | null = null;
     if (entry.layoutObjectId) {
       if (availableLayoutIds.has(entry.layoutObjectId)) {
-        const masterId = layoutToMaster.get(entry.layoutObjectId);
-        if (masterId && availableMasterIds.has(masterId)) {
-          useLayoutId = entry.layoutObjectId;
-          useMasterId = masterId;
-        } else {
-          warnings.push(
-            `Slide ${i + 1} (${entry.intent}): layout ${entry.layoutObjectId} has no resolvable master ` +
-              `(masterObjectId=${masterId ?? '<missing>'}) — falling back to predefinedLayout BLANK.`,
-          );
-        }
+        useLayoutId = entry.layoutObjectId;
+        masterForLog = layoutToMaster.get(entry.layoutObjectId) ?? null;
       } else {
         warnings.push(
           `Slide ${i + 1} (${entry.intent}): layout ${entry.layoutObjectId} not present in copied template ` +
@@ -214,12 +206,12 @@ export async function buildPresentation(
       }
     }
 
-    if (useLayoutId && useMasterId) {
+    if (useLayoutId) {
       createRequests.push({
         createSlide: {
           objectId: slideObjectId,
           insertionIndex: i,
-          slideLayoutReference: { masterId: useMasterId, layoutId: useLayoutId },
+          slideLayoutReference: { layoutId: useLayoutId },
         },
       });
       slideDecisions.push({
@@ -228,7 +220,7 @@ export async function buildPresentation(
         plannedLayoutId: entry.layoutObjectId ?? null,
         decision: 'layout',
         layoutIdSent: useLayoutId,
-        masterIdSent: useMasterId,
+        masterIdSent: masterForLog,
       });
     } else {
       blankSlides.add(i);
