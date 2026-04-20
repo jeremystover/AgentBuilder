@@ -408,6 +408,10 @@ export async function buildPresentation(
       textRequests.push(...blankReqs);
       actions.push(`blank-render:${blankReqs.length}`);
     } else {
+      // Track placeholders already claimed by title/subtitle so body
+      // distribution doesn't overwrite them on multi-card layouts.
+      const usedIds = new Set<string>();
+
       // Title
       if (entry.title) {
         const titleId = findTitlePlaceholder(placeholders);
@@ -419,6 +423,7 @@ export async function buildPresentation(
           if (entry.intent !== 'title-slide' && entry.intent !== 'closing') {
             textRequests.push(capTitleFontRequest(titleId));
           }
+          usedIds.add(titleId);
           actions.push(`title→${titleId}`);
         } else {
           warnings.push(`Slide ${i + 1}: no TITLE placeholder; skipped title "${truncate(entry.title)}".`);
@@ -431,6 +436,7 @@ export async function buildPresentation(
         const subId = pickPlaceholder(placeholders, ['SUBTITLE']);
         if (subId) {
           textRequests.push({ insertText: { objectId: subId, text: entry.subtitle, insertionIndex: 0 } });
+          usedIds.add(subId);
           actions.push(`subtitle→${subId}`);
         } else {
           warnings.push(`Slide ${i + 1}: no SUBTITLE placeholder; skipped subtitle "${truncate(entry.subtitle)}".`);
@@ -438,9 +444,12 @@ export async function buildPresentation(
         }
       }
 
-      // Body — distribute across all BODY placeholders (supports two-columns).
+      // Body — distribute across every text-holding placeholder not already
+      // claimed by title/subtitle. Supports multi-card layouts (three-features,
+      // four-columns, etc.) whose per-card text slots show up as SUBTITLE or
+      // OBJECT placeholders rather than a single BODY block.
       if (entry.body && entry.body.length > 0) {
-        const bodyIds = findBodyPlaceholders(placeholders);
+        const bodyIds = findBodyPlaceholders(placeholders, usedIds);
         if (bodyIds.length > 0) {
           const chunks = distribute(entry.body, bodyIds.length);
           for (let c = 0; c < bodyIds.length; c++) {
@@ -452,7 +461,7 @@ export async function buildPresentation(
           }
         } else {
           warnings.push(
-            `Slide ${i + 1}: no BODY placeholder on layout; skipped ${entry.body.length} body item(s).`,
+            `Slide ${i + 1}: no body-capable placeholder on layout; skipped ${entry.body.length} body item(s).`,
           );
           actions.push('body:skip');
         }
@@ -607,13 +616,24 @@ function pickPlaceholder(placeholders: PlaceholderInfo[], types: string[]): stri
 }
 
 // Ordered by desirability: types that typically hold body copy first, then
-// generic text-holding shapes. Lets custom templates still get their body
-// content populated when the placeholder.type is OBJECT or UNSPECIFIED.
-function findBodyPlaceholders(placeholders: PlaceholderInfo[]): string[] {
-  const primary = placeholders.filter((p) => p.type === 'BODY').map((p) => p.objectId);
+// generic text-holding shapes, then SUBTITLE (used per-card in multi-feature
+// layouts like three-features / four-columns). `exclude` contains placeholder
+// IDs already claimed by title/subtitle handlers so body distribution doesn't
+// overwrite them.
+function findBodyPlaceholders(
+  placeholders: PlaceholderInfo[],
+  exclude: Set<string> = new Set(),
+): string[] {
+  const primary = placeholders
+    .filter((p) => p.type === 'BODY' && !exclude.has(p.objectId))
+    .map((p) => p.objectId);
   if (primary.length > 0) return primary;
   const secondary = placeholders
-    .filter((p) => p.type === 'OBJECT' || p.type === 'UNSPECIFIED')
+    .filter(
+      (p) =>
+        !exclude.has(p.objectId) &&
+        (p.type === 'OBJECT' || p.type === 'UNSPECIFIED' || p.type === 'SUBTITLE'),
+    )
     .map((p) => p.objectId);
   return secondary;
 }
