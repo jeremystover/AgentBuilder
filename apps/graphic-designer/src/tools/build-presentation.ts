@@ -109,13 +109,32 @@ export async function buildPresentation(
       { code: 'upstream_failure' },
     );
   }
-  const copied = (await copyRes.json()) as { id: string };
+  const copied = (await copyRes.json()) as { id: string; name?: string; mimeType?: string };
   const newPresentationId = copied.id;
+
+  // Diagnostic: explicitly record that this deck came from drive.files.copy,
+  // not presentations.create, plus the source → target mapping. If these two
+  // IDs are ever equal, or if this line is missing from logs entirely, the
+  // deploy is stale — the fix lives in this path.
+  logger.info('build.copy.success', {
+    method: 'drive.files.copy',
+    sourceTemplateId: googleSlidesId,
+    newPresentationId,
+    name: copied.name,
+    mimeType: copied.mimeType,
+  });
 
   // 2. Fetch copy to discover existing slide IDs + actual layout IDs ----
   const initial = await getPresentation(google, newPresentationId);
   const existingSlideIds = (initial.slides ?? []).map((s) => s.objectId);
   const availableLayoutIds = new Set((initial.layouts ?? []).map((l) => l.objectId));
+
+  logger.info('build.copy.inspected', {
+    newPresentationId,
+    slidesInCopy: existingSlideIds.length,
+    layoutsInCopy: availableLayoutIds.size,
+    sampleLayoutIds: Array.from(availableLayoutIds).slice(0, 5),
+  });
 
   // 3. Batch #1 — delete old slides + create new ones --------------------
   const slideIdFor = (i: number) => `gdslide_${i}`;
