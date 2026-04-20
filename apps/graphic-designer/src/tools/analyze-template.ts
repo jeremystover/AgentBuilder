@@ -249,10 +249,14 @@ by its best-fit content intents. For each layout, produce:
 Return ONLY a JSON array, one object per layout, in the same order as input.
 No prose, no markdown fences.`;
 
+const BATCH_SIZE = 15;
+const MAX_RETRIES = 2;
+
 async function classifyLayouts(
   llm: LLMClient,
   summaries: ReturnType<typeof summarizeLayout>[],
 ): Promise<LayoutAnalysis[]> {
+  const logger = createLogger({ base: { agent: 'graphic-designer', tool: 'classify_layouts' } });
   const input = summaries.map((s, i) => ({
     index: i,
     layoutObjectId: s.layoutObjectId,
@@ -266,27 +270,93 @@ async function classifyLayouts(
     })),
   }));
 
-  const res = await llm.complete({
-    tier: 'default',
-    system: CLASSIFY_SYSTEM,
-    messages: [
-      {
-        role: 'user',
-        content: `Classify these ${input.length} layouts:\n\n${JSON.stringify(input, null, 2)}`,
-      },
-    ],
-  });
+  logger.info('classify.start', { totalLayouts: input.length, batchSize: BATCH_SIZE });
 
-  const parsed = parseLlmArray(res.text);
-  if (!Array.isArray(parsed) || parsed.length !== summaries.length) {
+  const batches = chunkArray(input, BATCH_SIZE);
+  const results: Array<{
+    displayName?: string;
+    bestFitIntents?: string[];
+    textCapacity?: number;
+  }> = [];
+
+  for (let batchIdx = 0; batchIdx < batches.length; batchIdx++) {
+    const batch = batches[batchIdx]!;
+    const batchStart = batchIdx * BATCH_SIZE;
+    let batchResults: Array<{
+      displayName?: string;
+      bestFitIntents?: string[];
+      textCapacity?: number;
+    }> | null = null;
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const res = await llm.complete({
+          tier: 'default',
+          system: CLASSIFY_SYSTEM,
+          messages: [
+            {
+              role: 'user',
+              content: `Classify these ${batch.length} layouts (batch ${batchIdx + 1}/${batches.length}):\n\n${JSON.stringify(batch, null, 2)}`,
+            },
+          ],
+        });
+
+        const parsed = parseLlmArray(res.text);
+        if (!Array.isArray(parsed)) {
+          throw new Error('LLM returned non-array response');
+        }
+        if (parsed.length !== batch.length) {
+          throw new Error(
+            `Batch ${batchIdx + 1}: expected ${batch.length} results, got ${parsed.length}`,
+          );
+        }
+
+        batchResults = parsed as Array<{
+          displayName?: string;
+          bestFitIntents?: string[];
+          textCapacity?: number;
+        }>;
+
+        logger.info('classify.batch.ok', {
+          batchIndex: batchIdx,
+          batchSize: batch.length,
+          attempt,
+        });
+        break;
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        logger.warn('classify.batch.retry', {
+          batchIndex: batchIdx,
+          attempt,
+          error: lastError.message,
+        });
+
+        if (attempt === MAX_RETRIES) {
+          throw new AgentError(
+            `Layout batch ${batchIdx + 1} classification failed after ${MAX_RETRIES + 1} attempts: ${lastError.message}`,
+            { code: 'tool_failure' },
+          );
+        }
+      }
+    }
+
+    if (batchResults) {
+      results.push(...batchResults);
+    }
+  }
+
+  if (results.length !== summaries.length) {
     throw new AgentError(
-      `Layout classifier returned ${Array.isArray(parsed) ? parsed.length : 'non-array'} results for ${summaries.length} layouts.`,
+      `Classification returned ${results.length} results for ${summaries.length} layouts.`,
       { code: 'tool_failure' },
     );
   }
 
+  logger.info('classify.complete', { totalLayouts: results.length });
+
   return summaries.map((s, i) => {
-    const c = parsed[i] as {
+    const c = results[i] as {
       displayName?: string;
       bestFitIntents?: string[];
       textCapacity?: number;
@@ -303,6 +373,14 @@ async function classifyLayouts(
   });
 }
 
+function chunkArray<T>(arr: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) {
+    chunks.push(arr.slice(i, i + size));
+  }
+  return chunks;
+}
+
 function sumTextCapacity(slots: SlotDescriptor[]): number {
   return slots.reduce((acc, slot) => acc + slot.textCapacity, 0);
 }
@@ -312,11 +390,17 @@ function parseLlmArray(text: string): unknown {
   const firstBracket = trimmed.indexOf('[');
   const lastBracket = trimmed.lastIndexOf(']');
   if (firstBracket === -1 || lastBracket === -1) {
-    throw new AgentError('Classifier response did not contain a JSON array.', {
-      code: 'tool_failure',
-    });
+    throw new Error('Classifier response did not contain a JSON array.');
   }
-  return JSON.parse(trimmed.slice(firstBracket, lastBracket + 1));
+
+  const jsonSlice = trimmed.slice(firstBracket, lastBracket + 1);
+  try {
+    return JSON.parse(jsonSlice);
+  } catch (err) {
+    throw new Error(
+      `Failed to parse JSON array at position ${firstBracket}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 }
 
 // ── Upsert helpers ──────────────────────────────────────────────────────────
