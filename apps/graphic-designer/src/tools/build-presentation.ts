@@ -413,6 +413,9 @@ export async function buildPresentation(
         const titleId = findTitlePlaceholder(placeholders);
         if (titleId) {
           textRequests.push({ insertText: { objectId: titleId, text: entry.title, insertionIndex: 0 } });
+          // Enable TEXT_AUTOFIT so long titles shrink to fit the placeholder
+          // instead of overflowing into body copy below.
+          textRequests.push(autofitRequest(titleId));
           actions.push(`title→${titleId}`);
         } else {
           warnings.push(`Slide ${i + 1}: no TITLE placeholder; skipped title "${truncate(entry.title)}".`);
@@ -854,4 +857,16 @@ function parseMetadata(raw: string | null): PresentationMetadata {
 
 function truncate(s: string, n = 40): string {
   return s.length > n ? `${s.slice(0, n)}…` : s;
+}
+
+// TEXT_AUTOFIT shrinks text that overflows the shape's bounds — prevents long
+// titles from bleeding into the body area on non-title-slide layouts.
+function autofitRequest(objectId: string): Record<string, unknown> {
+  return {
+    updateShapeProperties: {
+      objectId,
+      shapeProperties: { autofit: { autofitType: 'TEXT_AUTOFIT' } },
+      fields: 'autofit.autofitType',
+    },
+  };
 }
