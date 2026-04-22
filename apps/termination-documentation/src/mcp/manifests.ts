@@ -94,11 +94,20 @@ export const MCP_TOOLS = [
   {
     name: 'build_evidence_plan',
     description:
-      'Seed or extend the evidence checklist from the curated CA + federal catalog based on the suspected claim types. Catalog items carry default signal flags on collection where applicable. Does not touch Google Drive in this build.',
+      'Seed or extend the evidence checklist from the curated CA + federal catalog based on the suspected claim types. When create_drive_folder=true and user_id is provided, also creates the Drive case folder and category subfolders. Catalog items carry default signal flags on collection where applicable.',
     inputSchema: {
       type: 'object',
       properties: {
         reseed: { type: 'boolean', default: false },
+        create_drive_folder: {
+          type: 'boolean',
+          default: true,
+          description: 'Attempt to create / reuse the Drive case folder and category subfolders. Set false to skip Google integration entirely.',
+        },
+        user_id: {
+          type: 'string',
+          description: 'User identifier for Google OAuth token lookup. Required when create_drive_folder=true.',
+        },
       },
       additionalProperties: false,
     },
@@ -246,7 +255,7 @@ export const MCP_TOOLS = [
   {
     name: 'draft_memo',
     description:
-      'Generate a markdown memo. Two variants: `negotiation` (1–2 page factual leverage summary for severance negotiation / HR) or `counsel` (full evidence file with chronology, top-N, and gap report for attorney review). No legal conclusions — facts only.',
+      'Generate a markdown memo. Two variants: `negotiation` (1–2 page factual leverage summary for severance negotiation / HR) or `counsel` (full evidence file with chronology, top-N, and gap report for attorney review). No legal conclusions — facts only. When write_to_docs=true and user_id is provided, also writes the memo to Google Docs.',
     inputSchema: {
       type: 'object',
       required: ['type'],
@@ -255,6 +264,74 @@ export const MCP_TOOLS = [
         include_top_n: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
         include_chronology: { type: 'boolean' },
         include_gap_report: { type: 'boolean' },
+        write_to_docs: {
+          type: 'boolean',
+          default: false,
+          description: 'Write the rendered markdown to a Google Doc and track its id in state.',
+        },
+        user_id: {
+          type: 'string',
+          description: 'User identifier for Google OAuth token lookup. Required when write_to_docs=true.',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'ingest_upload',
+    description:
+      "Ingest a base64-encoded file from the user (e.g. Claude.ai file upload), file it into the correct Drive category subfolder, and mark the matching checklist item collected with full evidence-index metadata. Requires lawful_to_possess_confirmation=true so the user affirms the file is theirs (own reviews/comms/pay/notes), not privileged, not an investigation record, not another employee's data, and not trade-secret material. If Drive isn't configured, the checklist entry is still saved locally.",
+    inputSchema: {
+      type: 'object',
+      required: [
+        'user_id',
+        'file_name',
+        'mime_type',
+        'content_base64',
+        'category',
+        'lawful_to_possess_confirmation',
+      ],
+      properties: {
+        user_id: { type: 'string' },
+        file_name: { type: 'string', maxLength: 255 },
+        mime_type: { type: 'string' },
+        content_base64: { type: 'string', minLength: 1 },
+        category: { type: 'string', enum: ALL_CATEGORIES },
+        checklist_item_id: {
+          type: 'string',
+          description: 'If omitted, a new custom checklist item is created with `description`.',
+        },
+        description: { type: 'string' },
+        source_type: { type: 'string', enum: ALL_SOURCE_TYPES },
+        date_created: { type: 'string' },
+        date_event: { type: 'string' },
+        author: {
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+            role: { type: 'string' },
+            is_decisionmaker: { type: 'boolean' },
+          },
+          additionalProperties: false,
+        },
+        recipients: { type: 'array', items: { type: 'string' } },
+        exact_quotes: { type: 'array', items: { type: 'string' } },
+        why_it_matters: { type: 'string' },
+        claim_tags: { type: 'array', items: { type: 'string', enum: ALL_CLAIM_TYPES } },
+        scores: {
+          type: 'object',
+          properties: {
+            relevance: { type: 'integer', minimum: 1, maximum: 5 },
+            reliability: { type: 'integer', minimum: 1, maximum: 5 },
+            timing_proximity: { type: 'integer', minimum: 1, maximum: 5 },
+            confidentiality_risk: { type: 'integer', minimum: 1, maximum: 5 },
+          },
+          additionalProperties: false,
+        },
+        preserve_original: { type: 'boolean' },
+        authenticity_notes: { type: 'string' },
+        signal_flags: { type: 'array', items: { type: 'string', enum: ALL_SIGNAL_FLAGS } },
+        lawful_to_possess_confirmation: { type: 'boolean' },
       },
       additionalProperties: false,
     },

@@ -11,6 +11,7 @@ import { chronology, type ChronologyInput } from './mcp/tools/chronology.js';
 import { generateTopPacket, type GenerateTopPacketInput } from './mcp/tools/generate_top_packet.js';
 import { gapReport, type GapReportInput } from './mcp/tools/gap_report.js';
 import { draftMemo, type DraftMemoInput } from './mcp/tools/draft_memo.js';
+import { ingestUpload, type IngestUploadInput } from './mcp/tools/ingest_upload.js';
 
 const SYSTEM_PROMPT = `You are Termination Documentation.
 
@@ -132,9 +133,10 @@ export class TerminationDocumentationDO extends DurableObject<Env> {
           return json({ ok: true, result: output } satisfies ToolCallResponse);
         }
         case 'build_evidence_plan': {
-          const { state: next, output } = buildEvidencePlan(
+          const { state: next, output } = await buildEvidencePlan(
             state,
             body.args as BuildEvidencePlanInput,
+            this.env,
           );
           await saveCaseState(this.ctx.storage, next);
           return json({ ok: true, result: output } satisfies ToolCallResponse);
@@ -165,7 +167,23 @@ export class TerminationDocumentationDO extends DurableObject<Env> {
           return json({ ok: true, result: output } satisfies ToolCallResponse);
         }
         case 'draft_memo': {
-          const output = draftMemo(state, body.args as unknown as DraftMemoInput);
+          const { state: next, output } = await draftMemo(
+            state,
+            body.args as unknown as DraftMemoInput,
+            this.env,
+          );
+          if (output.doc_status === 'written') {
+            await saveCaseState(this.ctx.storage, next);
+          }
+          return json({ ok: true, result: output } satisfies ToolCallResponse);
+        }
+        case 'ingest_upload': {
+          const { state: next, output } = await ingestUpload(
+            state,
+            body.args as unknown as IngestUploadInput,
+            this.env,
+          );
+          await saveCaseState(this.ctx.storage, next);
           return json({ ok: true, result: output } satisfies ToolCallResponse);
         }
         default:

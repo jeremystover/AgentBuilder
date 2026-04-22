@@ -501,22 +501,24 @@
       "skills": [
         "intake-interview",
         "evidence-plan",
-        "inventory-interview",
         "checklist-tracking",
+        "chronology",
         "upload-ingestion",
         "drive-organization",
-        "evidence-memo-drafting",
-        "exit-playbook"
+        "top-packet-ranking",
+        "gap-analysis",
+        "memo-drafting"
       ],
       "tools": [
         "intake_interview",
         "build_evidence_plan",
-        "inventory_interview",
         "update_checklist",
-        "ingest_upload",
-        "draft_evidence_memo",
-        "exit_playbook",
-        "status"
+        "status",
+        "chronology",
+        "generate_top_packet",
+        "gap_report",
+        "draft_memo",
+        "ingest_upload"
       ],
       "mcpServers": [],
       "sharedPackages": [

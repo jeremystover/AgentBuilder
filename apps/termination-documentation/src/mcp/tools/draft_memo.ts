@@ -5,6 +5,9 @@ import type {
   ChronologyEvent,
   ClaimType,
 } from '../../lib/case-state.js';
+import { createDoc, docUrl, setDocBody } from '../../lib/google/docs.js';
+import { resolveGoogleAccessToken } from '../../lib/google/token-resolver.js';
+import type { Env } from '../../../worker-configuration';
 import { generateTopPacket } from './generate_top_packet.js';
 import { gapReport } from './gap_report.js';
 
@@ -18,12 +21,20 @@ export interface DraftMemoInput {
   include_chronology?: boolean;
   /** Include the gap report. Default false for negotiation, true for counsel. */
   include_gap_report?: boolean;
+  /** Also write the memo to Google Docs. Requires user_id and configured OAuth. */
+  write_to_docs?: boolean;
+  /** User identifier for Google OAuth token lookup when write_to_docs=true. */
+  user_id?: string;
 }
 
 export interface DraftMemoOutput {
   markdown: string;
   word_count: number;
   sections_included: string[];
+  doc_id: string | null;
+  doc_url: string | null;
+  doc_status: 'written' | 'skipped' | 'error';
+  doc_error?: string;
   notes_to_user: string[];
 }
 
@@ -51,7 +62,11 @@ const CLAIM_LABELS: Record<ClaimType, string> = {
   other: 'Other (specify with counsel)',
 };
 
-export function draftMemo(state: CaseState, input: DraftMemoInput): DraftMemoOutput {
+export async function draftMemo(
+  state: CaseState,
+  input: DraftMemoInput,
+  env: Env,
+): Promise<{ state: CaseState; output: DraftMemoOutput }> {
   const type = input.type;
   const includeChronology = input.include_chronology ?? type === 'counsel';
   const includeGaps = input.include_gap_report ?? type === 'counsel';
@@ -118,12 +133,72 @@ export function draftMemo(state: CaseState, input: DraftMemoInput): DraftMemoOut
     'Before sharing this memo: verify every date, quote, and name; confirm no privileged material was inadvertently included; preserve originals separately.',
   );
 
+  // ── Optional: write to Google Docs ──────────────────────────────────────
+  let docId: string | null = null;
+  let docUrlStr: string | null = null;
+  let docStatus: DraftMemoOutput['doc_status'] = 'skipped';
+  let docError: string | undefined;
+  let nextState = state;
+
+  if (input.write_to_docs) {
+    if (!input.user_id) {
+      notes.push('write_to_docs skipped — user_id is required to look up the Google OAuth token.');
+    } else {
+      const tok = await resolveGoogleAccessToken(env, input.user_id);
+      if (!tok.ok) {
+        notes.push(`write_to_docs skipped — ${tok.reason}`);
+      } else {
+        try {
+          const title = memoDocTitle(state.profile, type);
+          // Reuse existing doc if one already exists, else create fresh.
+          const existingId = state.memo.docId;
+          if (existingId) {
+            await setDocBody(tok.token, existingId, markdown);
+            docId = existingId;
+          } else {
+            const doc = await createDoc(tok.token, title);
+            await setDocBody(tok.token, doc.documentId, markdown);
+            docId = doc.documentId;
+          }
+          docUrlStr = docUrl(docId);
+          docStatus = 'written';
+          nextState = {
+            ...state,
+            memo: {
+              docId,
+              lastUpdatedAt: new Date().toISOString(),
+            },
+          };
+          notes.push(`Memo written to Google Docs: ${docUrlStr}`);
+        } catch (err) {
+          docStatus = 'error';
+          docError = err instanceof Error ? err.message : String(err);
+          notes.push(`Google Docs write failed: ${docError}`);
+        }
+      }
+    }
+  }
+
   return {
-    markdown,
-    word_count: wordCount,
-    sections_included: sections,
-    notes_to_user: notes,
+    state: nextState,
+    output: {
+      markdown,
+      word_count: wordCount,
+      sections_included: sections,
+      doc_id: docId,
+      doc_url: docUrlStr,
+      doc_status: docStatus,
+      doc_error: docError,
+      notes_to_user: notes,
+    },
   };
+}
+
+function memoDocTitle(profile: CaseProfile, type: MemoType): string {
+  const employer = profile.employer.name ?? 'employer-unknown';
+  const end = profile.employee.endDate?.slice(0, 10) ?? 'pending';
+  const label = type === 'negotiation' ? 'Negotiation Memo' : 'Counsel Packet';
+  return `Termination ${label} — ${employer} — ${end}`;
 }
 
 // ── Sections ────────────────────────────────────────────────────────────────
