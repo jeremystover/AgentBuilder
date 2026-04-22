@@ -1,6 +1,6 @@
 {
   "$schemaVersion": 1,
-  "updatedAt": "2026-04-18T02:34:34.887Z",
+  "updatedAt": "2026-04-22T14:31:51.184Z",
   "agents": [
     {
       "id": "agent-builder",
@@ -487,6 +487,91 @@
           "Persistent article/knowledge ingestion (that's Research Agent)",
           "Dynamic web apps with backends — this builds static Cloudflare Pages sites only",
           "Guest booking or property management (that's Guest Booking)"
+        ]
+      },
+      "version": "0.0.1"
+    },
+    {
+      "id": "termination-documentation",
+      "name": "Termination Documentation",
+      "purpose": "Guides a California employee through documenting a possible wrongful-termination or hostile-workplace claim: interviews the user, builds an evidence checklist grounded in US and California employment law, tracks collection, ingests Claude.ai file uploads into an organized Google Drive folder, drafts a Google Docs evidence memo for counsel or HR, and walks through a 24-hour company-exit checklist.",
+      "owner": "jeremystover",
+      "status": "draft",
+      "kind": "headless",
+      "skills": [
+        "intake-interview",
+        "evidence-plan",
+        "inventory-interview",
+        "checklist-tracking",
+        "upload-ingestion",
+        "drive-organization",
+        "evidence-memo-drafting",
+        "exit-playbook"
+      ],
+      "tools": [
+        "intake_interview",
+        "build_evidence_plan",
+        "inventory_interview",
+        "update_checklist",
+        "ingest_upload",
+        "draft_evidence_memo",
+        "exit_playbook",
+        "status"
+      ],
+      "mcpServers": [],
+      "sharedPackages": [
+        "@agentbuilder/core",
+        "@agentbuilder/llm",
+        "@agentbuilder/auth-google"
+      ],
+      "oauthScopes": [
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/documents"
+      ],
+      "cloudflare": {
+        "workerName": "termination-documentation",
+        "durableObjects": [
+          "TerminationDocumentationDO"
+        ],
+        "d1": [],
+        "kv": [],
+        "r2": [],
+        "queues": [],
+        "hasAssets": false
+      },
+      "routing": {
+        "triggerPhrases": [
+          "wrongful termination",
+          "document my termination",
+          "I was fired",
+          "I'm being laid off",
+          "hostile workplace documentation",
+          "severance negotiation evidence",
+          "build an evidence checklist",
+          "organize my termination case",
+          "24 hours with my work laptop",
+          "company exit checklist"
+        ],
+        "examples": [
+          "I think I'm about to be laid off in California — help me document it",
+          "Interview me about my situation and build a wrongful-termination evidence plan",
+          "I was fired after reporting harassment — what should I collect?",
+          "I'm uploading my offer letter, reviews, and Slack exports — file them in my case folder",
+          "Draft an evidence memo I can share with my employment lawyer",
+          "I have 24 hours with my work laptop — walk me through what to grab and what to leave",
+          "What's still missing from my evidence packet?"
+        ],
+        "nonGoals": [
+          "Giving legal advice, predicting claim outcomes, or representing the user",
+          "Filing DFEH/CRD or EEOC charges, or sending demand letters on the user's behalf",
+          "Negotiating severance or drafting settlement demands",
+          "Advising the user to remove employer-confidential or trade-secret material from company systems",
+          "Contacting witnesses, coworkers, HR, or employer counsel on the user's behalf",
+          "Personal productivity, calendar, tasks, or stakeholder management (that's Chief of Staff)",
+          "Severance tax planning, 401(k) rollover modeling, or bookkeeping (that's CFO)",
+          "Persistent article ingestion or research-corpus search (that's Research Agent)",
+          "Building or modifying other agents (that's Agent Builder)",
+          "Employment law outside California / US federal law"
         ]
       },
       "version": "0.0.1"
