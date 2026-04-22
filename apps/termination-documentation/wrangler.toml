@@ -21,6 +21,21 @@ binding = "AI"
 # database_id = "REPLACE_WITH_DB_ID"
 #
 # Required secrets (set via `wrangler secret put <NAME> --name termination-documentation`):
-#   MCP_HTTP_KEY           — bearer token Claude.ai sends to /mcp
-#   ANTHROPIC_API_KEY      — for the /chat passthrough LLM calls
-#   GOOGLE_TOKEN_VAULT_KEK — base64 AES-256 KEK (same value used by other Google-touching agents)
+#   MCP_HTTP_KEY                 — bearer token Claude.ai sends to /mcp
+#   ANTHROPIC_API_KEY            — for the /chat passthrough LLM calls
+#   GOOGLE_TOKEN_VAULT_KEK       — base64 AES-256 KEK (same value used by other Google-touching agents)
+#   GOOGLE_OAUTH_CLIENT_ID       — OAuth 2.0 client id for consent flow
+#   GOOGLE_OAUTH_CLIENT_SECRET   — OAuth 2.0 client secret
+#   OAUTH_STATE_SECRET           — optional; state-param HMAC secret. Falls back to MCP_HTTP_KEY.
+#
+# One-time setup in Google Cloud Console:
+#   1. Create / reuse an OAuth 2.0 Client ID of type "Web application".
+#   2. Add the Worker's callback URL to "Authorized redirect URIs":
+#        https://termination-documentation.<your-subdomain>.workers.dev/oauth/google/callback
+#   3. On the OAuth consent screen, ensure Drive + Docs scopes are enabled
+#      (https://www.googleapis.com/auth/drive, https://www.googleapis.com/auth/documents).
+#
+# Per-user consent (once per end user):
+#   Open https://termination-documentation.<subdomain>.workers.dev/oauth/google/start?user_id=<stable-id>
+#   The user completes Google consent and returns to the callback page. Tokens
+#   are stored in the shared D1 vault keyed by (agentId='termination-documentation', userId).

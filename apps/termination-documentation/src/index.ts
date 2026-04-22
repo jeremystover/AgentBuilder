@@ -18,6 +18,7 @@
 
 import type { Env } from '../worker-configuration';
 import { MCP_TOOLS } from './mcp/manifests.js';
+import { handleOAuthCallback, handleOAuthStart } from './oauth-routes.js';
 export { TerminationDocumentationDO } from './durable-object.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -197,6 +198,14 @@ export default {
       const doKey = sessionId ?? crypto.randomUUID();
       const stub = env.AGENT_DO.get(env.AGENT_DO.idFromName(doKey));
       return stub.fetch(request);
+    }
+
+    // OAuth consent entry + callback (no MCP auth; Google calls the callback)
+    if (url.pathname === '/oauth/google/start' && request.method === 'GET') {
+      return handleOAuthStart(request, env);
+    }
+    if (url.pathname === '/oauth/google/callback' && request.method === 'GET') {
+      return handleOAuthCallback(request, env);
     }
 
     // MCP /mcp for Claude custom tool integration
