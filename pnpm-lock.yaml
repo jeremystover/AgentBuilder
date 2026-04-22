@@ -158,6 +158,28 @@ importers:
         specifier: ^4.83.0
         version: 4.83.0(@cloudflare/workers-types@4.20260413.1)
 
+  apps/termination-documentation:
+    dependencies:
+      '@agentbuilder/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@agentbuilder/llm':
+        specifier: workspace:*
+        version: link:../../packages/llm
+      agents:
+        specifier: ^0.0.95
+        version: 0.0.95(@cloudflare/workers-types@4.20260413.1)(react@19.2.5)
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20250410.0
+        version: 4.20260413.1
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      wrangler:
+        specifier: ^3.90.0
+        version: 3.114.17(@cloudflare/workers-types@4.20260413.1)
+
   packages/auth-github:
     dependencies:
       '@agentbuilder/core':
