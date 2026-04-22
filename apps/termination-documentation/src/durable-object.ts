@@ -7,6 +7,10 @@ import { intakeInterview, type IntakeInterviewInput } from './mcp/tools/intake_i
 import { buildEvidencePlan, type BuildEvidencePlanInput } from './mcp/tools/build_evidence_plan.js';
 import { updateChecklist, type UpdateChecklistInput } from './mcp/tools/update_checklist.js';
 import { status, type StatusInput } from './mcp/tools/status.js';
+import { chronology, type ChronologyInput } from './mcp/tools/chronology.js';
+import { generateTopPacket, type GenerateTopPacketInput } from './mcp/tools/generate_top_packet.js';
+import { gapReport, type GapReportInput } from './mcp/tools/gap_report.js';
+import { draftMemo, type DraftMemoInput } from './mcp/tools/draft_memo.js';
 
 const SYSTEM_PROMPT = `You are Termination Documentation.
 
@@ -145,6 +149,23 @@ export class TerminationDocumentationDO extends DurableObject<Env> {
         }
         case 'status': {
           const output = status(state, body.args as StatusInput);
+          return json({ ok: true, result: output } satisfies ToolCallResponse);
+        }
+        case 'chronology': {
+          const { state: next, output } = chronology(state, body.args as unknown as ChronologyInput);
+          await saveCaseState(this.ctx.storage, next);
+          return json({ ok: true, result: output } satisfies ToolCallResponse);
+        }
+        case 'generate_top_packet': {
+          const output = generateTopPacket(state, body.args as GenerateTopPacketInput);
+          return json({ ok: true, result: output } satisfies ToolCallResponse);
+        }
+        case 'gap_report': {
+          const output = gapReport(state, body.args as GapReportInput);
+          return json({ ok: true, result: output } satisfies ToolCallResponse);
+        }
+        case 'draft_memo': {
+          const output = draftMemo(state, body.args as unknown as DraftMemoInput);
           return json({ ok: true, result: output } satisfies ToolCallResponse);
         }
         default:

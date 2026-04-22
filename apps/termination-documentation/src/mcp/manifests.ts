@@ -183,4 +183,80 @@ export const MCP_TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'chronology',
+    description:
+      'Manage the master chronology: add / list / update / delete events with date, actors, exact quote, supporting checklist item ids, claim tags, and signal flags. Guidance: "One row per event. Include date, actors, event, exact quote, supporting doc, why it matters."',
+    inputSchema: {
+      type: 'object',
+      required: ['action'],
+      properties: {
+        action: { type: 'string', enum: ['add', 'list', 'update', 'delete'] },
+        id: { type: 'string' },
+        date: {
+          type: 'string',
+          description: 'ISO date (YYYY-MM-DD) or ISO datetime. Required for add.',
+        },
+        actors: { type: 'array', items: { type: 'string' } },
+        event: { type: 'string', description: 'Short factual description. Required for add.' },
+        exact_quote: { type: 'string' },
+        supporting_item_ids: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Checklist item ids that document this event.',
+        },
+        why_it_matters: { type: 'string' },
+        claim_tags: { type: 'array', items: { type: 'string', enum: ALL_CLAIM_TYPES } },
+        signal_flags: { type: 'array', items: { type: 'string', enum: ALL_SIGNAL_FLAGS } },
+        since: { type: 'string', description: 'ISO date filter for list.' },
+        until: { type: 'string', description: 'ISO date filter for list.' },
+        claim_filter: { type: 'array', items: { type: 'string', enum: ALL_CLAIM_TYPES } },
+        signal_flag_filter: { type: 'array', items: { type: 'string', enum: ALL_SIGNAL_FLAGS } },
+        limit: { type: 'integer', minimum: 1, maximum: 500 },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'generate_top_packet',
+    description:
+      'Return the top-N most persuasive exhibits (default 20) ranked by a transparent composite score: relevance*3 + reliability*2 + timing_proximity*2 − confidentiality_risk, +2 per signal flag, +2 decisionmaker author, +1 preserved original, +1 captured exact quotes.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        top_n: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
+        require_collected: { type: 'boolean', default: true },
+        claim_filter: { type: 'array', items: { type: 'string', enum: ALL_CLAIM_TYPES } },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'gap_report',
+    description:
+      'Enumerate missing high-value facts (final decision date, PIP status, ask-to-stay, medical-knowledge timing, shifting reasons, ageist remarks, equity exercise window, arbitration status, replacement identity, interactive-process record, § 1198.5 / § 226(b) requests, COBRA, final-paycheck timing). Returns priority and suggested sources per gap.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        include_low_priority: { type: 'boolean', default: false },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'draft_memo',
+    description:
+      'Generate a markdown memo. Two variants: `negotiation` (1–2 page factual leverage summary for severance negotiation / HR) or `counsel` (full evidence file with chronology, top-N, and gap report for attorney review). No legal conclusions — facts only.',
+    inputSchema: {
+      type: 'object',
+      required: ['type'],
+      properties: {
+        type: { type: 'string', enum: ['negotiation', 'counsel'] },
+        include_top_n: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
+        include_chronology: { type: 'boolean' },
+        include_gap_report: { type: 'boolean' },
+      },
+      additionalProperties: false,
+    },
+  },
 ] as const;

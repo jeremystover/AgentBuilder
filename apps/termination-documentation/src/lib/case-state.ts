@@ -322,9 +322,28 @@ export interface CaseState {
   schemaVersion: 2;
   profile: CaseProfile;
   checklist: ChecklistItem[];
+  chronology: ChronologyEvent[];
   drive: DriveRefs;
   memo: MemoRef;
   exitTasks: ExitTask[];
+}
+
+export interface ChronologyEvent {
+  id: string;
+  /** ISO date (YYYY-MM-DD) or ISO datetime. */
+  date: string;
+  /** People involved: "Jane Manager (VP Eng)", "HRBP Alex Rios", etc. */
+  actors: string[];
+  /** Short factual description of what happened. */
+  event: string;
+  /** Exact words spoken/written, if known. Preserve verbatim. */
+  exactQuote?: string;
+  /** Checklist item ids that document this event. */
+  supportingItemIds: string[];
+  /** One-liner on why this event matters legally. */
+  whyItMatters?: string;
+  claimTags?: ClaimType[];
+  signalFlags?: SignalFlag[];
 }
 
 // ── Load / save / migrate ────────────────────────────────────────────────────
@@ -350,6 +369,7 @@ export function emptyCaseState(): CaseState {
       intakeComplete: false,
     },
     checklist: [],
+    chronology: [],
     drive: { subfolderIds: {} },
     memo: {},
     exitTasks: [],
@@ -381,6 +401,11 @@ export async function saveCaseState(
 /** Stable short id usable as a checklist item id. */
 export function makeChecklistId(): string {
   return `ci_${crypto.randomUUID().slice(0, 8)}`;
+}
+
+/** Stable short id for a chronology event. */
+export function makeChronologyId(): string {
+  return `cev_${crypto.randomUUID().slice(0, 8)}`;
 }
 
 // ── Migration helpers ────────────────────────────────────────────────────────
@@ -502,6 +527,7 @@ function ensureV2Shape(s: CaseState): CaseState {
       suspectedClaims: s.profile.suspectedClaims ?? [],
     },
     checklist: s.checklist ?? [],
+    chronology: s.chronology ?? [],
     drive: s.drive ?? { subfolderIds: {} },
     memo: s.memo ?? {},
     exitTasks: s.exitTasks ?? [],
