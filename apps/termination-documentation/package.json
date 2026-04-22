@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@agentbuilder/auth-google": "workspace:*",
     "@agentbuilder/core": "workspace:*",
     "@agentbuilder/llm": "workspace:*",
     "agents": "^0.0.95"

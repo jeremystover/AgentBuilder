@@ -1,20 +1,24 @@
 /**
  * Termination Documentation — headless agent Worker entrypoint.
  *
- * Purpose: Guides a California employee through documenting a possible wrongful-termination or hostile-workplace claim: interviews the user, builds an evidence checklist grounded in US and California employment law, tracks collection, ingests Claude.ai file uploads into an organized Google Drive folder, drafts a Google Docs evidence memo for counsel or HR, and walks through a 24-hour company-exit checklist.
- *
  * Routes:
  *   GET  /health  → { status: 'ok', agent: 'termination-documentation' }
- *   POST /chat    → { message, sessionId? } (REST, for curl testing)
+ *   POST /chat    → REST chat passthrough (conversational, no tool state)
  *   POST /mcp     → JSON-RPC 2.0 MCP server (Claude custom tool integration)
  *
  * MCP auth: set MCP_HTTP_KEY secret via `wrangler secret put MCP_HTTP_KEY`,
  * then add Authorization: Bearer <MCP_HTTP_KEY> in Claude's connector settings.
  *
+ * State lives in the TerminationDocumentationDO per sessionId. Every MCP
+ * tool call must pass `sessionId` so the same case folder is used across
+ * turns.
+ *
  * See ./SKILL.md for the full persona, tools, and non-goals.
  */
 
 import type { Env } from '../worker-configuration';
+import { MCP_TOOLS } from './mcp/manifests.js';
+import { handleOAuthCallback, handleOAuthStart } from './oauth-routes.js';
 export { TerminationDocumentationDO } from './durable-object.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -41,27 +45,6 @@ function requireAuth(
   return { ok: false, response: jsonResponse({ error: 'Unauthorized' }, 401) };
 }
 
-// ── MCP tool definitions ─────────────────────────────────────────────────────
-// TODO: Replace this stub with your agent's actual tools.
-// Each tool should have: name, description, inputSchema, and be handled
-// in the tools/call branch of handleMcp below.
-
-const MCP_TOOLS = [
-  {
-    name: 'chat',
-    description: 'Guides a California employee through documenting a possible wrongful-termination or hostile-workplace claim: interviews the user, builds an evidence checklist grounded in US and California employment law, tracks collection, ingests Claude.ai file uploads into an organized Google Drive folder, drafts a Google Docs evidence memo for counsel or HR, and walks through a 24-hour company-exit checklist.. Send a message and get a response. Pass sessionId back on follow-up turns.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        message: { type: 'string', description: 'Your message.' },
-        sessionId: { type: 'string', description: 'Session id for conversation continuity. Omit to start new.' },
-      },
-      required: ['message'],
-      additionalProperties: false,
-    },
-  },
-];
-
 // ── JSON-RPC 2.0 MCP handler ─────────────────────────────────────────────────
 
 interface JsonRpcMessage {
@@ -70,6 +53,10 @@ interface JsonRpcMessage {
   method?: string;
   params?: Record<string, unknown>;
 }
+
+const SERVER_INFO = { name: 'termination-documentation', version: '0.2.0' };
+const INSTRUCTIONS =
+  'Helps a California employee document a possible wrongful-termination / retaliation / discrimination / harassment / wage-hour / leave claim. Interviews, builds a tailored evidence checklist, tracks collection. Not legal advice — the user should still retain counsel. Pass a stable `sessionId` argument on every tool call to keep state scoped to the same case.';
 
 async function handleMcp(
   message: JsonRpcMessage,
@@ -89,49 +76,79 @@ async function handleMcp(
       result: {
         protocolVersion: '2024-11-05',
         capabilities: { tools: {} },
-        serverInfo: { name: 'termination-documentation', version: '0.1.0' },
-        instructions: 'Guides a California employee through documenting a possible wrongful-termination or hostile-workplace claim: interviews the user, builds an evidence checklist grounded in US and California employment law, tracks collection, ingests Claude.ai file uploads into an organized Google Drive folder, drafts a Google Docs evidence memo for counsel or HR, and walks through a 24-hour company-exit checklist.',
+        serverInfo: SERVER_INFO,
+        instructions: INSTRUCTIONS,
       },
     };
   }
 
   if (method === 'tools/list') {
-    return { jsonrpc: '2.0', id, result: { tools: MCP_TOOLS } };
+    // Each tool accepts sessionId alongside its declared inputSchema — we
+    // inject it so Claude knows to pass it through without duplicating the
+    // property across every manifest.
+    const tools = MCP_TOOLS.map((t) => ({
+      name: t.name,
+      description: t.description,
+      inputSchema: withSessionId(t.inputSchema),
+    }));
+    return { jsonrpc: '2.0', id, result: { tools } };
   }
 
   if (method === 'tools/call') {
     const name = String(params?.name ?? '');
-    if (name !== 'chat') {
+    const args = (params?.arguments ?? {}) as Record<string, unknown> & { sessionId?: string };
+
+    const knownTool = MCP_TOOLS.find((t) => t.name === name);
+    if (!knownTool) {
       return { jsonrpc: '2.0', id, error: { code: -32601, message: `Unknown tool: ${name}` } };
     }
 
-    const args = (params?.arguments ?? {}) as { message?: string; sessionId?: string };
-    if (!args.message) {
-      return { jsonrpc: '2.0', id, error: { code: -32602, message: '`message` is required' } };
+    const sessionId = typeof args.sessionId === 'string' && args.sessionId.length > 0
+      ? args.sessionId
+      : null;
+    if (!sessionId) {
+      return {
+        jsonrpc: '2.0',
+        id,
+        error: {
+          code: -32602,
+          message:
+            '`sessionId` is required on every tool call so state is scoped to your case. Use a stable id per case (e.g. an email or UUID you keep across turns).',
+        },
+      };
     }
 
-    const doKey = args.sessionId ?? crypto.randomUUID();
-    const doId = env.AGENT_DO.idFromName(doKey);
-    const stub = env.AGENT_DO.get(doId);
+    const { sessionId: _omit, ...toolArgs } = args;
 
-    const doRequest = new Request(originalRequest.url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ message: args.message, sessionId: doKey }),
-    });
+    const stub = env.AGENT_DO.get(env.AGENT_DO.idFromName(sessionId));
+    const toolUrl = new URL(originalRequest.url);
+    toolUrl.pathname = '/tool';
+    const doResponse = await stub.fetch(
+      new Request(toolUrl.toString(), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name, args: toolArgs }),
+      }),
+    );
 
-    const doResponse = await stub.fetch(doRequest);
-    if (!doResponse.ok) {
-      const text = await doResponse.text();
-      return { jsonrpc: '2.0', id, error: { code: -32000, message: text } };
+    const body = (await doResponse.json()) as
+      | { ok: true; result: unknown }
+      | { ok: false; error: string };
+
+    if (!body.ok) {
+      return {
+        jsonrpc: '2.0',
+        id,
+        error: { code: -32000, message: body.error },
+      };
     }
 
-    const result = (await doResponse.json()) as Record<string, unknown>;
     return {
       jsonrpc: '2.0',
       id,
       result: {
-        content: [{ type: 'text', text: JSON.stringify(result) }],
+        content: [{ type: 'text', text: JSON.stringify(body.result, null, 2) }],
+        isError: false,
       },
     };
   }
@@ -139,6 +156,23 @@ async function handleMcp(
   if (method === 'notifications/initialized') return null;
 
   return { jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } };
+}
+
+function withSessionId(schema: unknown): unknown {
+  if (!schema || typeof schema !== 'object') return schema;
+  const base = schema as { type?: string; properties?: Record<string, unknown>; required?: string[]; additionalProperties?: boolean };
+  return {
+    ...base,
+    properties: {
+      sessionId: {
+        type: 'string',
+        description:
+          'Stable id that scopes state to one case. Reuse the same value across every tool call for this user.',
+      },
+      ...(base.properties ?? {}),
+    },
+    required: Array.from(new Set(['sessionId', ...(base.required ?? [])])),
+  };
 }
 
 // ── Worker ───────────────────────────────────────────────────────────────────
@@ -151,7 +185,7 @@ export default {
       return jsonResponse({ status: 'ok', agent: 'termination-documentation' });
     }
 
-    // REST /chat for local testing with curl / chat.sh
+    // REST /chat for local testing with curl / chat.sh. No tool state.
     if (url.pathname === '/chat' && request.method === 'POST') {
       let sessionId: string | null = null;
       const cloned = request.clone();
@@ -164,6 +198,14 @@ export default {
       const doKey = sessionId ?? crypto.randomUUID();
       const stub = env.AGENT_DO.get(env.AGENT_DO.idFromName(doKey));
       return stub.fetch(request);
+    }
+
+    // OAuth consent entry + callback (no MCP auth; Google calls the callback)
+    if (url.pathname === '/oauth/google/start' && request.method === 'GET') {
+      return handleOAuthStart(request, env);
+    }
+    if (url.pathname === '/oauth/google/callback' && request.method === 'GET') {
+      return handleOAuthCallback(request, env);
     }
 
     // MCP /mcp for Claude custom tool integration
