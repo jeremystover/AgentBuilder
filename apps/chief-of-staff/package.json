@@ -11,7 +11,8 @@
     "test": "node --test src/test"
   },
   "dependencies": {
-    "@agentbuilder/llm": "workspace:*"
+    "@agentbuilder/llm": "workspace:*",
+    "@agentbuilder/web-ui-kit": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250410.0",

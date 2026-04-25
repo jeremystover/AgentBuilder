@@ -37,12 +37,7 @@
  *   PUT    /api/briefs/:kind/:periodKey   update brief goalsMd
  */
 
-function jsonResponse(obj, status = 200) {
-  return new Response(JSON.stringify(obj), {
-    status,
-    headers: { "content-type": "application/json; charset=utf-8" },
-  });
-}
+import { jsonResponse, callTool, proposeAndCommit } from "@agentbuilder/web-ui-kit";
 
 function nowIso() {
   return new Date().toISOString();
@@ -96,37 +91,8 @@ function dayKey(d) {
   return startOfDay(d).toISOString().slice(0, 10);
 }
 
-// ── MCP envelope helpers ────────────────────────────────────────────────────
-// Each tool returns { content: [{ type: 'text', text: JSON-or-string }] }.
-// unwrap() pulls out the JSON body (or the text on parse failure).
-
-function unwrap(result) {
-  const text = result?.content?.[0]?.text;
-  if (typeof text !== "string") return result;
-  try { return JSON.parse(text); } catch { return text; }
-}
-
-async function callTool(tools, name, args) {
-  const tool = tools[name];
-  if (!tool) throw new Error(`Tool not registered: ${name}`);
-  const out = await tool.run(args || {});
-  const body = unwrap(out);
-  if (body && typeof body === "object" && body.error) {
-    const e = new Error(body.error);
-    e.toolError = body;
-    throw e;
-  }
-  return body;
-}
-
-// Run propose_* then immediately commit_changeset. Returns commit result.
-async function proposeAndCommit(tools, proposeName, proposeArgs) {
-  const proposed = await callTool(tools, proposeName, proposeArgs);
-  if (!proposed?.changesetId) {
-    throw new Error(`Tool ${proposeName} did not return a changesetId`);
-  }
-  return await callTool(tools, "commit_changeset", { changesetId: proposed.changesetId });
-}
+// callTool / proposeAndCommit / jsonResponse imported from
+// @agentbuilder/web-ui-kit at the top of this file.
 
 // ── Direct sheets reads for "shape the UI" queries ──────────────────────────
 // These reads happen often and the tool layer isn't optimized for them

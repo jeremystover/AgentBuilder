@@ -1,0 +1,36 @@
+/**
+ * web/chat.js — chat sidebar wiring for {{AGENT_NAME}}.
+ *
+ * Supplies the system prompt + curated tool allowlist; the tool-loop
+ * runtime lives in @agentbuilder/web-ui-kit. Keep the allowlist under
+ * ~20 tools for reliable tool selection (AGENTS.md rule 2).
+ */
+
+import { chatHandler } from "@agentbuilder/web-ui-kit";
+
+const SYSTEM_PROMPT = `You are the {{AGENT_NAME}} assistant.
+
+Operating rules:
+- Be concise. Bullets > paragraphs. Surface what changed in 1-3 lines.
+- For mutations, use the agent's propose/commit pattern when applicable.
+- If a request is ambiguous, ask one specific clarifying question instead of guessing.
+- Today is ${new Date().toISOString().slice(0, 10)}.
+`;
+
+// Curated set of tools the chat sidebar can call. Replace with your
+// agent's actual tool names. Pick the smallest set that covers the
+// sidebar's use cases — too many tools degrades selection accuracy.
+const CHAT_TOOL_ALLOWLIST = [
+  // "list_items",
+  // "create_item",
+  // ...
+];
+
+export function handleChatRequest(request, ctx) {
+  return chatHandler(request, ctx, {
+    toolAllowlist: CHAT_TOOL_ALLOWLIST,
+    system: SYSTEM_PROMPT,
+    tier: "default",
+    maxIterations: 10,
+  });
+}

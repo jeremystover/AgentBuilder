@@ -1,8 +1,10 @@
 /**
- * web/spa-pages2.js — second half of the SPA: Projects, People, Triage,
- * the chat sidebar, the create-task modal, and the bootstrap kickoff.
+ * web/spa-pages2.js — chief-of-staff page renderers (Projects, People,
+ * Triage), per-page modals, and the NAV / ROUTES / AGENT_BRAND wiring
+ * that the kit's router consumes.
  *
- * Concatenated after spa-app.js + spa-pages.js into /app/app.js.
+ * Concatenated after the kit's SPA_CORE_JS and spa-pages.js into
+ * /app/app.js.
  */
 
 export const SPA_PAGES2_JS = String.raw`
@@ -435,75 +437,31 @@ async function pickProjectInline(projects) {
   });
 }
 
-// ── Chat sidebar ───────────────────────────────────────────────────────────
-function mountChatSidebar(aside) {
-  aside.innerHTML = "";
-  const head = el("div", { class: "px-5 pt-5 pb-3 border-b border-slate-200" },
-    el("div", { class: "flex items-center justify-between" },
-      el("div", { class: "text-sm font-semibold uppercase tracking-wide text-slate-500" }, "Chat"),
-      el("button", { class: "text-xs text-slate-400 hover:text-ink",
-        onclick: () => { history = []; transcript.innerHTML = ""; } }, "Clear"),
-    ),
-  );
-  const transcript = el("div", { class: "flex-1 overflow-y-auto scrollbar-thin px-5 py-4 space-y-3 text-sm" });
-  const ta = el("textarea", { rows: 2,
-    placeholder: "Ask the chief of staff…",
-    class: "flex-1 rounded-lg ring-1 ring-slate-200 px-3 py-2 text-sm focus:ring-indigo-400 focus:outline-none resize-none" });
-  const voice = el("button", { class: "rounded-lg ring-1 ring-slate-200 px-3 py-2 text-sm hover:bg-slate-50" }, "🎤");
-  attachVoice(voice, ta);
-  const send = el("button", { class: "rounded-lg bg-ink text-white px-3 py-2 text-sm font-medium hover:bg-slate-700" }, "↑");
-  const inputRow = el("div", { class: "px-5 py-4 border-t border-slate-200 flex gap-2 items-end" }, ta, voice, send);
-
-  let history = [];
-  const ctx = {};
-  async function submit() {
-    const msg = ta.value.trim();
-    if (!msg) return;
-    ta.value = "";
-    transcript.appendChild(el("div", { class: "flex justify-end" },
-      el("div", { class: "bg-ink text-white rounded-2xl rounded-br-sm px-3 py-2 max-w-[85%] whitespace-pre-wrap" }, msg)));
-    transcript.scrollTop = transcript.scrollHeight;
-    const pending = el("div", { class: "text-slate-400 italic" }, "Thinking…");
-    transcript.appendChild(pending);
-    try {
-      const data = await api("/api/chat", { method: "POST", body: { message: msg, history, pageContext: ctx } });
-      pending.remove();
-      history = data.messages || history;
-      transcript.appendChild(el("div", {},
-        el("div", { class: "bg-white ring-1 ring-slate-200 rounded-2xl rounded-bl-sm px-3 py-2 max-w-[95%] whitespace-pre-wrap" },
-          data.reply || "(no reply)")));
-      transcript.scrollTop = transcript.scrollHeight;
-    } catch (err) {
-      pending.remove();
-      transcript.appendChild(el("div", { class: "text-rose-600" }, "Error: " + err.message));
-    }
-  }
-  send.addEventListener("click", submit);
-  ta.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); }
-  });
-
-  aside.classList.add("flex", "flex-col");
-  aside.append(head, transcript, inputRow);
-}
-
-// Wire up to window so the router can find them.
+// ── Wire pages + nav into the kit's router ─────────────────────────────────
+// The kit's spa-core handles shell rendering, default chat sidebar, and
+// boot. We just declare which pages exist and which hashes route to them.
 window.openCreateTaskModal = openCreateTaskModal;
 window.pageProjects = pageProjects;
 window.pageProjectDetail = pageProjectDetail;
 window.pagePeople = pagePeople;
 window.pagePersonDetail = pagePersonDetail;
 window.pageTriage = pageTriage;
-window.mountChatSidebar = mountChatSidebar;
 
-// Boot.
-document.addEventListener("DOMContentLoaded", () => {
-  if (!location.hash) location.hash = "#/today";
-  $$.route();
-});
-// If DOMContentLoaded already fired (script appended late), boot now.
-if (document.readyState !== "loading") {
-  if (!location.hash) location.hash = "#/today";
-  $$.route();
-}
+window.AGENT_BRAND = { mark: "✦", label: "Chief" };
+window.NAV = [
+  { hash: "#/today",    label: "Today" },
+  { hash: "#/week",     label: "This Week" },
+  { hash: "#/projects", label: "Projects" },
+  { hash: "#/people",   label: "People" },
+  { hash: "#/triage",   label: "Triage" },
+];
+window.ROUTES = [
+  { pattern: /^#\/today$/,           handler: "pageToday" },
+  { pattern: /^#\/week$/,            handler: "pageWeek" },
+  { pattern: /^#\/projects$/,        handler: "pageProjects" },
+  { pattern: /^#\/projects\/(.+)$/,  handler: "pageProjectDetail" },
+  { pattern: /^#\/people$/,          handler: "pagePeople" },
+  { pattern: /^#\/people\/(.+)$/,    handler: "pagePersonDetail" },
+  { pattern: /^#\/triage$/,          handler: "pageTriage" },
+];
 `;

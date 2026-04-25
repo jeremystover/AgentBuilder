@@ -23,6 +23,7 @@ tools/                Repo-wide CLI tooling (run with `tsx`).
 6. **Model tiers, not model ids.** Call `llm.complete({ tier: 'default' })`. Don't hardcode `claude-sonnet-4-6`.
 7. **Prompt caching is on by default.** Keep system prompts stable to benefit from it.
 8. **D1 is the shared store.** All fleet persistence goes through the `agentbuilder-core` D1 database with per-agent table prefixes.
+9. **Web UIs use `@agentbuilder/web-ui-kit`.** Never re-implement cookie auth, the SPA shell, or the chat tool-loop. Copy `.agent-builder/templates/web-ui/` to the agent's `src/web/` and customize the agent-specific pieces (api routes, page renderers, chat allowlist). The chief-of-staff app at `apps/chief-of-staff/src/web/` is the worked reference. To add a UI, invoke the Claude Code `add-web-ui` skill.
 
 ## Creating a new agent
 

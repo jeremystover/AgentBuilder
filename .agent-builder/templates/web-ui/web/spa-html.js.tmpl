@@ -1,0 +1,14 @@
+/**
+ * web/spa-html.js — agent-branded thin wrappers around the shared HTML
+ * shells. The actual HTML lives in @agentbuilder/web-ui-kit.
+ */
+
+import { loginHtml as kitLoginHtml, appHtml as kitAppHtml } from "@agentbuilder/web-ui-kit";
+
+export function loginHtml({ error } = {}) {
+  return kitLoginHtml({ title: "{{AGENT_NAME}}", error });
+}
+
+export function appHtml() {
+  return kitAppHtml({ title: "{{AGENT_NAME}}" });
+}

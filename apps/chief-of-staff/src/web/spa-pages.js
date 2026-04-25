@@ -1,9 +1,10 @@
 /**
- * web/spa-pages.js — page renderers + chat sidebar for the SPA.
+ * web/spa-pages.js — chief-of-staff page renderers (Today + This Week)
+ * and shared task/brief components.
  *
- * Loaded as /app/app-pages.js after spa-app.js sets window.__cos with the
- * shared helpers. Each page reads from /api/* and mounts into the main
- * column. The chat sidebar is mounted once into the right column.
+ * Concatenated into /app/app.js after @agentbuilder/web-ui-kit's
+ * SPA_CORE_JS, which sets up window.__cos with shared helpers, the shell,
+ * and the default chat sidebar.
  */
 
 export const SPA_PAGES_JS = String.raw`

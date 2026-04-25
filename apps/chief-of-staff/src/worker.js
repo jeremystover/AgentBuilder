@@ -52,9 +52,9 @@ import {
 import { handleApiRequest } from "./web/api.js";
 import { handleChatRequest, handlePlanReviewRequest } from "./web/chat.js";
 import { loginHtml, appHtml } from "./web/spa-html.js";
-import { SPA_APP_JS } from "./web/spa-app.js";
 import { SPA_PAGES_JS } from "./web/spa-pages.js";
 import { SPA_PAGES2_JS } from "./web/spa-pages2.js";
+import { SPA_CORE_JS } from "@agentbuilder/web-ui-kit";
 
 // ── Data store resolution ────────────────────────────────────────────────────
 // When env.DB (Cloudflare D1) is bound, use it as the primary data store.
@@ -818,7 +818,7 @@ export default {
     if (request.method === "GET" && urlObj.pathname === "/app/app.js") {
       const auth = await requireWebSession(request, env, { mode: "page" });
       if (!auth.ok) return auth.response;
-      const body = SPA_APP_JS + "\n" + SPA_PAGES_JS + "\n" + SPA_PAGES2_JS;
+      const body = SPA_CORE_JS + "\n" + SPA_PAGES_JS + "\n" + SPA_PAGES2_JS;
       return new Response(body, {
         status: 200,
         headers: {

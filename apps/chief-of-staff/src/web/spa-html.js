@@ -1,97 +1,17 @@
 /**
- * web/spa-html.js — HTML shells for the chief-of-staff web UI.
+ * web/spa-html.js — agent-branded thin wrappers around the shared shell.
  *
- * Two pages:
- *   loginHtml() — minimal password form, posts to /app/login
- *   appHtml()   — main SPA shell that loads /app/app.js (served from spa-app.js)
- *
- * Tailwind via CDN, no build step. Visual style: clean off-white background,
- * dark slate text, generous whitespace, serif headings (Source Serif),
- * sans-serif body (Inter). Indigo accent for actions, amber for warnings.
+ * The actual HTML lives in @agentbuilder/web-ui-kit. This module just
+ * applies the chief-of-staff page titles so log lines and tab titles read
+ * naturally.
  */
 
-const TAILWIND_CDN = "https://cdn.tailwindcss.com";
-const FONTS_HREF =
-  "https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=Inter:wght@400;500;600&display=swap";
-
-const HEAD_COMMON = `
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <link rel="preconnect" href="https://fonts.googleapis.com"/>
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
-  <link rel="stylesheet" href="${FONTS_HREF}"/>
-  <script src="${TAILWIND_CDN}"></script>
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          fontFamily: {
-            serif: ['"Source Serif 4"', 'Georgia', 'serif'],
-            sans:  ['Inter', 'ui-sans-serif', 'system-ui'],
-          },
-          colors: {
-            paper: '#fbfaf6',
-            ink:   '#1f2433',
-          }
-        }
-      }
-    }
-  </script>
-  <style>
-    body { font-family: Inter, ui-sans-serif, system-ui; background: #fbfaf6; color: #1f2433; }
-    h1, h2, h3 { font-family: 'Source Serif 4', Georgia, serif; letter-spacing: -0.01em; }
-    /* subtle paper grain */
-    body::before {
-      content:""; position:fixed; inset:0; pointer-events:none; z-index:0;
-      background-image: radial-gradient(rgba(31,36,51,.025) 1px, transparent 1px);
-      background-size: 4px 4px;
-    }
-    .scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
-    .scrollbar-thin::-webkit-scrollbar-thumb { background: #d6d2c4; border-radius: 3px; }
-  </style>
-`;
+import { loginHtml as kitLoginHtml, appHtml as kitAppHtml } from "@agentbuilder/web-ui-kit";
 
 export function loginHtml({ error } = {}) {
-  return `<!doctype html>
-<html><head>${HEAD_COMMON}<title>Chief of Staff — Sign in</title></head>
-<body class="min-h-screen flex items-center justify-center px-4">
-  <div class="relative z-10 w-full max-w-sm">
-    <div class="text-center mb-8">
-      <div class="text-5xl mb-3">✦</div>
-      <h1 class="text-3xl font-semibold">Chief of Staff</h1>
-      <p class="text-sm text-slate-500 mt-2">Sign in to continue</p>
-    </div>
-    <form method="POST" action="/app/login" class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-200 p-6 space-y-4">
-      ${error ? `<div class="rounded-lg bg-rose-50 ring-1 ring-rose-200 px-3 py-2 text-sm text-rose-700">${escapeHtml(error)}</div>` : ""}
-      <label class="block">
-        <span class="text-xs uppercase tracking-wide text-slate-500">Password</span>
-        <input type="password" name="password" autofocus required
-          class="mt-1 block w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 focus:ring-indigo-400 focus:outline-none"/>
-      </label>
-      <button type="submit"
-        class="w-full rounded-lg bg-ink text-white py-2.5 text-sm font-medium hover:bg-slate-700 transition">
-        Continue
-      </button>
-    </form>
-    <p class="text-center text-xs text-slate-400 mt-6">Single-user · cookie session</p>
-  </div>
-</body></html>`;
+  return kitLoginHtml({ title: "Chief of Staff", error });
 }
 
 export function appHtml() {
-  return `<!doctype html>
-<html><head>${HEAD_COMMON}<title>Chief of Staff</title></head>
-<body class="min-h-screen">
-  <div id="app" class="relative z-10"></div>
-  <script type="module" src="/app/app.js"></script>
-</body></html>`;
-}
-
-function escapeHtml(s) {
-  return String(s)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+  return kitAppHtml({ title: "Chief of Staff" });
 }
