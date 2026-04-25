@@ -22,8 +22,30 @@ import { handleMcpRequest }                from "./mcp/router";
 import { ingestUrl, IngestUrlInput }       from "./mcp/tools/ingest_url";
 import { generateDigest, GenerateDigestInput } from "./mcp/tools/generate_digest";
 import { listSources, ListSourcesInput }   from "./mcp/tools/list_sources";
+import { handleLabApi }                    from "./lab-api";
+import { handleLabChat }                   from "./lab-chat";
+import {
+  requireApiAuth,
+  requireWebSession,
+  createSession,
+  destroySession,
+  setSessionCookieHeader,
+  clearSessionCookieHeader,
+  verifyPassword,
+  loginHtml,
+} from "@agentbuilder/web-ui-kit";
 
 export { ChatSession } from "./durable/ChatSession";
+
+// The kit's auth helpers expect env.DB. CONTENT_DB is research-agent's
+// existing D1 binding; we pass an env-shaped object that aliases it.
+function kitEnv(env: Env): Record<string, unknown> {
+  return {
+    DB: env.CONTENT_DB,
+    WEB_UI_PASSWORD: env.WEB_UI_PASSWORD,
+    EXTERNAL_API_KEY: env.EXTERNAL_API_KEY,
+  };
+}
 
 // Open CORS for the MCP endpoint — MCP clients (Claude, Cowork, etc.)
 // connect from various origins and need unrestricted access.
@@ -172,6 +194,80 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
     } catch (e) {
       return jsonResponse({ error: e instanceof Error ? e.message : String(e) }, 500);
     }
+  }
+
+  // ── /lab — The Lab web UI ─────────────────────────────────────────────
+  // Auth flow follows the @agentbuilder/web-ui-kit convention:
+  //   GET  /lab/login   shows the password form
+  //   POST /lab/login   verifies WEB_UI_PASSWORD + sets session cookie
+  //   GET  /lab/logout  destroys the session
+  //   /lab + /lab/*     serve the Vite-built SPA from the ASSETS binding
+  //                     (gated by cookie session)
+  //
+  // /api/lab/*          JSON API for the SPA + external apps
+  //                     (cookie session OR EXTERNAL_API_KEY bearer)
+  if (url.pathname === "/lab/login" && method === "GET") {
+    return new Response(loginHtml({ title: "The Lab" }), {
+      status: 200,
+      headers: { "content-type": "text/html; charset=utf-8" },
+    });
+  }
+  if (url.pathname === "/lab/login" && method === "POST") {
+    if (!env.WEB_UI_PASSWORD) {
+      return new Response(loginHtml({ title: "The Lab", error: "WEB_UI_PASSWORD is not configured." }), {
+        status: 500, headers: { "content-type": "text/html; charset=utf-8" },
+      });
+    }
+    const form = await request.formData().catch(() => null);
+    const password = form?.get?.("password") || "";
+    if (!verifyPassword(kitEnv(env), password)) {
+      return new Response(loginHtml({ title: "The Lab", error: "Wrong password." }), {
+        status: 401, headers: { "content-type": "text/html; charset=utf-8" },
+      });
+    }
+    const { sessionId } = await createSession(kitEnv(env));
+    const secure = url.protocol === "https:";
+    return new Response(null, {
+      status: 302,
+      headers: {
+        location: "/lab",
+        "set-cookie": setSessionCookieHeader(sessionId, { secure }),
+      },
+    });
+  }
+  if (url.pathname === "/lab/logout") {
+    const session = await requireWebSession(request, kitEnv(env), { mode: "page" });
+    if (session.ok) await destroySession(kitEnv(env), session.sessionId);
+    const secure = url.protocol === "https:";
+    return new Response(null, {
+      status: 302,
+      headers: {
+        location: "/lab/login",
+        "set-cookie": clearSessionCookieHeader({ secure }),
+      },
+    });
+  }
+
+  // Static asset fallthrough: the SPA itself + any /lab/* asset request.
+  // We require a cookie session for ALL /lab routes so the bundle isn't
+  // public.
+  if (url.pathname === "/lab" || url.pathname.startsWith("/lab/")) {
+    const session = await requireWebSession(request, kitEnv(env), { mode: "page" });
+    if (!session.ok) return session.response;
+    if (env.ASSETS) return env.ASSETS.fetch(request);
+    return new Response("ASSETS binding not configured (build the Lab with `pnpm lab:build` then redeploy).", { status: 503 });
+  }
+
+  // ── /api/lab/* — JSON API for the Lab SPA + external apps ─────────────
+  if (url.pathname.startsWith("/api/lab/")) {
+    const auth = await requireApiAuth(request, kitEnv(env));
+    if (!auth.ok) return auth.response;
+    if (url.pathname === "/api/lab/chat" && method === "POST") {
+      return await handleLabChat(request, env, ctx);
+    }
+    const labResponse = await handleLabApi(request, env);
+    if (labResponse) return labResponse;
+    return jsonResponse({ error: `Not found: ${method} ${url.pathname}` }, 404);
   }
 
   return jsonResponse({ error: `Not found: ${method} ${url.pathname}` }, 404);

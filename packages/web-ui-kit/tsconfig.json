@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "types": ["@cloudflare/workers-types"],
+    "allowJs": true,
+    "checkJs": false,
+    "noEmit": true,
+    "noUncheckedIndexedAccess": false
+  },
+  "include": ["src/**/*.js"],
+  "exclude": ["dist"]
+}

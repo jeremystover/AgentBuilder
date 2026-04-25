@@ -15,3 +15,5 @@ coverage
 # Should never land in a commit. Deleted post-migration.
 .migration-staging/
 apps/chief-of-staff/key.json
+.wrangler-dist/
+*.tsbuildinfo
