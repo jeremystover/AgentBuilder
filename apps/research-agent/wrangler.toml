@@ -49,11 +49,28 @@ ENVIRONMENT = "production"
 # The verified From address for watch-notification emails.
 # Override in prod via `wrangler secret put WATCH_NOTIFY_FROM` if you prefer.
 WATCH_NOTIFY_FROM = "jsstover@gmail.com"
+# Chief of Staff MCP endpoint for the Lab chat sidebar (idea promotion +
+# project listing). The Lab worker calls this server-to-server with
+# CHIEF_OF_STAFF_MCP_KEY as the bearer token.
+CHIEF_OF_STAFF_MCP_URL = "https://chief-of-staff.jsstover.workers.dev/mcp"
+
+# Static assets — the Lab SPA is built by Vite into ./dist and served by
+# Cloudflare's assets binding. The worker's fetch handler still owns
+# /api/*, /mcp, /chat, /ingest, /health and explicitly falls through to
+# ASSETS for anything else (mainly /lab and /lab/*).
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
 
 # Inbound email routing is configured in the Cloudflare dashboard (Email > Email Workers).
 # The email() handler in src/index.ts processes forwarded messages automatically.
 
 # Secrets (set via wrangler secret put):
-#   wrangler secret put MCP_BEARER_TOKEN      — bearer token for /mcp endpoint
-#   wrangler secret put BLUESKY_IDENTIFIER    — Bluesky handle (e.g. user.bsky.social)
-#   wrangler secret put BLUESKY_APP_PASSWORD  — Bluesky app-specific password
+#   wrangler secret put MCP_BEARER_TOKEN         — bearer token for /mcp endpoint
+#   wrangler secret put BLUESKY_IDENTIFIER       — Bluesky handle (e.g. user.bsky.social)
+#   wrangler secret put BLUESKY_APP_PASSWORD     — Bluesky app-specific password
+#   wrangler secret put ANTHROPIC_API_KEY        — required for /api/lab/chat (the Lab chat sidebar)
+#   wrangler secret put WEB_UI_PASSWORD          — single shared password for the /lab browser UI
+#   wrangler secret put EXTERNAL_API_KEY         — bearer token for /api/lab/v1/* from other apps
+#   wrangler secret put CHIEF_OF_STAFF_MCP_KEY   — bearer token to call chief-of-staff /mcp from this worker

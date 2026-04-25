@@ -1,12 +1,8 @@
 {
-  "name": "@agentbuilder/app-research-agent",
+  "name": "@agentbuilder/app-{{AGENT_ID}}",
   "version": "0.0.1",
   "private": true,
-  "description": "",
-  "license": "ISC",
-  "author": "",
   "type": "module",
-  "main": "index.js",
   "scripts": {
     "dev": "wrangler dev",
     "lab:dev": "vite",
@@ -17,20 +13,13 @@
   },
   "dependencies": {
     "@agentbuilder/llm": "workspace:*",
-    "@agentbuilder/web-ui-kit": "workspace:*",
-    "zod": "^3.23.8"
+    "@agentbuilder/web-ui-kit": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250410.0",
-    "@dnd-kit/core": "^6.1.0",
-    "@dnd-kit/sortable": "^8.0.0",
-    "@radix-ui/react-dialog": "^1.1.2",
-    "@radix-ui/react-select": "^2.1.2",
-    "@radix-ui/react-slot": "^1.1.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.3",
-    "@xyflow/react": "^12.3.5",
     "autoprefixer": "^10.4.20",
     "lucide-react": "^0.468.0",
     "postcss": "^8.4.49",
