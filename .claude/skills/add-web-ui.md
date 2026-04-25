@@ -126,7 +126,7 @@ wrangler d1 execute <agent>-db --remote --file=apps/<agent>/migrations/000N_web_
 wrangler secret put WEB_UI_PASSWORD --name <agent>
 wrangler secret put ANTHROPIC_API_KEY --name <agent>
 wrangler secret put EXTERNAL_API_KEY --name <agent>
-pnpm --filter @agentbuilder/app-<agent> deploy
+pnpm --filter @agentbuilder/app-<agent> run deploy
 ```
 
 ### 9. Smoke test
@@ -227,7 +227,7 @@ the Worker on port 8787 so the cookie session works in HMR.
 ### React 8. Deploy
 
 ```bash
-pnpm --filter @agentbuilder/app-<agent> deploy   # builds Vite, then wrangler deploy
+pnpm --filter @agentbuilder/app-<agent> run deploy   # builds Vite, then wrangler deploy
 ```
 
 The CI deploy workflow at `.github/workflows/deploy-<agent>.yml` should
