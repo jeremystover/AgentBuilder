@@ -102,6 +102,7 @@ export function App() {
           turns={chatH.turns}
           loading={chatH.loading}
           onSend={(msg) => chatH.send(msg, scope, pinnedArticles)}
+          onCancel={chatH.cancel}
           onSaveAsIdea={onSaveAsIdea}
           onClear={chatH.clear}
         />
@@ -115,6 +116,7 @@ export function App() {
           onAdvance={async (id, status) => { await ideasH.setStatus(id, status); }}
           onOpen={(idea) => setOpenIdea(idea)}
           onPromote={(idea) => setPromotingIdea(idea)}
+          onMoveIdea={(id, position) => ideasH.setPosition(id, position)}
         />
       </div>
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { listIdeas, createIdea, updateIdea, deleteIdea, promoteIdea } from "../api";
-import type { Idea, IdeaStatus } from "../types";
+import type { Idea, IdeaPosition, IdeaStatus } from "../types";
 
 export function useIdeas() {
   const [ideas, setIdeas] = useState<Idea[]>([]);
@@ -56,5 +56,15 @@ export function useIdeas() {
     }
   }, [refresh]);
 
-  return { ideas, loading, error, refresh, add, update, remove, promote, setStatus };
+  // Persist a mind-map node's position. Optimistic update + fire-and-
+  // forget POST so dragging stays responsive even on flaky network.
+  const setPosition = useCallback((id: string, position: IdeaPosition | null) => {
+    setIdeas((prev) => prev.map((i) => (i.id === id ? { ...i, position } : i)));
+    void updateIdea(id, { position }).catch(() => {
+      // Roll back on failure by refetching.
+      void refresh();
+    });
+  }, [refresh]);
+
+  return { ideas, loading, error, refresh, add, update, remove, promote, setStatus, setPosition };
 }

@@ -56,6 +56,84 @@ export class LLMClient {
     throw new AgentError(`Unsupported provider: ${model.provider}`, { code: 'internal' });
   }
 
+  /**
+   * Streaming completion. Returns the underlying SDK MessageStream for the
+   * Anthropic path so callers can attach `.on('text', ...)` for delta
+   * callbacks and `await stream.finalMessage()` for the assembled
+   * `CompleteResponse`.
+   *
+   * Workers AI doesn't have a comparable streaming path — for the 'edge'
+   * tier we just call the non-streaming path and emit the final text in one
+   * synthetic delta on the next tick. Streaming agent UIs should stick to
+   * the 'fast'/'default'/'deep' tiers.
+   *
+   * Tool-use streaming gotcha: the SDK fires `inputJson` events with
+   * partial JSON for each tool_use block. Don't try to incrementally
+   * render those — wait for `finalMessage()` to give you the parsed
+   * `tool_use.input` object.
+   */
+  streamAnthropic(req: CompleteRequest): {
+    stream: import('@anthropic-ai/sdk/lib/MessageStream').MessageStream;
+    finalize: () => Promise<CompleteResponse>;
+  } {
+    const model = resolveModel(req.tier);
+    if (model.provider !== 'anthropic') {
+      throw new AgentError(`streamAnthropic only supports the anthropic provider; got ${model.provider}`, { code: 'internal' });
+    }
+    if (!this.anthropic) {
+      throw new AgentError('Anthropic API key not configured', { code: 'internal' });
+    }
+    const maxTokens = req.maxOutputTokens ?? Math.max(model.maxOutputTokens, 16384);
+    const shouldCache = req.cacheSystemPrompt ?? true;
+    const systemBlocks = shouldCache
+      ? [{ type: 'text' as const, text: req.system, cache_control: { type: 'ephemeral' as const } }]
+      : req.system;
+
+    const stream = this.anthropic.messages.stream({
+      model: model.id,
+      max_tokens: maxTokens,
+      system: systemBlocks,
+      messages: req.messages.map(toAnthropicMessage),
+      tools: req.tools?.map((t) => ({
+        name: t.name,
+        description: t.description,
+        input_schema: t.inputSchema as Anthropic.Tool.InputSchema,
+      })),
+    });
+
+    const finalize = async (): Promise<CompleteResponse> => {
+      const res = await stream.finalMessage();
+      let text = '';
+      const toolCalls: ToolCall[] = [];
+      for (const block of res.content) {
+        if (block.type === 'text') text += block.text;
+        else if (block.type === 'tool_use') {
+          toolCalls.push({
+            id: block.id,
+            name: block.name,
+            input: block.input as Record<string, unknown>,
+          });
+        }
+      }
+      return {
+        text,
+        toolCalls,
+        usage: {
+          inputTokens: res.usage.input_tokens,
+          outputTokens: res.usage.output_tokens,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          cacheReadTokens: (res.usage as any).cache_read_input_tokens as number | undefined,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          cacheWriteTokens: (res.usage as any).cache_creation_input_tokens as number | undefined,
+        },
+        stopReason: res.stop_reason ?? 'end_turn',
+        model: res.model,
+      };
+    };
+
+    return { stream, finalize };
+  }
+
   private async completeAnthropic(
     req: CompleteRequest,
     modelId: string,

@@ -9,6 +9,8 @@ import type { Idea, IdeaStatus } from "../types";
 interface Props {
   ideas: Idea[];
   onOpen: (idea: Idea) => void;
+  /** Persist a user-dragged node position. Pass null to revert to auto layout. */
+  onMoveIdea?: (id: string, position: { x: number; y: number } | null) => void;
 }
 
 const STATUS_COLOR: Record<IdeaStatus, string> = {
@@ -18,7 +20,7 @@ const STATUS_COLOR: Record<IdeaStatus, string> = {
   promoted:  "#8B5CF6",
 };
 
-export function IdeaMindMap({ ideas, onOpen }: Props) {
+export function IdeaMindMap({ ideas, onOpen, onMoveIdea }: Props) {
   const { nodes, edges } = useMemo(() => buildGraph(ideas), [ideas]);
 
   if (ideas.length < 2) {
@@ -46,6 +48,10 @@ export function IdeaMindMap({ ideas, onOpen }: Props) {
             const idea = ideas.find((i) => i.id === node.id);
             if (idea) onOpen(idea);
           }
+        }}
+        onNodeDragStop={(_, node) => {
+          if (node.data?.kind !== "idea" || !onMoveIdea) return;
+          onMoveIdea(node.id, { x: node.position.x, y: node.position.y });
         }}
         proOptions={{ hideAttribution: true }}
         fitView
@@ -80,15 +86,15 @@ function buildGraph(ideas: Idea[]): { nodes: Node[]; edges: Edge[] } {
     }
   }
 
-  // Layout: ideas on a circle, article nodes in the center cluster.
+  // Layout: stored position wins; otherwise auto-place ideas on a ring.
+  // Article nodes are always auto-placed near their connected ideas.
   const radius = 280;
   ideas.forEach((idea, idx) => {
     const angle = (idx / ideas.length) * Math.PI * 2;
-    const x = Math.cos(angle) * radius;
-    const y = Math.sin(angle) * radius;
+    const auto = { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius };
     nodes.push({
       id: idea.id,
-      position: { x, y },
+      position: idea.position ?? auto,
       data: {
         label: idea.title || "(untitled)",
         kind: "idea",

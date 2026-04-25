@@ -68,9 +68,12 @@ interface IdeaRow {
   linked_article_ids: string;
   chat_thread: string;
   promoted_to: string | null;
+  position: string | null;
   created_at: string;
   updated_at: string;
 }
+
+interface IdeaPosition { x: number; y: number }
 
 interface IdeaDto {
   id: string;
@@ -81,6 +84,7 @@ interface IdeaDto {
   linked_article_ids: string[];
   chat_thread: unknown[];
   promoted_to: unknown | null;
+  position: IdeaPosition | null;
   created_at: string;
   updated_at: string;
 }
@@ -95,6 +99,7 @@ function ideaRowToDto(row: IdeaRow): IdeaDto {
     linked_article_ids: safeParseArray(row.linked_article_ids) as string[],
     chat_thread: safeParseArray(row.chat_thread),
     promoted_to: row.promoted_to ? safeParse(row.promoted_to) : null,
+    position: row.position ? (safeParse(row.position) as IdeaPosition | null) : null,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -208,7 +213,7 @@ export async function handleLabApi(request: Request, env: Env): Promise<Response
 async function handleListIdeas(env: Env): Promise<Response> {
   const result = await env.CONTENT_DB.prepare(
     `SELECT id, title, body, status, tags, linked_article_ids, chat_thread,
-            promoted_to, created_at, updated_at
+            promoted_to, position, created_at, updated_at
        FROM ideas
        ORDER BY datetime(updated_at) DESC`,
   ).all<IdeaRow>();
@@ -258,7 +263,7 @@ async function handleCreateIdea(
 
   const row = await env.CONTENT_DB.prepare(
     `SELECT id, title, body, status, tags, linked_article_ids, chat_thread,
-            promoted_to, created_at, updated_at FROM ideas WHERE id = ?`,
+            promoted_to, position, created_at, updated_at FROM ideas WHERE id = ?`,
   ).bind(id).first<IdeaRow>();
   if (!row) return jsonResponse({ error: "insert failed" }, 500);
   return jsonResponse({ idea: ideaRowToDto(row) }, opts.external ? 201 : 200);
@@ -271,6 +276,8 @@ interface PatchIdeaBody {
   tags?: string[];
   linked_article_ids?: string[];
   chat_thread?: unknown[];
+  /** Mind-map node coordinates. Pass `null` to clear (revert to auto layout). */
+  position?: IdeaPosition | null;
 }
 
 async function handleUpdateIdea(id: string, request: Request, env: Env): Promise<Response> {
@@ -292,6 +299,14 @@ async function handleUpdateIdea(id: string, request: Request, env: Env): Promise
   if (Array.isArray(body.chat_thread)) {
     sets.push("chat_thread = ?"); args.push(JSON.stringify(body.chat_thread));
   }
+  if ("position" in body) {
+    if (body.position === null) {
+      sets.push("position = NULL");
+    } else if (body.position && typeof body.position.x === "number" && typeof body.position.y === "number") {
+      sets.push("position = ?");
+      args.push(JSON.stringify({ x: body.position.x, y: body.position.y }));
+    }
+  }
   if (sets.length === 0) return jsonResponse({ error: "nothing to update" }, 400);
 
   sets.push("updated_at = ?");
@@ -304,7 +319,7 @@ async function handleUpdateIdea(id: string, request: Request, env: Env): Promise
 
   const row = await env.CONTENT_DB.prepare(
     `SELECT id, title, body, status, tags, linked_article_ids, chat_thread,
-            promoted_to, created_at, updated_at FROM ideas WHERE id = ?`,
+            promoted_to, position, created_at, updated_at FROM ideas WHERE id = ?`,
   ).bind(id).first<IdeaRow>();
   if (!row) return jsonResponse({ error: "post-update read failed" }, 500);
   return jsonResponse({ idea: ideaRowToDto(row) });
@@ -329,7 +344,7 @@ async function handlePromoteIdea(id: string, request: Request, env: Env): Promis
   const body = await readJson<PromoteBody>(request);
   const idea = await env.CONTENT_DB.prepare(
     `SELECT id, title, body, status, tags, linked_article_ids, chat_thread,
-            promoted_to, created_at, updated_at FROM ideas WHERE id = ?`,
+            promoted_to, position, created_at, updated_at FROM ideas WHERE id = ?`,
   ).bind(id).first<IdeaRow>();
   if (!idea) return jsonResponse({ error: "idea not found" }, 404);
 
@@ -404,7 +419,7 @@ async function handlePromoteIdea(id: string, request: Request, env: Env): Promis
 
   const row = await env.CONTENT_DB.prepare(
     `SELECT id, title, body, status, tags, linked_article_ids, chat_thread,
-            promoted_to, created_at, updated_at FROM ideas WHERE id = ?`,
+            promoted_to, position, created_at, updated_at FROM ideas WHERE id = ?`,
   ).bind(id).first<IdeaRow>();
   if (!row) return jsonResponse({ error: "post-promote read failed" }, 500);
   return jsonResponse({ idea: ideaRowToDto(row), promoted_to });

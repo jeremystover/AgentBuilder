@@ -11,11 +11,12 @@ interface Props {
   onAdvance: (id: string, status: IdeaStatus) => Promise<void>;
   onOpen: (idea: Idea) => void;
   onPromote: (idea: Idea) => void;
+  onMoveIdea: (id: string, position: { x: number; y: number } | null) => void;
 }
 
 type View = "board" | "map";
 
-export function IdeasPanel({ ideas, loading, onNewIdea, onAdvance, onOpen, onPromote }: Props) {
+export function IdeasPanel({ ideas, loading, onNewIdea, onAdvance, onOpen, onPromote, onMoveIdea }: Props) {
   const [view, setView] = useState<View>("board");
 
   return (
@@ -44,7 +45,7 @@ export function IdeasPanel({ ideas, loading, onNewIdea, onAdvance, onOpen, onPro
       ) : view === "board" ? (
         <IdeaBoard ideas={ideas} onAdvance={onAdvance} onOpen={onOpen} onPromote={onPromote} />
       ) : (
-        <IdeaMindMap ideas={ideas} onOpen={onOpen} />
+        <IdeaMindMap ideas={ideas} onOpen={onOpen} onMoveIdea={onMoveIdea} />
       )}
     </>
   );
