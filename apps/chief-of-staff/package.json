@@ -10,6 +10,9 @@
     "typecheck": "tsc --noEmit",
     "test": "node --test src/test"
   },
+  "dependencies": {
+    "@agentbuilder/llm": "workspace:*"
+  },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250410.0",
     "typescript": "^5.6.3",

@@ -81,6 +81,10 @@ importers:
         version: 3.114.17(@cloudflare/workers-types@4.20260413.1)
 
   apps/chief-of-staff:
+    dependencies:
+      '@agentbuilder/llm':
+        specifier: workspace:*
+        version: link:../../packages/llm
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250410.0
