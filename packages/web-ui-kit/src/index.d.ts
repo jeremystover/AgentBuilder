@@ -108,6 +108,15 @@ export function chatHandler(
   cfg: { toolAllowlist: string[]; system: string; tier?: "fast" | "default" | "deep"; maxIterations?: number },
 ): Promise<Response>;
 
+// ── Streaming (SSE) variant ────────────────────────────────────────────
+export interface RunChatStreamOptions extends RunChatOptions {}
+export function runChatStream(opts: RunChatStreamOptions): Promise<ReadableStream<Uint8Array>>;
+export function chatStreamHandler(
+  request: Request,
+  ctx: ChatContext,
+  cfg: { toolAllowlist: string[]; system: string; tier?: "fast" | "default" | "deep"; maxIterations?: number },
+): Promise<Response>;
+
 // ── Migrations ──────────────────────────────────────────────────────────
 export const WEB_SESSIONS_SQL: string;
 export const BRIEFS_SQL: string;

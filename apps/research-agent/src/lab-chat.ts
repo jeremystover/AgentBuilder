@@ -24,7 +24,7 @@
 
 import type { Env, McpToolDefinition } from "./types";
 import { ZodError } from "zod";
-import { runChat } from "@agentbuilder/web-ui-kit";
+import { runChatStream } from "@agentbuilder/web-ui-kit";
 
 import { IngestUrlInput,       ingestUrl }       from "./mcp/tools/ingest_url";
 import { SearchSemanticInput,  searchSemantic }  from "./mcp/tools/search_semantic";
@@ -278,7 +278,7 @@ export async function handleLabChat(request: Request, env: Env, ctx: ExecutionCo
   const system = buildSystemPrompt(scope, pinned);
 
   try {
-    const result = await runChat({
+    const sseStream = await runChatStream({
       ctx: { tools, env: env as unknown as Record<string, unknown> & { ANTHROPIC_API_KEY?: string } },
       body: { message, history: body.history || [], pageContext: { scope } },
       toolAllowlist: TOOL_ALLOWLIST,
@@ -286,12 +286,16 @@ export async function handleLabChat(request: Request, env: Env, ctx: ExecutionCo
       tier: "default",
       maxIterations: 8,
     });
-    return new Response(JSON.stringify({
-      reply: result.reply,
-      messages: result.messages,
-      iterations: result.iterations,
-      usage: result.usage,
-    }), { status: 200, headers: { "content-type": "application/json; charset=utf-8" } });
+    return new Response(sseStream, {
+      status: 200,
+      headers: {
+        "content-type": "text/event-stream; charset=utf-8",
+        "cache-control": "no-cache, no-transform",
+        // Prevent Cloudflare proxies from buffering — streaming would
+        // appear chunky or arrive all at once otherwise.
+        "x-accel-buffering": "no",
+      },
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     const status = msg.includes("ANTHROPIC_API_KEY") ? 503 : 500;

@@ -36,6 +36,6 @@ export {
   ToolError,
 } from "./api.js";
 
-export { runChat, chatHandler } from "./llm-chat.js";
+export { runChat, chatHandler, runChatStream, chatStreamHandler } from "./llm-chat.js";
 
 export { WEB_SESSIONS_SQL, BRIEFS_SQL } from "./migrations.js";

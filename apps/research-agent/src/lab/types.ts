@@ -9,6 +9,8 @@ export interface PromotedTo {
   task_key?: string;
 }
 
+export interface IdeaPosition { x: number; y: number }
+
 export interface Idea {
   id: string;
   title: string;
@@ -18,6 +20,8 @@ export interface Idea {
   linked_article_ids: string[];
   chat_thread: ChatTurn[];
   promoted_to: PromotedTo | null;
+  /** User-arranged mind-map coordinates; null when auto-laid-out. */
+  position: IdeaPosition | null;
   created_at: string;
   updated_at: string;
 }

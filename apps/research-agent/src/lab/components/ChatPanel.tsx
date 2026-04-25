@@ -1,20 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, Lightbulb, Sparkles } from "lucide-react";
+import { ArrowUp, Lightbulb, Sparkles, Square } from "lucide-react";
 import { toast } from "sonner";
 import type { Article, ChatScope } from "../types";
-
-interface Turn {
-  role: "user" | "assistant";
-  content: string;
-}
+import type { RenderTurn, ToolPill } from "../hooks/useChat";
 
 interface Props {
   scope: ChatScope;
   onScopeChange: (s: ChatScope) => void;
   pinnedArticles: Article[];
-  turns: Turn[];
+  turns: RenderTurn[];
   loading: boolean;
   onSend: (msg: string) => Promise<string>;
+  onCancel: () => void;
   onSaveAsIdea: (text: string) => void;
   onClear: () => void;
 }
@@ -26,7 +23,7 @@ const SCOPE_OPTIONS: Array<{ id: ChatScope; label: string; hint: string }> = [
 ];
 
 export function ChatPanel({
-  scope, onScopeChange, pinnedArticles, turns, loading, onSend, onSaveAsIdea, onClear,
+  scope, onScopeChange, pinnedArticles, turns, loading, onSend, onCancel, onSaveAsIdea, onClear,
 }: Props) {
   const [draft, setDraft] = useState("");
   const transcriptRef = useRef<HTMLDivElement>(null);
@@ -113,17 +110,15 @@ export function ChatPanel({
             </div>
           </div>
         )}
-        {turns.map((t, i) => (
+        {turns.map((t) => (
           <Bubble
-            key={i}
-            role={t.role}
-            content={t.content}
-            onSaveAsIdea={t.role === "assistant" ? () => onSaveAsIdea(t.content) : undefined}
+            key={t.id}
+            turn={t}
+            onSaveAsIdea={t.role === "assistant" && !t.streaming && t.content
+              ? () => onSaveAsIdea(t.content)
+              : undefined}
           />
         ))}
-        {loading && (
-          <div className="text-text-muted italic text-sm">Thinking…</div>
-        )}
       </div>
 
       {/* Composer */}
@@ -142,14 +137,25 @@ export function ChatPanel({
             placeholder="Ask, synthesize, brainstorm. ⌘↵ to send."
             className="flex-1 resize-none bg-bg-surface border border-border rounded-md px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-primary focus:outline-none"
           />
-          <button
-            onClick={() => void submit()}
-            disabled={loading || !draft.trim()}
-            className="rounded-md bg-accent-primary text-white px-3 py-2 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-indigo-500 transition-colors"
-            aria-label="Send"
-          >
-            <ArrowUp className="w-4 h-4" />
-          </button>
+          {loading ? (
+            <button
+              onClick={onCancel}
+              className="rounded-md bg-rose-600 text-white px-3 py-2 hover:bg-rose-500 transition-colors"
+              aria-label="Stop"
+              title="Stop"
+            >
+              <Square className="w-4 h-4" />
+            </button>
+          ) : (
+            <button
+              onClick={() => void submit()}
+              disabled={!draft.trim()}
+              className="rounded-md bg-accent-primary text-white px-3 py-2 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-indigo-500 transition-colors"
+              aria-label="Send"
+            >
+              <ArrowUp className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -157,22 +163,32 @@ export function ChatPanel({
 }
 
 function Bubble({
-  role, content, onSaveAsIdea,
-}: { role: "user" | "assistant"; content: string; onSaveAsIdea?: () => void }) {
-  if (role === "user") {
+  turn, onSaveAsIdea,
+}: { turn: RenderTurn; onSaveAsIdea?: () => void }) {
+  if (turn.role === "user") {
     return (
       <div className="flex justify-end">
         <div className="max-w-[80%] rounded-2xl rounded-br-sm bg-accent-primary text-white px-3 py-2 text-sm whitespace-pre-wrap leading-relaxed">
-          {content}
+          {turn.content}
         </div>
       </div>
     );
   }
+  const showCursor = turn.streaming;
+  const showThinking = turn.streaming && !turn.content && turn.pills.length === 0;
   return (
     <div className="space-y-1.5 max-w-[90%]">
-      <div className="rounded-2xl rounded-bl-sm bg-bg-elevated border border-border px-3.5 py-2.5 text-sm text-text-primary whitespace-pre-wrap leading-relaxed">
-        {content}
-      </div>
+      {turn.pills.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {turn.pills.map((p) => <ToolPillView key={p.id} pill={p} />)}
+        </div>
+      )}
+      {(turn.content || showThinking || showCursor) && (
+        <div className="rounded-2xl rounded-bl-sm bg-bg-elevated border border-border px-3.5 py-2.5 text-sm text-text-primary whitespace-pre-wrap leading-relaxed">
+          {showThinking ? <span className="text-text-muted italic">Thinking…</span> : turn.content}
+          {showCursor && turn.content && <span className="ml-0.5 inline-block w-1.5 h-4 align-middle bg-text-primary opacity-60 animate-pulse" />}
+        </div>
+      )}
       {onSaveAsIdea && (
         <button
           onClick={onSaveAsIdea}
@@ -183,5 +199,19 @@ function Bubble({
         </button>
       )}
     </div>
+  );
+}
+
+function ToolPillView({ pill }: { pill: ToolPill }) {
+  const tone = pill.status === "error" ? "border-rose-600/40 text-rose-400 bg-rose-950/20"
+             : pill.status === "ok"    ? "border-emerald-600/40 text-emerald-400 bg-emerald-950/20"
+             :                            "border-accent-primary/50 text-accent-primary bg-accent-primary/10";
+  const dot = pill.status === "running" ? "animate-pulse" : "";
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-[11px] px-2 py-0.5 rounded-full border ${tone} font-display`}>
+      <span className={`w-1.5 h-1.5 rounded-full bg-current ${dot}`} />
+      {pill.name}
+      {pill.status === "running" && <span className="opacity-60">…</span>}
+    </span>
   );
 }
