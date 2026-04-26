@@ -23,7 +23,10 @@ const STATUS_COLOR: Record<IdeaStatus, string> = {
 export function IdeaMindMap({ ideas, onOpen, onMoveIdea }: Props) {
   const { nodes, edges } = useMemo(() => buildGraph(ideas), [ideas]);
 
-  if (ideas.length < 2) {
+  // Empty state only when there are NO ideas. With one idea we still
+  // show the map (a single node) so the user sees what they just added —
+  // edges between ideas only appear when 2+ share articles.
+  if (ideas.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center px-6">
         <div className="max-w-sm text-center space-y-3">

@@ -25,6 +25,11 @@ export function PromoteModal({ idea, onClose, onPromoted }: Props) {
   const [name, setName] = useState(idea.title);
   const [goal, setGoal] = useState("");
   const [priority, setPriority] = useState<"high" | "medium" | "low">("medium");
+  // Inline error for when the chief-of-staff project list call fails.
+  // The most common cause is a missing CHIEF_OF_STAFF_MCP_KEY secret on
+  // the research-agent worker — surface the hint directly so the user
+  // doesn't have to dig through transient toasts.
+  const [listError, setListError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -33,7 +38,10 @@ export function PromoteModal({ idea, onClose, onPromoted }: Props) {
         const ps = await listProjects();
         if (!cancelled) setProjects(ps);
       } catch (e) {
-        if (!cancelled) toast.error(e instanceof Error ? e.message : String(e));
+        if (!cancelled) {
+          const msg = e instanceof Error ? e.message : String(e);
+          setListError(msg);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -106,6 +114,22 @@ export function PromoteModal({ idea, onClose, onPromoted }: Props) {
                 <div className="font-display text-[10px] uppercase tracking-widest text-text-muted">
                   Add to existing project
                 </div>
+                {listError ? (
+                  <div className="rounded border border-rose-600/40 bg-rose-950/20 p-3 text-xs text-rose-200 space-y-1.5">
+                    <div className="font-medium">Couldn't reach chief-of-staff:</div>
+                    <div className="font-mono text-[11px] break-all">{listError}</div>
+                    {listError.includes("CHIEF_OF_STAFF_MCP_KEY") || listError.includes("401") || listError.includes("Unauthorized") ? (
+                      <div className="text-text-muted pt-1">
+                        Set the secret on this worker so it can call chief-of-staff:<br />
+                        <code className="text-[10px]">wrangler secret put CHIEF_OF_STAFF_MCP_KEY --name research-agent</code><br />
+                        (value should match chief-of-staff's <code>MCP_HTTP_KEY</code>)
+                      </div>
+                    ) : null}
+                    <div className="pt-1 text-text-muted">
+                      You can still <button onClick={() => setStep("new")} className="underline hover:text-text-primary">create a new project</button> below.
+                    </div>
+                  </div>
+                ) : (
                 <div className="rounded border border-border bg-bg-elevated">
                   <div className="relative border-b border-border">
                     <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
@@ -142,6 +166,7 @@ export function PromoteModal({ idea, onClose, onPromoted }: Props) {
                     ))}
                   </div>
                 </div>
+                )}
               </div>
               <div className="text-center text-xs text-text-muted">— or —</div>
               <button
@@ -156,7 +181,7 @@ export function PromoteModal({ idea, onClose, onPromoted }: Props) {
                 </button>
                 <button
                   onClick={submitExisting}
-                  disabled={saving || !selected}
+                  disabled={saving || !selected || !!listError}
                   className="rounded bg-accent-primary text-white px-3 py-1.5 text-sm disabled:opacity-40 inline-flex items-center gap-1 hover:bg-indigo-500 transition-colors"
                 >
                   {saving ? "Promoting…" : <>Add as task <ArrowRight className="w-3.5 h-3.5" /></>}

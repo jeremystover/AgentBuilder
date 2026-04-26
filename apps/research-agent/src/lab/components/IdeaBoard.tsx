@@ -1,5 +1,9 @@
 import { useMemo } from "react";
-import { DndContext, useDraggable, useDroppable, type DragEndEvent } from "@dnd-kit/core";
+import {
+  DndContext, useDraggable, useDroppable,
+  PointerSensor, useSensor, useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
 import { IdeaCard } from "./IdeaCard";
 import type { Idea, IdeaStatus } from "../types";
 
@@ -18,6 +22,15 @@ interface Props {
 }
 
 export function IdeaBoard({ ideas, onAdvance, onOpen, onPromote }: Props) {
+  // 8px activation distance so a click without movement fires as a click
+  // on the underlying buttons (Develop, Promote) instead of being
+  // swallowed as a tiny drag. Without this, dnd-kit's default
+  // PointerSensor activates on any pointer-down → button onClick never
+  // fires, even though e.stopPropagation is called.
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+  );
+
   const grouped = useMemo(() => {
     const out: Record<IdeaStatus, Idea[]> = { spark: [], developing: [], ready: [], promoted: [] };
     for (const i of ideas) out[i.status].push(i);
@@ -34,7 +47,7 @@ export function IdeaBoard({ ideas, onAdvance, onOpen, onPromote }: Props) {
   };
 
   return (
-    <DndContext onDragEnd={onDragEnd}>
+    <DndContext sensors={sensors} onDragEnd={onDragEnd}>
       <div className="flex-1 grid grid-cols-2 gap-3 px-3 py-3 overflow-y-auto scrollbar-thin">
         {COLUMNS.map((col) => (
           <DropColumn
