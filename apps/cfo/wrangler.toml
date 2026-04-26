@@ -6,11 +6,13 @@ compatibility_flags = ["nodejs_compat"]
 [limits]
 cpu_ms = 300000
 
-# Nightly Teller sync. 09:00 UTC ≈ 05:00 ET — after most banks have
-# posted the prior business day. Invokes the worker's scheduled()
-# handler which walks all users with Teller enrollments.
+# Cron triggers fan out via scheduled() in src/index.ts:
+#   "0 9 * * *"     → nightly Teller sync (~05:00 ET)
+#   "*/30 * * * *"  → SMS dispatcher; the handler self-checks Pacific
+#                     local time + per-person preferred slots so 47 of
+#                     the 48 daily fires are no-ops. DST-safe.
 [triggers]
-crons = ["0 9 * * *"]
+crons = ["0 9 * * *", "*/30 * * * *"]
 
 [assets]
 # Vite-built SPA bundle (index.html + hashed /assets/*). Vite copies
@@ -47,6 +49,13 @@ TELLER_ENV = "development"
 #   EXTERNAL_API_KEY       (optional — bearer token for /api/web/* without cookie)
 #   WEB_UI_USER_ID         (optional — pins the SPA to a specific user_id;
 #                           defaults to "default" matching legacy header auth)
+#   TWILIO_ACCOUNT_SID     (Twilio account SID for SMS outbound)
+#   TWILIO_AUTH_TOKEN      (Twilio auth token; also verifies inbound HMAC)
+#   TWILIO_FROM            (E.164 sender number, e.g. +14155551234)
+#
+# Twilio inbound webhook: configure your number's "A MESSAGE COMES IN"
+# webhook to POST https://cfo.<account>.workers.dev/sms/inbound
+# (or your custom domain). Signature is verified against TWILIO_AUTH_TOKEN.
 
 # mTLS binding reuses the existing Teller cert from the tax-prep worker —
 # same cert_id, bound to the new worker. Teller production access requires

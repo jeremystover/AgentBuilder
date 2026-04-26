@@ -21,6 +21,12 @@ export interface Env {
   // don't carry a user id. Defaults to 'default' which matches the
   // legacy header-auth fallback in getUserId().
   WEB_UI_USER_ID?: string;
+  // Twilio for SMS-based gamified categorization (Phase A).
+  // Inbound webhook (/sms/inbound) verifies X-Twilio-Signature with
+  // TWILIO_AUTH_TOKEN — required even if outbound is unconfigured.
+  TWILIO_ACCOUNT_SID?: string;
+  TWILIO_AUTH_TOKEN?: string;
+  TWILIO_FROM?: string;
 }
 
 export type BankProvider = 'teller';
