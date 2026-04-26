@@ -11,6 +11,14 @@ public name.
 directory = "./dist"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
+# REQUIRED. Without this, Cloudflare's assets binding intercepts requests
+# before the Worker for paths that don't match a file (e.g. /{{SURFACE}})
+# and returns index.html via the SPA fallback. That bypasses your auth
+# gate, so unauthenticated visitors see the SPA, the SPA hits the API
+# (which IS handled by the Worker) and 401-loops. With run_worker_first
+# the Worker authoritatively handles every request and delegates to
+# ASSETS only after auth passes.
+run_worker_first = true
 ```
 
 ## 2. Imports
