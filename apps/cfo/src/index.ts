@@ -76,6 +76,16 @@ import {
   loginHtml,
 } from '@agentbuilder/web-ui-kit';
 
+// SMS (Phase A — Twilio-backed categorization prompts)
+import { handleSmsInbound } from './lib/sms-inbound';
+import { runDispatch } from './lib/sms-dispatcher';
+import {
+  handleListSmsSettings,
+  handleUpsertSmsSettings,
+  handleDeleteSmsPerson,
+  handleManualDispatch,
+} from './routes/sms';
+
 // Scheduled jobs
 import { runNightlyTellerSync } from './lib/nightly-sync';
 
@@ -175,6 +185,7 @@ const ROUTES: Route[] = [
 
   // Cron triggers — manual entry points for testing/debugging the scheduled handler
   { method: 'POST',   pattern: /^\/cron\/nightly-sync$/,                 handler: async (_req, env) => Response.json(await runNightlyTellerSync(env)) },
+  { method: 'POST',   pattern: /^\/cron\/sms\/dispatch$/,                handler: (req, env) => handleManualDispatch(req, env) },
 
   // Rules
   { method: 'GET',    pattern: /^\/rules$/,                              handler: (req, env) => handleListRules(req, env) },
@@ -265,6 +276,13 @@ export default {
       });
     }
 
+    // ── Twilio inbound webhook (signature-verified, no cookie auth) ───────
+    // Twilio doesn't carry cookies. /sms/inbound verifies X-Twilio-Signature
+    // with TWILIO_AUTH_TOKEN; everything else is rejected with 403.
+    if (path === '/sms/inbound' && method === 'POST') {
+      return handleSmsInbound(request, env);
+    }
+
     // ── /api/web/* — JSON API for the React SPA ───────────────────────────
     if (path.startsWith('/api/web/')) {
       const auth = await requireApiAuth(request, kitEnv(env));
@@ -272,6 +290,17 @@ export default {
 
       if (path === '/api/web/chat' && method === 'POST') {
         return handleWebChat(request, env, /* ctx */ {} as ExecutionContext);
+      }
+      // SMS settings live under /api/web/sms/*
+      if (path === '/api/web/sms/settings' && method === 'GET') {
+        return handleListSmsSettings(request, env);
+      }
+      if (path === '/api/web/sms/settings' && method === 'PUT') {
+        return handleUpsertSmsSettings(request, env);
+      }
+      const smsPersonMatch = path.match(/^\/api\/web\/sms\/settings\/([^/]+)$/);
+      if (smsPersonMatch && method === 'DELETE') {
+        return handleDeleteSmsPerson(request, env, smsPersonMatch[1]!);
       }
       const webResponse = await handleWebApi(request, env);
       if (webResponse) return webResponse;
@@ -345,15 +374,32 @@ export default {
     return jsonError('Not found', 404);
   },
 
-  // Cloudflare Cron Trigger entrypoint. Gated to the nightly-sync cron
-  // today, but the scheduled() hook is the right place to add other
-  // periodic tasks later (snapshots, classification passes, digests).
+  // Cloudflare Cron Trigger entrypoint. We dispatch by cron expression:
+  //   "0 9 * * *"        → nightly Teller sync
+  //   "*/30 * * * *"     → SMS dispatcher (it self-checks Pacific local
+  //                        time + per-person preferred slots, so 47 of
+  //                        the 48 daily fires are no-ops).
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     console.log('[scheduled] cron fired', { cron: event.cron, scheduledTime: event.scheduledTime });
-    ctx.waitUntil(
-      runNightlyTellerSync(env).catch((err) => {
-        console.error('[scheduled] nightly sync failed', err);
-      }),
-    );
+
+    if (event.cron === '0 9 * * *') {
+      ctx.waitUntil(
+        runNightlyTellerSync(env).catch((err) => {
+          console.error('[scheduled] nightly sync failed', err);
+        }),
+      );
+      return;
+    }
+
+    if (event.cron === '*/30 * * * *') {
+      ctx.waitUntil(
+        runDispatch(env)
+          .then((s) => console.log('[scheduled] sms dispatch', s))
+          .catch((err) => console.error('[scheduled] sms dispatch failed', err)),
+      );
+      return;
+    }
+
+    console.warn('[scheduled] unknown cron expression', event.cron);
   },
 } satisfies ExportedHandler<Env>;
