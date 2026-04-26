@@ -78,7 +78,20 @@ if (url.pathname === "/{{SURFACE}}/logout") {
   });
 }
 
-// SPA shell + assets — auth-gated so the bundle isn't public.
+// PUBLIC asset path — must come BEFORE the gated SPA-shell route below.
+// Vite emits <script type="module" crossorigin> tags, which the browser
+// fetches in CORS mode without cookies. If we gate the assets, the
+// browser gets a 302 redirect to /{{SURFACE}}/login when loading the JS
+// module, and strict-MIME refuses the HTML response. The bundle
+// contains no secrets; the API behind it is what's protected.
+if (url.pathname.startsWith("/{{SURFACE}}/assets/")) {
+  if (!env.ASSETS) return new Response("ASSETS not configured", { status: 503 });
+  const stripped = new URL(request.url);
+  stripped.pathname = stripped.pathname.replace(/^\/{{SURFACE}}\/?/, "/");
+  return env.ASSETS.fetch(new Request(stripped.toString(), request));
+}
+
+// SPA shell — auth-gated.
 //
 // Vite is configured with base: "/{{SURFACE}}/", so the built index.html
 // references assets under /{{SURFACE}}/assets/... — but Cloudflare's ASSETS
