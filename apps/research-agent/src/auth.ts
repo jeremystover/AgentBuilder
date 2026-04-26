@@ -63,11 +63,16 @@ export async function checkAuth(request: Request, env: Env): Promise<AuthCheck> 
   }
 
   const valid = await timingSafeEqual(provided, env.MCP_BEARER_TOKEN);
-  if (!valid) {
-    return { ok: false, error: "Invalid token", status: 403 };
+  if (valid) return { ok: true };
+
+  // Also accept the fleet-internal shared secret so other agents (e.g. linkedin-watcher)
+  // can post to /ingest without needing the human-facing MCP bearer token.
+  if (env.INTERNAL_SECRET) {
+    const validInternal = await timingSafeEqual(provided, env.INTERNAL_SECRET);
+    if (validInternal) return { ok: true };
   }
 
-  return { ok: true };
+  return { ok: false, error: "Invalid token", status: 403 };
 }
 
 export function authErrorResponse(failure: AuthFailure): Response {

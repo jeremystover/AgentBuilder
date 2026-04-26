@@ -1,6 +1,6 @@
 {
   "$schemaVersion": 1,
-  "updatedAt": "2026-04-22T14:31:51.184Z",
+  "updatedAt": "2026-04-26T22:44:39.000Z",
   "agents": [
     {
       "id": "agent-builder",
@@ -315,6 +315,60 @@
           "Building or modifying other agents",
           "Host coaching or general hospitality advice",
           "Dynamic pricing — this agent audits price consistency, it does not set prices"
+        ]
+      },
+      "version": "0.0.1"
+    },
+    {
+      "id": "linkedin-watcher",
+      "name": "LinkedIn Watcher",
+      "purpose": "Polls a watchlist of LinkedIn profiles daily via Proxycurl and feeds any new posts into Research Agent's knowledge base. Background feeder worker — not user-facing.",
+      "owner": "jeremystover",
+      "status": "draft",
+      "kind": "headless",
+      "skills": [
+        "linkedin-profile-poll",
+        "post-deduplication",
+        "watchlist-management",
+        "research-agent-handoff"
+      ],
+      "tools": [
+        "add-watched-profile",
+        "remove-watched-profile",
+        "list-watched-profiles",
+        "manual-run"
+      ],
+      "mcpServers": [],
+      "sharedPackages": [],
+      "oauthScopes": [],
+      "cloudflare": {
+        "workerName": "linkedin-watcher",
+        "durableObjects": [],
+        "d1": [],
+        "kv": ["linkedin-watcher-state"],
+        "r2": ["linkedin-watcher-content"],
+        "queues": [],
+        "hasAssets": false
+      },
+      "routing": {
+        "triggerPhrases": [
+          "watch linkedin profile",
+          "add linkedin watch",
+          "stop watching linkedin",
+          "poll linkedin now"
+        ],
+        "examples": [
+          "Watch https://www.linkedin.com/in/kylelagunas for new posts",
+          "List the LinkedIn profiles I'm watching",
+          "Stop watching kylelagunas",
+          "Run the LinkedIn poll right now"
+        ],
+        "nonGoals": [
+          "Searching or synthesizing content (that's Research Agent)",
+          "Posting to LinkedIn or any social network",
+          "Pulling messages, connections, or non-post activity",
+          "Ephemeral profile reads for planning context (that's Chief of Staff's read_content)",
+          "Building or modifying other agents (that's Agent Builder)"
         ]
       },
       "version": "0.0.1"

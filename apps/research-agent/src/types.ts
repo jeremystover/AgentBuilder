@@ -93,6 +93,10 @@ export interface Env {
   ENVIRONMENT:             string;
   WATCH_NOTIFY_FROM?:      string;
 
+  // Shared secret for server-to-server ingestion from fleet agents (e.g.
+  // linkedin-watcher) that post pre-fetched content to /ingest. Optional.
+  INTERNAL_SECRET?:        string;
+
   // Lab — added by the /lab web UI
   ANTHROPIC_API_KEY?:      string;
   WEB_UI_PASSWORD?:        string;
