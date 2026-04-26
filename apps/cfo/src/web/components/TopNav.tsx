@@ -49,7 +49,6 @@ export function TopNav() {
         </nav>
       </div>
       <div className="flex items-center gap-3 text-xs text-text-muted">
-        <a href="/legacy" className="hover:text-text-primary">Legacy UI</a>
         <a href="/logout" className="hover:text-text-primary">Sign out</a>
       </div>
     </header>

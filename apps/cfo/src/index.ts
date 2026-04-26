@@ -350,17 +350,7 @@ export default {
       }
     }
 
-    // ── Legacy tax-prep SPA at /legacy (cookie-gated) ─────────────────────
-    // The pre-rewrite SPA still exists at public/legacy.html and uses
-    // header auth (X-User-Id) for its API calls. We gate the bundle
-    // behind the kit's web session so the page itself isn't public.
-    if ((path === '/legacy' || path === '/legacy/') && request.method === 'GET') {
-      const session = await requireWebSession(request, kitEnv(env), { mode: 'page' });
-      if (!session.ok) return session.response;
-      return env.ASSETS.fetch(new Request(new URL('/legacy.html', request.url).toString(), request));
-    }
-
-    // ── New React SPA at / (cookie-gated) ─────────────────────────────────
+    // ── React SPA at / (cookie-gated) ─────────────────────────────────────
     // Vite-built bundle lives under dist/ and is served by the [assets]
     // binding. Any unmatched GET falls through to the SPA so client-side
     // routing works.
