@@ -38,20 +38,20 @@ function kitEnv(env: Env): Record<string, unknown> {
 ```ts
 // Login + logout
 if (url.pathname === "/{{SURFACE}}/login" && method === "GET") {
-  return new Response(loginHtml({ title: "{{AGENT_NAME}}" }), {
+  return new Response(loginHtml({ title: "{{AGENT_NAME}}", action: "/{{SURFACE}}/login" }), {
     status: 200, headers: { "content-type": "text/html; charset=utf-8" },
   });
 }
 if (url.pathname === "/{{SURFACE}}/login" && method === "POST") {
   if (!env.WEB_UI_PASSWORD) {
-    return new Response(loginHtml({ title: "{{AGENT_NAME}}", error: "WEB_UI_PASSWORD not configured" }), {
+    return new Response(loginHtml({ title: "{{AGENT_NAME}}", action: "/{{SURFACE}}/login", error: "WEB_UI_PASSWORD not configured" }), {
       status: 500, headers: { "content-type": "text/html; charset=utf-8" },
     });
   }
   const form = await request.formData().catch(() => null);
   const password = form?.get?.("password") || "";
   if (!verifyPassword(kitEnv(env), password)) {
-    return new Response(loginHtml({ title: "{{AGENT_NAME}}", error: "Wrong password." }), {
+    return new Response(loginHtml({ title: "{{AGENT_NAME}}", action: "/{{SURFACE}}/login", error: "Wrong password." }), {
       status: 401, headers: { "content-type": "text/html; charset=utf-8" },
     });
   }

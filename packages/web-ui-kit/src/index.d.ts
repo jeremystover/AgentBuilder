@@ -39,7 +39,7 @@ export function verifyPassword(env: WebUiAuthEnv | Record<string, unknown>, cand
 export const WEB_AUTH_CONST: { COOKIE_NAME: string; SESSION_TTL_MS: number };
 
 // ── HTML shells ─────────────────────────────────────────────────────────
-export interface LoginHtmlOpts { title?: string; error?: string }
+export interface LoginHtmlOpts { title?: string; error?: string; action?: string }
 export interface AppHtmlOpts { title?: string }
 export function loginHtml(opts?: LoginHtmlOpts): string;
 export function appHtml(opts?: AppHtmlOpts): string;
