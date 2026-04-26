@@ -259,6 +259,22 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
   // before calling ASSETS so the lookup succeeds; otherwise the binding
   // hits its SPA fallback and returns index.html for every JS/CSS
   // request, breaking the browser's MIME check on module scripts.
+  //
+  // /lab/assets/* is intentionally PUBLIC (no auth gate). Vite emits
+  // <script type="module" crossorigin> tags, which the browser fetches
+  // in CORS mode — same-origin or not, those requests do NOT include
+  // cookies (crossorigin defaults to "anonymous"). If we gate the
+  // assets, the browser gets a 302 redirect to /lab/login when loading
+  // the JS module, which fails strict-MIME because the response is HTML.
+  // The bundle contains no secrets; the API behind it is what's
+  // protected. /lab itself (the SPA shell) stays gated below.
+  if (url.pathname.startsWith("/lab/assets/")) {
+    if (!env.ASSETS) return new Response("ASSETS not configured", { status: 503 });
+    const stripped = new URL(request.url);
+    stripped.pathname = stripped.pathname.replace(/^\/lab\/?/, "/");
+    return env.ASSETS.fetch(new Request(stripped.toString(), request));
+  }
+
   if (url.pathname === "/lab" || url.pathname.startsWith("/lab/")) {
     const session = await requireWebSession(request, kitEnv(env), { mode: "page", loginPath: "/lab/login" });
     if (!session.ok) return session.response;
