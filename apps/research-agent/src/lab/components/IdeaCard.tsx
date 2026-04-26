@@ -59,7 +59,12 @@ export function IdeaCard({ idea, onAdvance, onPromote, onOpen }: Props) {
           {idea.linked_article_ids.length} linked article{idea.linked_article_ids.length === 1 ? "" : "s"}
         </div>
       )}
-      <div className="flex items-center gap-2 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
+      {/* Action row — always visible. Earlier version was opacity-0 with
+          group-hover reveal, but that hid the affordance entirely on
+          touch devices and made keyboard/screen-reader access painful.
+          The actions sit at the bottom of the card with subdued text so
+          they don't visually compete with the title. */}
+      <div className="flex items-center gap-2 mt-2">
         {next && nextLabel && onAdvance && (
           <button
             onClick={(e) => { e.stopPropagation(); onAdvance(next); }}
