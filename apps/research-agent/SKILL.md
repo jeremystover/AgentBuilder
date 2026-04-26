@@ -51,6 +51,7 @@ All 10 tools are available via the standard MCP endpoint and via POST /chat.
 ## Ingestion sources
 - **Bluesky** — polled every 30 min via cron; stores liked/timeline posts, extracts linked URLs
 - **Email** — forward any email to the agent's Email Workers address; URLs are extracted and ingested
+- **LinkedIn** — the [linkedin-watcher](../linkedin-watcher/SKILL.md) fleet agent polls a watchlist daily and pushes new posts here via `POST /ingest` (server-to-server with `INTERNAL_SECRET`). Manage the watchlist conversationally with the `linkedin_watch` MCP tool — no extra connector needed.
 - **Manual** — `ingest_url` tool or `POST /ingest` endpoint; browser bookmarklet
 
 ## Page monitoring (watches)
