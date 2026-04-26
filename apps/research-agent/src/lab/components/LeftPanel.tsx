@@ -15,6 +15,7 @@ interface Props {
   onWindowChange: (w: ArticleWindow) => void;
   pinnedIds: Set<string>;
   onTogglePin: (id: string) => void;
+  onOpenArticle: (article: Article) => void;
   onIngest: () => void;
 
   // Chats tab
@@ -54,6 +55,7 @@ export function LeftPanel(props: Props) {
             onWindowChange={props.onWindowChange}
             pinnedIds={props.pinnedIds}
             onTogglePin={props.onTogglePin}
+            onOpenArticle={props.onOpenArticle}
           />
         </>
       ) : (

@@ -7,10 +7,13 @@ import { useArticles } from "./hooks/useArticles";
 import { useChat } from "./hooks/useChat";
 import { useChatSessions } from "./hooks/useChatSessions";
 import { NewIdeaModal } from "./components/NewIdeaModal";
+import { NewNoteModal } from "./components/NewNoteModal";
 import { IdeaDrawer } from "./components/IdeaDrawer";
 import { PromoteModal } from "./components/PromoteModal";
 import { IngestModal } from "./components/IngestModal";
-import type { Article, ArticleWindow, ChatScope, Idea } from "./types";
+import { ArticleDrawer } from "./components/ArticleDrawer";
+import { createNote } from "./api";
+import type { Article, ArticleWindow, ChatScope, Idea, NoteTargetKind } from "./types";
 import { Beaker, Menu } from "lucide-react";
 
 // Read the active session id from the URL once on mount. Subsequent
@@ -41,7 +44,15 @@ export function App() {
     linked_article_ids: string[];
     chat_thread: unknown[];
   } | null>(null);
+  const [newNoteInitial, setNewNoteInitial] = useState<{
+    title?: string;
+    body?: string;
+    linked_article_ids?: string[];
+    source_session_id?: string;
+    target?: { kind: NoteTargetKind; id: string };
+  } | null>(null);
   const [openIdea, setOpenIdea] = useState<Idea | null>(null);
+  const [openArticle, setOpenArticle] = useState<Article | null>(null);
   const [promotingIdea, setPromotingIdea] = useState<Idea | null>(null);
 
   // Data
@@ -93,6 +104,23 @@ export function App() {
     });
   }, [chatH, pinnedIds, scope]);
 
+  // "Save as note" — same trigger surface as Save-as-Idea but creates a
+  // standalone note (no idea/article target) attached to the chat
+  // session for provenance. Linked articles come from the current
+  // pinned set when scope is selected/digest.
+  const onSaveAsNote = useCallback((replyText: string) => {
+    const firstSentence = replyText.split(/(?<=[.!?])\s+/)[0] || replyText;
+    const title = firstSentence.slice(0, 80);
+    setNewNoteInitial({
+      title,
+      body: replyText,
+      linked_article_ids: scope === "selected" || scope === "digest"
+        ? Array.from(pinnedIds).slice(0, 12)
+        : [],
+      source_session_id: chatH.sessionId ?? undefined,
+    });
+  }, [chatH.sessionId, pinnedIds, scope]);
+
   // Title shown above the chat — current session title or a "(new chat)"
   // placeholder if the user hasn't sent yet.
   const activeSessionTitle = useMemo(() => {
@@ -112,6 +140,7 @@ export function App() {
             onWindowChange={setWindow}
             pinnedIds={pinnedIds}
             onTogglePin={togglePin}
+            onOpenArticle={(a) => setOpenArticle(a)}
             onIngest={() => setIngesting(true)}
             sessions={sessionsH.sessions}
             sessionsLoading={sessionsH.loading}
@@ -154,6 +183,7 @@ export function App() {
           onSend={(msg) => chatH.send(msg, scope, pinnedArticles)}
           onCancel={chatH.cancel}
           onSaveAsIdea={onSaveAsIdea}
+          onSaveAsNote={onSaveAsNote}
           onClear={chatH.clear}
         />
       </div>
@@ -214,6 +244,22 @@ export function App() {
         <IngestModal
           onClose={() => setIngesting(false)}
           onIngested={() => articlesH.refresh()}
+        />
+      )}
+      {newNoteInitial && (
+        <NewNoteModal
+          initial={newNoteInitial}
+          onClose={() => setNewNoteInitial(null)}
+          onCreate={async (input) => {
+            await createNote(input);
+            setNewNoteInitial(null);
+          }}
+        />
+      )}
+      {openArticle && (
+        <ArticleDrawer
+          article={openArticle}
+          onClose={() => setOpenArticle(null)}
         />
       )}
     </div>

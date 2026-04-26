@@ -262,3 +262,69 @@ export async function sendChatStream(
     }
   }
 }
+
+// ── Notes ─────────────────────────────────────────────────────────────────
+
+import type { Note, NoteTargetKind } from "./types";
+
+interface ListNotesFilter {
+  /** Pass {kind, id} to list notes attached to a specific idea/article.
+   *  Pass `kind: null` (and no id) to list standalone notes only. */
+  target?: { kind: NoteTargetKind; id: string } | { kind: null };
+  session_id?: string;
+}
+
+export async function listNotes(filter: ListNotesFilter = {}): Promise<Note[]> {
+  const qs = new URLSearchParams();
+  if (filter.target) {
+    if (filter.target.kind === null) {
+      qs.set("target_kind", "null");
+    } else {
+      qs.set("target_kind", filter.target.kind);
+      qs.set("target_id", filter.target.id);
+    }
+  }
+  if (filter.session_id) qs.set("session_id", filter.session_id);
+  const path = "/api/lab/notes" + (qs.toString() ? "?" + qs.toString() : "");
+  const data = await request<{ notes: Note[] }>(path);
+  return data.notes;
+}
+
+export async function createNote(input: {
+  title?: string;
+  body?: string;
+  tags?: string[];
+  target_kind?: NoteTargetKind;
+  target_id?: string;
+  source_session_id?: string;
+  linked_article_ids?: string[];
+}): Promise<Note> {
+  const data = await request<{ note: Note }>("/api/lab/notes", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  return data.note;
+}
+
+export async function updateNote(
+  id: string,
+  patch: Partial<{
+    title: string;
+    body: string;
+    tags: string[];
+    linked_article_ids: string[];
+    /** Pass `null` to detach. To re-attach send {target_kind, target_id} together. */
+    target_kind: NoteTargetKind | null;
+    target_id: string | null;
+  }>,
+): Promise<Note> {
+  const data = await request<{ note: Note }>(`/api/lab/notes/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+  return data.note;
+}
+
+export async function deleteNote(id: string): Promise<void> {
+  await request<{ ok: true }>(`/api/lab/notes/${encodeURIComponent(id)}`, { method: "DELETE" });
+}

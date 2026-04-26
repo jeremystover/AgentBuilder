@@ -90,3 +90,22 @@ export interface PersistedMessage {
   content: unknown;
   created_at: string;
 }
+
+// ── Notes ────────────────────────────────────────────────────────────────
+
+export type NoteTargetKind = "idea" | "article";
+
+export interface Note {
+  id: string;
+  title: string;
+  body: string;
+  tags: string[];
+  /** null when the note is standalone (not attached to an idea/article). */
+  target_kind: NoteTargetKind | null;
+  target_id: string | null;
+  /** Set when the note was created via "Save as note" from a chat reply. */
+  source_session_id: string | null;
+  linked_article_ids: string[];
+  created_at: string;
+  updated_at: string;
+}

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, Lightbulb, Sparkles, Square } from "lucide-react";
+import { ArrowUp, Lightbulb, NotebookPen, Sparkles, Square } from "lucide-react";
 import { toast } from "sonner";
 import type { Article, ChatScope } from "../types";
 import type { RenderTurn, ToolPill } from "../hooks/useChat";
@@ -13,6 +13,7 @@ interface Props {
   onSend: (msg: string) => Promise<string>;
   onCancel: () => void;
   onSaveAsIdea: (text: string) => void;
+  onSaveAsNote: (text: string) => void;
   onClear: () => void;
 }
 
@@ -23,7 +24,7 @@ const SCOPE_OPTIONS: Array<{ id: ChatScope; label: string; hint: string }> = [
 ];
 
 export function ChatPanel({
-  scope, onScopeChange, pinnedArticles, turns, loading, onSend, onCancel, onSaveAsIdea, onClear,
+  scope, onScopeChange, pinnedArticles, turns, loading, onSend, onCancel, onSaveAsIdea, onSaveAsNote, onClear,
 }: Props) {
   const [draft, setDraft] = useState("");
   const transcriptRef = useRef<HTMLDivElement>(null);
@@ -117,6 +118,9 @@ export function ChatPanel({
             onSaveAsIdea={t.role === "assistant" && !t.streaming && t.content
               ? () => onSaveAsIdea(t.content)
               : undefined}
+            onSaveAsNote={t.role === "assistant" && !t.streaming && t.content
+              ? () => onSaveAsNote(t.content)
+              : undefined}
           />
         ))}
       </div>
@@ -163,8 +167,8 @@ export function ChatPanel({
 }
 
 function Bubble({
-  turn, onSaveAsIdea,
-}: { turn: RenderTurn; onSaveAsIdea?: () => void }) {
+  turn, onSaveAsIdea, onSaveAsNote,
+}: { turn: RenderTurn; onSaveAsIdea?: () => void; onSaveAsNote?: () => void }) {
   if (turn.role === "user") {
     return (
       <div className="flex justify-end">
@@ -189,14 +193,27 @@ function Bubble({
           {showCursor && turn.content && <span className="ml-0.5 inline-block w-1.5 h-4 align-middle bg-text-primary opacity-60 animate-pulse" />}
         </div>
       )}
-      {onSaveAsIdea && (
-        <button
-          onClick={onSaveAsIdea}
-          className="inline-flex items-center gap-1.5 text-xs text-accent-spark hover:text-amber-400 transition-colors"
-        >
-          <Lightbulb className="w-3 h-3" />
-          Save as idea
-        </button>
+      {(onSaveAsIdea || onSaveAsNote) && (
+        <div className="flex items-center gap-3">
+          {onSaveAsIdea && (
+            <button
+              onClick={onSaveAsIdea}
+              className="inline-flex items-center gap-1.5 text-xs text-accent-spark hover:text-amber-400 transition-colors"
+            >
+              <Lightbulb className="w-3 h-3" />
+              Save as idea
+            </button>
+          )}
+          {onSaveAsNote && (
+            <button
+              onClick={onSaveAsNote}
+              className="inline-flex items-center gap-1.5 text-xs text-text-muted hover:text-text-primary transition-colors"
+            >
+              <NotebookPen className="w-3 h-3" />
+              Save as note
+            </button>
+          )}
+        </div>
       )}
     </div>
   );

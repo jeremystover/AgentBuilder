@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { X, ArrowUpRight, Trash2, Save } from "lucide-react";
 import { toast } from "sonner";
+import { NoteSection } from "./NoteSection";
 import type { ChatTurn, Idea, IdeaStatus } from "../types";
 
 interface Props {
@@ -124,6 +125,7 @@ export function IdeaDrawer({ idea, onClose, onUpdate, onDelete, onPromote }: Pro
               {idea.promoted_to.task_key && <> as task <code className="text-text-muted">{idea.promoted_to.task_key}</code></>}
             </div>
           )}
+          <NoteSection target={{ kind: "idea", id: idea.id }} />
         </div>
         <div className="sticky bottom-0 bg-bg-surface border-t border-border px-5 py-3 flex items-center gap-2">
           <button

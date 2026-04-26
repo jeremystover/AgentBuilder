@@ -223,6 +223,19 @@ export async function handleLabApi(request: Request, env: Env): Promise<Response
     if (m && method === "POST") return handleArchiveSession(m[1] as string, env);
   }
 
+  // ── Notes (polymorphic — standalone, idea-attached, or article-attached) ─
+  if (path === "/api/lab/notes" && method === "GET") {
+    return handleListNotes(url, env);
+  }
+  if (path === "/api/lab/notes" && method === "POST") {
+    return handleCreateNote(request, env);
+  }
+  {
+    const m = path.match(/^\/api\/lab\/notes\/([^/]+)$/);
+    if (m && method === "PATCH") return handleUpdateNote(m[1] as string, request, env);
+    if (m && method === "DELETE") return handleDeleteNote(m[1] as string, env);
+  }
+
   // ── External bearer-auth surface (for other apps to create ideas) ────────
   if (path === "/api/lab/v1/ideas" && method === "POST") {
     return handleCreateIdea(request, env, { external: true });
@@ -798,4 +811,168 @@ async function handleIngest(request: Request, env: Env): Promise<Response> {
   }
 
   return jsonResponse({ error: "expected application/json (with url) or multipart/form-data (with file)" }, 415);
+}
+
+// ── Notes ──────────────────────────────────────────────────────────────────
+
+interface NoteRow {
+  id: string;
+  title: string;
+  body: string;
+  tags: string;
+  target_kind: "idea" | "article" | null;
+  target_id: string | null;
+  source_session_id: string | null;
+  linked_article_ids: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface NoteDto {
+  id: string;
+  title: string;
+  body: string;
+  tags: string[];
+  target_kind: "idea" | "article" | null;
+  target_id: string | null;
+  source_session_id: string | null;
+  linked_article_ids: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+function noteRowToDto(r: NoteRow): NoteDto {
+  return {
+    id: r.id,
+    title: r.title,
+    body: r.body,
+    tags: safeParseArray(r.tags) as string[],
+    target_kind: r.target_kind,
+    target_id: r.target_id,
+    source_session_id: r.source_session_id,
+    linked_article_ids: safeParseArray(r.linked_article_ids) as string[],
+    created_at: r.created_at,
+    updated_at: r.updated_at,
+  };
+}
+
+const NOTE_COLUMNS = `id, title, body, tags, target_kind, target_id,
+                      source_session_id, linked_article_ids,
+                      created_at, updated_at`;
+
+async function handleListNotes(url: URL, env: Env): Promise<Response> {
+  const targetKind = url.searchParams.get("target_kind");
+  const targetId = url.searchParams.get("target_id");
+  const sessionId = url.searchParams.get("session_id");
+
+  let sql = `SELECT ${NOTE_COLUMNS} FROM notes`;
+  const args: unknown[] = [];
+  const where: string[] = [];
+  if (targetKind && targetId) {
+    where.push("target_kind = ? AND target_id = ?");
+    args.push(targetKind, targetId);
+  } else if (targetKind === "null" || targetKind === "") {
+    where.push("target_kind IS NULL");
+  }
+  if (sessionId) {
+    where.push("source_session_id = ?");
+    args.push(sessionId);
+  }
+  if (where.length > 0) sql += " WHERE " + where.join(" AND ");
+  sql += " ORDER BY datetime(updated_at) DESC LIMIT 500";
+
+  const result = await env.CONTENT_DB.prepare(sql).bind(...args).all<NoteRow>();
+  return jsonResponse({ notes: (result.results ?? []).map(noteRowToDto) });
+}
+
+interface CreateNoteBody {
+  title?: string;
+  body?: string;
+  tags?: string[];
+  target_kind?: "idea" | "article";
+  target_id?: string;
+  source_session_id?: string;
+  linked_article_ids?: string[];
+}
+
+async function handleCreateNote(request: Request, env: Env): Promise<Response> {
+  const body = await readJson<CreateNoteBody>(request);
+  // Validate the polymorphic target: both fields must be present together.
+  if ((body.target_kind && !body.target_id) || (!body.target_kind && body.target_id)) {
+    return jsonResponse({ error: "target_kind and target_id must be set together" }, 400);
+  }
+  const id = generateId("note");
+  const now = nowIso();
+  await env.CONTENT_DB.prepare(
+    `INSERT INTO notes
+       (id, title, body, tags, target_kind, target_id, source_session_id,
+        linked_article_ids, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(
+    id,
+    String(body.title || ""),
+    String(body.body || ""),
+    JSON.stringify(Array.isArray(body.tags) ? body.tags : []),
+    body.target_kind ?? null,
+    body.target_id ?? null,
+    body.source_session_id ?? null,
+    JSON.stringify(Array.isArray(body.linked_article_ids) ? body.linked_article_ids : []),
+    now,
+    now,
+  ).run();
+  const row = await env.CONTENT_DB.prepare(
+    `SELECT ${NOTE_COLUMNS} FROM notes WHERE id = ?`,
+  ).bind(id).first<NoteRow>();
+  if (!row) return jsonResponse({ error: "insert failed" }, 500);
+  return jsonResponse({ note: noteRowToDto(row) }, 201);
+}
+
+interface PatchNoteBody {
+  title?: string;
+  body?: string;
+  tags?: string[];
+  linked_article_ids?: string[];
+  /** Pass `target` as `null` to detach. To re-attach, send {target_kind, target_id}. */
+  target_kind?: "idea" | "article" | null;
+  target_id?: string | null;
+}
+
+async function handleUpdateNote(id: string, request: Request, env: Env): Promise<Response> {
+  const body = await readJson<PatchNoteBody>(request);
+  const existing = await env.CONTENT_DB.prepare(`SELECT id FROM notes WHERE id = ?`).bind(id).first();
+  if (!existing) return jsonResponse({ error: "note not found" }, 404);
+  const sets: string[] = [];
+  const args: unknown[] = [];
+  if (typeof body.title === "string") { sets.push("title = ?"); args.push(body.title.slice(0, 200)); }
+  if (typeof body.body === "string") { sets.push("body = ?"); args.push(body.body); }
+  if (Array.isArray(body.tags)) { sets.push("tags = ?"); args.push(JSON.stringify(body.tags)); }
+  if (Array.isArray(body.linked_article_ids)) {
+    sets.push("linked_article_ids = ?"); args.push(JSON.stringify(body.linked_article_ids));
+  }
+  // Detach via either explicit nulls or just sending target_kind: null.
+  if ("target_kind" in body) {
+    if (body.target_kind === null) {
+      sets.push("target_kind = NULL", "target_id = NULL");
+    } else if (body.target_kind && body.target_id) {
+      sets.push("target_kind = ?", "target_id = ?");
+      args.push(body.target_kind, body.target_id);
+    }
+  }
+  if (sets.length === 0) return jsonResponse({ error: "nothing to update" }, 400);
+  sets.push("updated_at = ?");
+  args.push(nowIso());
+  args.push(id);
+  await env.CONTENT_DB.prepare(
+    `UPDATE notes SET ${sets.join(", ")} WHERE id = ?`,
+  ).bind(...args).run();
+  const row = await env.CONTENT_DB.prepare(
+    `SELECT ${NOTE_COLUMNS} FROM notes WHERE id = ?`,
+  ).bind(id).first<NoteRow>();
+  if (!row) return jsonResponse({ error: "post-update read failed" }, 500);
+  return jsonResponse({ note: noteRowToDto(row) });
+}
+
+async function handleDeleteNote(id: string, env: Env): Promise<Response> {
+  await env.CONTENT_DB.prepare(`DELETE FROM notes WHERE id = ?`).bind(id).run();
+  return jsonResponse({ ok: true });
 }

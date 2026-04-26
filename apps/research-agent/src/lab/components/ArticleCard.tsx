@@ -5,6 +5,8 @@ interface Props {
   article: Article;
   pinned: boolean;
   onTogglePin: () => void;
+  /** Optional click on the card body (everything except the pin star + external-link icon). */
+  onOpen?: () => void;
 }
 
 function relativeTime(iso: string): string {
@@ -18,11 +20,13 @@ function relativeTime(iso: string): string {
   return m === 1 ? "1 month ago" : `${m} months ago`;
 }
 
-export function ArticleCard({ article, pinned, onTogglePin }: Props) {
+export function ArticleCard({ article, pinned, onTogglePin, onOpen }: Props) {
   return (
     <div
+      onClick={onOpen}
       className={[
-        "group relative px-3 py-2.5 rounded-md transition-colors cursor-default",
+        "group relative px-3 py-2.5 rounded-md transition-colors",
+        onOpen ? "cursor-pointer" : "cursor-default",
         "hover:bg-bg-elevated",
         pinned ? "border-l-2 border-accent-spark pl-[10px]" : "border-l-2 border-transparent",
       ].join(" ")}
@@ -33,7 +37,7 @@ export function ArticleCard({ article, pinned, onTogglePin }: Props) {
             "mt-0.5 shrink-0 rounded transition-transform active:scale-125",
             pinned ? "text-accent-spark" : "text-text-muted hover:text-accent-spark",
           ].join(" ")}
-          onClick={onTogglePin}
+          onClick={(e) => { e.stopPropagation(); onTogglePin(); }}
           title={pinned ? "Unpin" : "Pin to selection"}
           aria-label={pinned ? "Unpin article" : "Pin article"}
         >
@@ -59,6 +63,7 @@ export function ArticleCard({ article, pinned, onTogglePin }: Props) {
               href={article.url}
               target="_blank"
               rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
               className="text-text-muted hover:text-text-primary opacity-0 group-hover:opacity-100 transition-opacity"
               title="Open original"
               aria-label="Open original article"
