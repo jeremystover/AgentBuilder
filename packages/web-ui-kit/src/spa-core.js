@@ -125,22 +125,137 @@ function attachVoice(button, textarea) {
   });
 }
 
+// ── Mobile drawers ──────────────────────────────────────────────────────────
+//
+// The persistent layout is nav + main + chat. On viewports too narrow to
+// fit all three (anything below ~1280px), one or both rails collapse and
+// re-open as a drawer triggered from the mobile top bar:
+//
+//   < md   (mobile, < 768px):  both nav and chat hidden by default,
+//                              top bar visible with hamburger + chat icons
+//   md..lg (tablet, 768..1024): nav visible, chat hidden + drawer toggle
+//   >= lg  (desktop, >= 1024):  nav and chat both visible (current shell)
+//
+// The drawers are rendered on demand into document.body and removed on
+// close. They reuse buildNav() / mountChatSidebar() so behavior stays in
+// sync with the persistent rails — no duplicated config.
+
+function openDrawer({ side, content, hideAtBreakpoint }) {
+  const overlay = el("div", {
+    class: \`fixed inset-0 z-40 bg-slate-900/40 \${hideAtBreakpoint}\`,
+  });
+  const drawer = el("aside", {
+    class: [
+      "fixed inset-y-0 z-50 max-w-[85vw] bg-paper border-slate-200 flex flex-col shadow-xl overflow-hidden",
+      side === "left" ? "left-0 border-r w-72" : "right-0 border-l w-[380px]",
+      hideAtBreakpoint,
+    ].join(" "),
+  });
+  drawer.append(content);
+  const close = () => { overlay.remove(); drawer.remove(); };
+  overlay.addEventListener("click", close);
+  // Close on link click so navigation actually feels like navigation —
+  // otherwise the drawer hangs over the next page after the hash route
+  // resolves.
+  drawer.addEventListener("click", (e) => {
+    if (e.target.closest && e.target.closest("a[href]")) close();
+  });
+  document.body.append(overlay, drawer);
+  return { close };
+}
+
+function buildMobileBar() {
+  const brand = window.AGENT_BRAND || { mark: "✦", label: "Agent" };
+  const bar = el("header", {
+    class: "md:hidden fixed top-0 left-0 right-0 z-30 h-14 px-3 bg-paper/95 backdrop-blur border-b border-slate-200 flex items-center justify-between",
+  });
+  const navBtn = el("button", {
+    class: "p-2 -ml-2 text-slate-600 hover:text-ink",
+    "aria-label": "Open menu",
+    onclick: () => openDrawer({ side: "left", hideAtBreakpoint: "md:hidden", content: buildNav({ inDrawer: true }) }),
+  });
+  navBtn.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>';
+  const brandEl = el("div", { class: "flex items-center gap-1.5 font-serif font-semibold text-lg" },
+    el("span", { class: "text-xl" }, brand.mark),
+    brand.label,
+  );
+  const chatBtn = el("button", {
+    class: "p-2 -mr-2 text-slate-600 hover:text-ink",
+    "aria-label": "Open chat",
+    onclick: () => {
+      const aside = el("div", { class: "flex-1 flex flex-col" });
+      (window.mountChatSidebar || defaultMountChatSidebar)(aside);
+      openDrawer({ side: "right", hideAtBreakpoint: "lg:hidden", content: aside });
+    },
+  });
+  chatBtn.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
+  bar.append(navBtn, brandEl, chatBtn);
+  return bar;
+}
+
+function buildTabletChatToggle() {
+  // Floating action button visible only on tablet (md..lg) where the
+  // persistent chat aside is hidden but there's no mobile top bar.
+  const btn = el("button", {
+    class: "hidden md:flex lg:hidden fixed bottom-6 right-6 z-30 w-12 h-12 rounded-full bg-ink text-white shadow-lg items-center justify-center hover:bg-slate-700",
+    "aria-label": "Open chat",
+    onclick: () => {
+      const aside = el("div", { class: "flex-1 flex flex-col" });
+      (window.mountChatSidebar || defaultMountChatSidebar)(aside);
+      openDrawer({ side: "right", hideAtBreakpoint: "lg:hidden", content: aside });
+    },
+  });
+  btn.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
+  return btn;
+}
+
+function ensureMobileChrome() {
+  // The mobile top bar and tablet chat-toggle are appended directly to
+  // document.body (not #app), so they survive renderShell's innerHTML
+  // wipe between route changes. Dedupe by id to prevent stacking.
+  if (!document.getElementById("__cos_mobile_bar")) {
+    const bar = buildMobileBar();
+    bar.id = "__cos_mobile_bar";
+    document.body.appendChild(bar);
+  }
+  if (!document.getElementById("__cos_tablet_toggle")) {
+    const btn = buildTabletChatToggle();
+    btn.id = "__cos_tablet_toggle";
+    document.body.appendChild(btn);
+  }
+}
+
 function renderShell() {
   const root = document.getElementById("app");
   root.innerHTML = "";
   const wrap = el("div", { class: "min-h-screen flex" });
-  const main = el("main", { class: "flex-1 min-w-0", id: "main" });
-  const aside = el("aside", { class: "w-[380px] shrink-0 border-l border-slate-200 bg-white/70 backdrop-blur sticky top-0 h-screen", id: "chat" });
-  wrap.append(buildNav(), main, aside);
+  // Persistent nav — visible on md+, hidden on mobile (mobile uses drawer)
+  const nav = buildNav();
+  nav.classList.add("hidden", "md:flex");
+  // Persistent chat aside — visible on lg+, hidden on smaller (drawer)
+  const aside = el("aside", {
+    class: "w-[380px] shrink-0 border-l border-slate-200 bg-white/70 backdrop-blur sticky top-0 h-screen hidden lg:flex flex-col",
+    id: "chat",
+  });
+  // Main column — pads top on mobile to clear the fixed mobile bar
+  const main = el("main", { class: "flex-1 min-w-0 pt-14 md:pt-0", id: "main" });
+  wrap.append(nav, main, aside);
   root.appendChild(wrap);
+  ensureMobileChrome();
   (window.mountChatSidebar || defaultMountChatSidebar)(aside);
   return main;
 }
 
-function buildNav() {
+function buildNav(opts = {}) {
   const items = window.NAV || [];
   const brand = window.AGENT_BRAND || { mark: "✦", label: "Agent" };
-  const nav = el("nav", { class: "w-56 shrink-0 border-r border-slate-200 px-4 py-6 sticky top-0 h-screen flex flex-col" });
+  // Default = persistent rail (sticky inside flex parent). When the drawer
+  // calls this with { inDrawer: true } we skip 'sticky' / 'h-screen' since
+  // the drawer host already positions it fixed with full height.
+  const cls = opts.inDrawer
+    ? "w-full h-full px-4 py-6 flex flex-col"
+    : "w-56 shrink-0 border-r border-slate-200 px-4 py-6 sticky top-0 h-screen flex-col";
+  const nav = el("nav", { class: cls });
   const home = items[0]?.hash || "#/";
   nav.appendChild(el("a", {
     href: home,
