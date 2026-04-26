@@ -11,4 +11,5 @@
 
 export * from './types.js';
 export * from './vault.js';
+export * from './api.js';
 export { CREDENTIAL_VAULT_SCHEMA } from './schema.js';
