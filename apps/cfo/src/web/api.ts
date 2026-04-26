@@ -188,12 +188,20 @@ export async function classifyTransaction(id: string, input: { entity?: string; 
   });
 }
 
-export async function splitTransaction(id: string, input: {
-  splits: Array<{ amount: number; entity: string; category_tax?: string; category_budget?: string; description?: string }>;
-}): Promise<{ ok: true }> {
+export interface SplitItem {
+  entity: "elyse_coaching" | "jeremy_coaching" | "airbnb_activity" | "family_personal";
+  category_tax?: string;
+  amount: number;
+  note?: string;
+}
+
+// Body is the array directly — see SplitItemSchema in
+// apps/cfo/src/routes/transactions.ts. Server validates that the abs
+// sum matches the transaction's abs amount.
+export async function splitTransaction(id: string, splits: SplitItem[]): Promise<{ splits: Array<SplitItem & { id: string }> }> {
   return request(`/transactions/${encodeURIComponent(id)}/split`, {
     method: "POST",
-    body: JSON.stringify(input),
+    body: JSON.stringify(splits),
   });
 }
 
