@@ -438,6 +438,282 @@ function showCompletedToggle(scope, onToggle) {
   return btn;
 }
 
+// ── Page: Now ──────────────────────────────────────────────────────────────
+// Right-this-minute focus view: countdown to the next meeting + prep, the
+// previous meeting's transcript/summary entry point, a short list of quick
+// wins, and the user-curated "Focus now" tray with a Release button.
+function fmtCountdown(secs) {
+  if (!Number.isFinite(secs) || secs <= 0) return "now";
+  const m = Math.floor(secs / 60);
+  if (m < 60) return m + "m " + String(secs % 60).padStart(2, "0") + "s";
+  const h = Math.floor(m / 60);
+  return h + "h " + (m % 60) + "m";
+}
+
+let _nowTickHandle = null;
+
+async function pageNow(main) {
+  if (_nowTickHandle) { clearInterval(_nowTickHandle); _nowTickHandle = null; }
+  const data = await api("/api/now");
+  const projects = (await api("/api/projects")).projects || [];
+  const projectsById = Object.fromEntries(projects.map((p) => [p.projectId, p]));
+  main.innerHTML = "";
+  const root = el("div", { class: "max-w-3xl mx-auto px-10 py-10 space-y-8" });
+  root.appendChild(el("header", { class: "flex items-baseline justify-between gap-3" },
+    el("h1", { class: "text-3xl font-semibold" }, "Now"),
+    el("div", { class: "text-sm text-slate-500" },
+      new Date().toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })),
+  ));
+  if (window.chatPromptBubbles) root.appendChild(window.chatPromptBubbles([
+    "Prep me for my next meeting",
+    "What should I focus on for the next 30 minutes?",
+    "Summarize my last meeting",
+  ]));
+
+  // ── Next meeting (with live countdown) ──
+  const nextSec = el("section", { class: "bg-white rounded-2xl ring-1 ring-slate-200 p-5 space-y-3" });
+  if (data.nextMeeting) {
+    const m = data.nextMeeting;
+    const head = el("div", { class: "flex items-baseline justify-between gap-3" },
+      el("div", {},
+        el("div", { class: "text-xs uppercase tracking-wide text-slate-400" },
+          m.inProgress ? "In progress" : "Next meeting"),
+        el("div", { class: "text-lg font-semibold mt-0.5" }, m.title || "(untitled)"),
+      ),
+      el("div", { class: "text-right" },
+        el("div", { class: "text-2xl font-semibold text-indigo-600", id: "now-countdown" },
+          m.inProgress ? "live" : fmtCountdown(m.secondsUntil)),
+        el("div", { class: "text-xs text-slate-500" },
+          fmtTime(m.startTime) + " – " + fmtTime(m.endTime)),
+      ),
+    );
+    nextSec.appendChild(head);
+    // Live tick — re-renders the countdown every second without re-fetching.
+    if (!m.inProgress && Number.isFinite(m.secondsUntil)) {
+      const startMs = Date.parse(m.startTime);
+      _nowTickHandle = setInterval(() => {
+        const node = document.getElementById("now-countdown");
+        if (!node) return;
+        const left = Math.max(0, Math.round((startMs - Date.now()) / 1000));
+        node.textContent = left === 0 ? "now" : fmtCountdown(left);
+      }, 1000);
+    }
+    const links = el("div", { class: "flex gap-3 flex-wrap text-xs" });
+    if (m.htmlLink) links.appendChild(el("a", {
+      href: m.htmlLink, target: "_blank", rel: "noopener",
+      class: "text-indigo-600 hover:underline",
+    }, "📅 Open invite"));
+    if (m.zoomUrl) links.appendChild(el("a", {
+      href: m.zoomUrl, target: "_blank", rel: "noopener",
+      class: "text-indigo-600 hover:underline",
+    }, "🎥 Join Zoom"));
+    if (m.meetUrl) links.appendChild(el("a", {
+      href: m.meetUrl, target: "_blank", rel: "noopener",
+      class: "text-indigo-600 hover:underline",
+    }, "🎥 Join Meet"));
+    if (links.children.length) nextSec.appendChild(links);
+    if (m.attendees?.length) {
+      nextSec.appendChild(el("div", { class: "text-xs text-slate-500" },
+        m.attendees.slice(0, 6).map((a) => a.name || a.email).filter(Boolean).join(", ")
+          + (m.attendees.length > 6 ? \` +\${m.attendees.length - 6}\` : "")));
+    }
+    if (m.prep && (m.prep.projects?.length || m.prep.openTasks?.length || m.prep.openCommitments?.length || m.prep.stakeholders?.length)) {
+      const prep = el("div", { class: "border-t border-slate-100 pt-3 space-y-1.5 text-xs" });
+      if (m.prep.stakeholders?.length) prep.appendChild(el("div", {},
+        el("span", { class: "uppercase tracking-wide text-slate-400 mr-2" }, "People"),
+        m.prep.stakeholders.map((s) => s.name).join(", ")));
+      if (m.prep.projects?.length) prep.appendChild(el("div", {},
+        el("span", { class: "uppercase tracking-wide text-slate-400 mr-2" }, "Projects"),
+        m.prep.projects.map((p) => p.name).join(", ")));
+      if (m.prep.openTasks?.length) prep.appendChild(el("div", {},
+        el("span", { class: "uppercase tracking-wide text-slate-400 mr-2" }, "Open tasks"),
+        m.prep.openTasks.map((t) => t.title).join(" · ")));
+      if (m.prep.openCommitments?.length) prep.appendChild(el("div", {},
+        el("span", { class: "uppercase tracking-wide text-slate-400 mr-2" }, "Commitments"),
+        m.prep.openCommitments.map((c) => c.description).join(" · ")));
+      nextSec.appendChild(prep);
+    }
+  } else {
+    nextSec.appendChild(el("div", { class: "text-sm text-slate-500" }, "No meetings on the calendar in the next 24 hours."));
+  }
+  root.appendChild(nextSec);
+
+  // ── Recent meeting (transcript / summary entry point) ──
+  if (data.recentMeeting) {
+    root.appendChild(recentMeetingCard(data.recentMeeting));
+  }
+
+  // ── Focus now tray ──
+  root.appendChild(focusNowSection(data.focusTasks || [], data.quickWins || [], projectsById));
+
+  // ── Quick wins ──
+  if (data.quickWins?.length) {
+    const sec = el("section", { class: "space-y-1" });
+    sec.appendChild(el("h2", { class: "text-lg font-semibold mb-2" }, "Quick wins"));
+    sec.appendChild(el("div", { class: "text-xs text-slate-500 mb-1" },
+      "Small, prioritized things you could knock out right now."));
+    for (const t of data.quickWins) {
+      const row = el("div", { class: "flex items-center gap-3 py-2" },
+        el("button", {
+          class: "shrink-0 px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200 hover:bg-indigo-100 text-xs",
+          title: "Add to focus list",
+          onclick: async () => {
+            try {
+              await api("/api/focus-now", { method: "POST", body: { taskKey: t.taskKey } });
+              toast("Added to focus", "ok"); window.__cos.route();
+            } catch (err) { toast(err.message, "err"); }
+          },
+        }, "+ Focus"),
+        el("div", { class: "flex-1" },
+          window.taskRow(t, { projectsById, onChanged: () => window.__cos.route() })),
+      );
+      sec.appendChild(row);
+    }
+    root.appendChild(sec);
+  }
+
+  main.appendChild(root);
+}
+
+function recentMeetingCard(m) {
+  const sec = el("section", { class: "bg-white rounded-2xl ring-1 ring-slate-200 p-5 space-y-3" });
+  sec.appendChild(el("div", { class: "flex items-baseline justify-between gap-3" },
+    el("div", {},
+      el("div", { class: "text-xs uppercase tracking-wide text-slate-400" }, "Just finished"),
+      el("div", { class: "text-base font-semibold mt-0.5" }, m.title || "(untitled)"),
+    ),
+    el("div", { class: "text-xs text-slate-500" },
+      fmtTime(m.startTime) + " – " + fmtTime(m.endTime)),
+  ));
+
+  const meetingId = m.meetingId || m.eventId || "";
+  const status = el("div", { class: "text-xs text-slate-500" },
+    m.hasTranscript ? "Transcript imported from Zoom." : "No transcript on file.");
+  sec.appendChild(status);
+
+  const transcriptBox = el("div", { class: "hidden bg-slate-50 rounded-lg p-3 text-xs whitespace-pre-wrap font-mono max-h-72 overflow-y-auto" });
+  sec.appendChild(transcriptBox);
+
+  const actions = el("div", { class: "flex flex-wrap gap-2" });
+  if (m.hasTranscript) {
+    actions.appendChild(el("button", {
+      class: "text-xs px-3 py-1 rounded-full ring-1 ring-slate-200 hover:bg-slate-50",
+      onclick: async () => {
+        try {
+          const r = await api("/api/meetings/" + encodeURIComponent(meetingId) + "/transcript");
+          transcriptBox.textContent = r.transcript || "(empty)";
+          transcriptBox.classList.remove("hidden");
+        } catch (err) { toast(err.message, "err"); }
+      },
+    }, "Show transcript"));
+  } else {
+    actions.appendChild(el("button", {
+      class: "text-xs px-3 py-1 rounded-full bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200 hover:bg-indigo-100",
+      onclick: async (e) => {
+        const btn = e.currentTarget;
+        btn.disabled = true; btn.textContent = "Importing…";
+        try {
+          const r = await api("/api/meetings/" + encodeURIComponent(meetingId) + "/transcript", {
+            method: "POST", body: { daysBack: 1 },
+          });
+          if (r.transcript) {
+            transcriptBox.textContent = r.transcript;
+            transcriptBox.classList.remove("hidden");
+            status.textContent = "Transcript imported from Zoom.";
+            toast("Transcript imported", "ok");
+          } else {
+            toast(r.note || "No transcript yet — try again in a few minutes.", "info");
+          }
+        } catch (err) { toast(err.message, "err"); }
+        finally { btn.disabled = false; btn.textContent = "Import from Zoom"; }
+      },
+    }, "Import from Zoom"));
+  }
+  sec.appendChild(actions);
+
+  // Manual summary / transcript entry — saved as a Note(entityType=meeting).
+  const ta = el("textarea", {
+    rows: 4,
+    class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 text-sm focus:ring-indigo-400 focus:outline-none resize-none",
+    placeholder: "Paste a transcript or jot a summary…",
+  });
+  ta.value = m.summary?.body || "";
+  let saveTimer;
+  ta.addEventListener("input", () => {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(async () => {
+      try {
+        await api("/api/meetings/" + encodeURIComponent(meetingId) + "/summary", {
+          method: "PUT", body: { body: ta.value },
+        });
+      } catch (err) { toast(err.message, "err"); }
+    }, 600);
+  });
+  sec.appendChild(el("label", { class: "block text-xs uppercase tracking-wide text-slate-500" },
+    "Your summary", ta));
+  return sec;
+}
+
+function focusNowSection(focusTasks, quickWins, projectsById) {
+  const sec = el("section", { class: "bg-amber-50 rounded-2xl ring-1 ring-amber-200 p-5 space-y-3" });
+  sec.appendChild(el("div", { class: "flex items-baseline justify-between gap-3" },
+    el("h2", { class: "text-lg font-semibold" }, "Focus now"),
+    focusTasks.length ? el("button", {
+      class: "text-xs px-3 py-1 rounded-full bg-white ring-1 ring-amber-300 text-amber-800 hover:bg-amber-100",
+      onclick: async () => {
+        if (!confirm("Release the focus list?")) return;
+        try {
+          await api("/api/focus-now", { method: "DELETE", body: {} });
+          toast("Released", "ok"); window.__cos.route();
+        } catch (err) { toast(err.message, "err"); }
+      },
+    }, "Release") : null,
+  ));
+  if (!focusTasks.length) {
+    sec.appendChild(el("div", { class: "text-sm text-slate-600" },
+      "Pick a few tasks to focus on right now. Use the + Focus buttons below, or pick from the menu."));
+    sec.appendChild(focusPicker(quickWins, projectsById));
+  } else {
+    for (const t of focusTasks) {
+      const row = el("div", { class: "flex items-center gap-2 bg-white rounded-lg ring-1 ring-amber-200 px-2" },
+        el("div", { class: "flex-1" },
+          window.taskRow(t, { projectsById, onChanged: () => window.__cos.route() })),
+        el("button", {
+          class: "text-xs text-slate-500 hover:text-rose-600 px-2",
+          title: "Remove from focus",
+          onclick: async () => {
+            try {
+              await api("/api/focus-now/" + encodeURIComponent(t.taskKey), { method: "DELETE", body: {} });
+              window.__cos.route();
+            } catch (err) { toast(err.message, "err"); }
+          },
+        }, "✕"),
+      );
+      sec.appendChild(row);
+    }
+    sec.appendChild(focusPicker(quickWins, projectsById));
+  }
+  return sec;
+}
+
+function focusPicker(quickWins, projectsById) {
+  const wrap = el("div", { class: "pt-2" });
+  const sel = el("select", { class: "w-full rounded-lg ring-1 ring-amber-200 bg-white px-3 py-2 text-sm" });
+  sel.appendChild(el("option", { value: "" }, "+ Add a task to focus on…"));
+  for (const t of quickWins || []) {
+    sel.appendChild(el("option", { value: t.taskKey }, t.title));
+  }
+  sel.addEventListener("change", async () => {
+    if (!sel.value) return;
+    try {
+      await api("/api/focus-now", { method: "POST", body: { taskKey: sel.value } });
+      toast("Added", "ok"); window.__cos.route();
+    } catch (err) { toast(err.message, "err"); }
+  });
+  wrap.appendChild(sel);
+  return wrap;
+}
+
 // ── Page: Today ────────────────────────────────────────────────────────────
 async function pageToday(main) {
   const includeCompleted = showCompletedFlag("today");
@@ -525,6 +801,7 @@ async function pageWeek(main) {
   main.appendChild(root);
 }
 
+window.pageNow   = pageNow;
 window.pageToday = pageToday;
 window.pageWeek  = pageWeek;
 window.taskRow   = taskRow;
