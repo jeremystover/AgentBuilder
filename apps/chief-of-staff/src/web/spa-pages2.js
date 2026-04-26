@@ -899,6 +899,7 @@ window.pageTriage = pageTriage;
 
 window.AGENT_BRAND = { mark: "✦", label: "Chief" };
 window.NAV = [
+  { hash: "#/now",      label: "Now" },
   { hash: "#/today",    label: "Today" },
   { hash: "#/week",     label: "This Week" },
   { hash: "#/projects", label: "Projects" },
@@ -915,6 +916,7 @@ api("/api/config").then((cfg) => {
   }
 }).catch(() => {});
 window.ROUTES = [
+  { pattern: /^#\\/now$/,             handler: "pageNow" },
   { pattern: /^#\\/today$/,           handler: "pageToday" },
   { pattern: /^#\\/week$/,            handler: "pageWeek" },
   { pattern: /^#\\/projects$/,        handler: "pageProjects" },

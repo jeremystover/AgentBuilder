@@ -86,6 +86,11 @@ function safeParseJsonArray(s) {
   } catch { return []; }
 }
 
+function priorityRank(p) {
+  const v = String(p || "").toLowerCase();
+  return v === "high" ? 3 : v === "medium" ? 2 : v === "low" ? 1 : 0;
+}
+
 function compareDueAt(a, b) {
   const av = a?.dueAt ? Date.parse(a.dueAt) : Number.POSITIVE_INFINITY;
   const bv = b?.dueAt ? Date.parse(b.dueAt) : Number.POSITIVE_INFINITY;
@@ -230,6 +235,90 @@ export async function handleApiRequest(request, ctx) {
     return jsonResponse({
       ideasUrl: env.IDEAS_URL || "",
     });
+  }
+
+  // ── Now ──────────────────────────────────────────────────────────────────
+  if (method === "GET" && path === "/api/now") {
+    return await handleNow();
+  }
+
+  // ── Focus list (the "Focus now" tray on /now) ────────────────────────────
+  if (method === "GET" && path === "/api/focus-now") {
+    return jsonResponse({ tasks: await readFocusList() });
+  }
+  if (method === "POST" && path === "/api/focus-now") {
+    const body = await readJson();
+    if (!body.taskKey) return jsonResponse({ error: "taskKey required" }, 400);
+    await addToFocusList(body.taskKey);
+    return jsonResponse({ ok: true });
+  }
+  if (method === "DELETE" && path === "/api/focus-now") {
+    await env.DB.prepare(`DELETE FROM FocusNow`).run();
+    return jsonResponse({ ok: true });
+  }
+  {
+    const m = path.match(/^\/api\/focus-now\/([^/]+)$/);
+    if (m && method === "DELETE") {
+      await env.DB.prepare(`DELETE FROM FocusNow WHERE taskKey=?`).bind(m[1]).run();
+      return jsonResponse({ ok: true });
+    }
+  }
+
+  // ── Meeting transcript / summary ─────────────────────────────────────────
+  {
+    const m = path.match(/^\/api\/meetings\/([^/]+)\/transcript$/);
+    if (m && method === "GET") {
+      try {
+        const data = await callTool(tools, "get_meeting_transcript", { meetingId: m[1] });
+        return jsonResponse({ transcript: data.transcript || "", meetingId: m[1] });
+      } catch (err) {
+        return jsonResponse({ transcript: "", error: err.message }, 200);
+      }
+    }
+    if (m && method === "POST") {
+      // Pull from Zoom (poll recent recordings). Then re-fetch the transcript.
+      const days = (await readJson()).daysBack || 1;
+      try {
+        await callTool(tools, "poll_zoom_recordings", { daysBack: days });
+      } catch (err) {
+        return jsonResponse({ ok: false, error: err.message }, 200);
+      }
+      try {
+        const data = await callTool(tools, "get_meeting_transcript", { meetingId: m[1] });
+        return jsonResponse({ ok: true, transcript: data.transcript || "" });
+      } catch (err) {
+        return jsonResponse({ ok: true, transcript: "", note: err.message });
+      }
+    }
+  }
+  {
+    const m = path.match(/^\/api\/meetings\/([^/]+)\/summary$/);
+    if (m && method === "GET") {
+      const row = await env.DB.prepare(
+        `SELECT noteId, body, updatedAt FROM Notes
+           WHERE entityType='meeting' AND entityId=?
+           ORDER BY updatedAt DESC LIMIT 1`
+      ).bind(m[1]).first();
+      return jsonResponse({ summary: row || null });
+    }
+    if (m && method === "PUT") {
+      const body = await readJson();
+      const existing = await env.DB.prepare(
+        `SELECT noteId FROM Notes WHERE entityType='meeting' AND entityId=? LIMIT 1`
+      ).bind(m[1]).first();
+      const now = nowIso();
+      if (existing) {
+        await env.DB.prepare(`UPDATE Notes SET body=?, updatedAt=? WHERE noteId=?`)
+          .bind(body.body || "", now, existing.noteId).run();
+        return jsonResponse({ ok: true, noteId: existing.noteId });
+      }
+      const noteId = `note_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+      await env.DB.prepare(
+        `INSERT INTO Notes (noteId, entityType, entityId, body, createdAt, updatedAt)
+           VALUES (?, 'meeting', ?, ?, ?, ?)`
+      ).bind(noteId, m[1], body.body || "", now, now).run();
+      return jsonResponse({ ok: true, noteId });
+    }
   }
 
   // ── Today ────────────────────────────────────────────────────────────────
@@ -759,6 +848,118 @@ export async function handleApiRequest(request, ctx) {
   return jsonResponse({ error: "not found" }, 404);
 
   // ── Inner handlers ───────────────────────────────────────────────────────
+
+  async function readFocusList() {
+    const res = await env.DB.prepare(
+      `SELECT taskKey, position, addedAt FROM FocusNow ORDER BY position ASC, _row_id ASC`
+    ).all();
+    const rows = res.results || [];
+    if (!rows.length) return [];
+    const tasks = await readAll(sheets, "Tasks");
+    const byKey = Object.fromEntries(tasks.map((t) => [t.taskKey, t]));
+    return rows
+      .map((r) => byKey[r.taskKey] ? { ...toTaskDto(byKey[r.taskKey]), addedAt: r.addedAt } : null)
+      .filter(Boolean);
+  }
+
+  async function addToFocusList(taskKey) {
+    const existing = await env.DB.prepare(
+      `SELECT _row_id FROM FocusNow WHERE taskKey=?`
+    ).bind(taskKey).first();
+    if (existing) return;
+    const next = await env.DB.prepare(
+      `SELECT COALESCE(MAX(position), 0) + 1 AS p FROM FocusNow`
+    ).first();
+    await env.DB.prepare(
+      `INSERT INTO FocusNow (taskKey, position, addedAt) VALUES (?, ?, ?)`
+    ).bind(taskKey, next?.p || 1, nowIso()).run();
+  }
+
+  async function handleNow() {
+    const now = new Date();
+    const nowMs = now.getTime();
+    const fromIso = new Date(nowMs - 4 * 3_600_000).toISOString();
+    const toIso = new Date(nowMs + 24 * 3_600_000).toISOString();
+    const [tasks, meetings, stakeholders, projects, commitments] = await Promise.all([
+      readAll(sheets, "Tasks"),
+      listMeetings(sheets, fromIso, toIso),
+      readAll(sheets, "Stakeholders"),
+      readAll(sheets, "Projects"),
+      readAll(sheets, "Commitments"),
+    ]);
+    const allMeetingRows = await readAll(sheets, "Meetings");
+    const meetingRowById = Object.fromEntries(allMeetingRows.map((r) => [r.meetingId, r]));
+
+    // Next meeting: first one whose start is in the future. Fall back to the
+    // current in-progress meeting (started but not yet ended) so the prep
+    // panel is still useful when you're already in the call.
+    const future = meetings.filter((m) => Date.parse(m.startTime) > nowMs);
+    const inProgress = meetings.filter((m) => {
+      const s = Date.parse(m.startTime), e = Date.parse(m.endTime);
+      return Number.isFinite(s) && Number.isFinite(e) && s <= nowMs && nowMs <= e;
+    });
+    const pickNext = inProgress[0] || future[0] || null;
+    const nextMeeting = pickNext ? {
+      ...pickNext,
+      prep: prepNotesForMeeting(pickNext, { stakeholders, projects, tasks, commitments }),
+      secondsUntil: Math.max(0, Math.round((Date.parse(pickNext.startTime) - nowMs) / 1000)),
+      inProgress: !!inProgress[0],
+    } : null;
+
+    // Recent meeting: most-recently-ended meeting within the last 2 hours.
+    const recent = meetings
+      .filter((m) => {
+        const e = Date.parse(m.endTime);
+        return Number.isFinite(e) && e <= nowMs && e >= nowMs - 2 * 3_600_000;
+      })
+      .sort((a, b) => Date.parse(b.endTime) - Date.parse(a.endTime))[0] || null;
+    let recentMeeting = null;
+    if (recent) {
+      const row = meetingRowById[recent.meetingId];
+      const summaryRow = await env.DB.prepare(
+        `SELECT noteId, body, updatedAt FROM Notes
+           WHERE entityType='meeting' AND entityId=?
+           ORDER BY updatedAt DESC LIMIT 1`
+      ).bind(recent.meetingId || recent.eventId || "").first();
+      recentMeeting = {
+        ...recent,
+        hasTranscript: !!(row?.transcriptRef),
+        summary: summaryRow || null,
+      };
+    }
+
+    // Quick wins: small, prioritized, due-soon open tasks. The user wants a
+    // *short* list of things they can knock out right now, so we cap at 5
+    // and exclude anything already in the focus list.
+    const focusKeys = new Set(((await env.DB.prepare(
+      `SELECT taskKey FROM FocusNow`
+    ).all()).results || []).map((r) => r.taskKey));
+    const quickWins = tasks
+      .filter((t) => isOpenStatus(t.status))
+      .filter((t) => !focusKeys.has(t.taskKey))
+      .map((t) => {
+        const due = Date.parse(t.dueAt || "");
+        const overdue = Number.isFinite(due) && due < nowMs;
+        const dueToday = Number.isFinite(due) && due <= nowMs + 24 * 3_600_000;
+        const pri = priorityRank(t.priority);
+        const score = (overdue ? 5 : 0) + (dueToday ? 2 : 0) + pri;
+        return { task: t, score };
+      })
+      .filter((x) => x.score >= 2)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 5)
+      .map((x) => toTaskDto(x.task));
+
+    const focusTasks = await readFocusList();
+
+    return jsonResponse({
+      now: now.toISOString(),
+      nextMeeting,
+      recentMeeting,
+      quickWins,
+      focusTasks,
+    });
+  }
 
   async function handleToday(includeCompleted) {
     const now = new Date();
