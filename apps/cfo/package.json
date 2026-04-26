@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.web.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "eval": "vitest run src/evals/golden.test.ts",
     "db:migrate": "wrangler d1 migrations apply cfo-db"
   },
   "dependencies": {
