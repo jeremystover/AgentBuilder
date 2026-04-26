@@ -165,17 +165,30 @@ async function pageProjectDetail(main, projectId) {
   stakeholdersSec.appendChild(stakeholderRow);
   root.appendChild(stakeholdersSec);
 
-  // Tasks
+  // Tasks (with show-completed toggle scoped to this project)
   const tasksSec = el("section", { class: "space-y-1" });
-  tasksSec.appendChild(el("div", { class: "flex items-baseline justify-between mb-2" },
+  const showDone = window.showCompletedFlag("project:" + projectId);
+  tasksSec.appendChild(el("div", { class: "flex items-baseline justify-between mb-2 gap-3" },
     el("h2", { class: "text-lg font-semibold" }, "Open tasks"),
-    el("button", { class: "text-xs text-slate-500 hover:text-ink",
-      onclick: () => openCreateTaskModal({ projectsById: { [projectId]: { projectId, name: data.name } }, onChanged: () => $$.route() }) },
-      "+ Add task"),
+    el("div", { class: "flex items-center gap-2" },
+      window.showCompletedToggle("project:" + projectId, () => $$.route()),
+      el("button", { class: "text-xs text-slate-500 hover:text-ink",
+        onclick: () => openCreateTaskModal({ projectsById: { [projectId]: { projectId, name: data.name } }, onChanged: () => $$.route() }) },
+        "+ Add task"),
+    ),
   ));
   if (!data.openTasks?.length) tasksSec.appendChild(el("div", { class: "text-sm text-slate-500" }, "No open tasks."));
   for (const t of data.openTasks || []) {
     tasksSec.appendChild(window.taskRow(t, { showProject: false, onChanged: () => $$.route() }));
+  }
+  if (showDone) {
+    try {
+      const done = await api("/api/tasks/completed?scope=all&projectId=" + encodeURIComponent(projectId));
+      if (done.tasks?.length) {
+        tasksSec.appendChild(el("h3", { class: "text-xs uppercase tracking-wide text-slate-400 mt-4" }, "Completed"));
+        for (const t of done.tasks) tasksSec.appendChild(window.taskRow(t, { showProject: false, onChanged: () => $$.route() }));
+      }
+    } catch (err) { /* surfaced elsewhere */ }
   }
   root.appendChild(tasksSec);
 
@@ -194,11 +207,17 @@ async function pageProjectDetail(main, projectId) {
     for (const m of data.recentMeetings) sec.appendChild(window.meetingCard(m, { onChanged: () => $$.route() }));
     root.appendChild(sec);
   }
-  const addMeetingBtn = el("button", {
-    class: "text-sm text-slate-500 hover:text-ink",
-    onclick: () => openCreateMeetingModal({ projectName: data.name, stakeholders: data.stakeholders || [] }),
-  }, "+ Schedule meeting");
-  root.appendChild(addMeetingBtn);
+  const meetingActions = el("div", { class: "flex gap-4" },
+    el("button", {
+      class: "text-sm text-slate-500 hover:text-ink",
+      onclick: () => openCreateMeetingModal({ projectName: data.name, stakeholders: data.stakeholders || [] }),
+    }, "+ Schedule meeting"),
+    el("button", {
+      class: "text-sm text-slate-500 hover:text-ink",
+      onclick: () => openLinkMeetingModal(projectId, () => $$.route()),
+    }, "+ Link existing meeting"),
+  );
+  root.appendChild(meetingActions);
 
   main.appendChild(root);
 }
@@ -271,6 +290,50 @@ function openCreateMeetingModal({ projectName, stakeholders }) {
           } catch (err) { toast(err.message, "err"); }
         },
       }, "Schedule"),
+    ),
+  );
+  const modal = openModal(card);
+}
+
+async function openLinkMeetingModal(projectId, onDone) {
+  // Pull the next 14 days of meetings — wide enough to cover "this week"
+  // and a bit of next week so a Friday-afternoon planning session can grab
+  // an early-Monday meeting.
+  const from = new Date(); from.setHours(0, 0, 0, 0);
+  const to = new Date(from); to.setDate(to.getDate() + 14);
+  let meetings = [];
+  try {
+    const r = await api(\`/api/calendar?from=\${encodeURIComponent(from.toISOString())}&to=\${encodeURIComponent(to.toISOString())}\`);
+    meetings = r.meetings || [];
+  } catch (err) { toast(err.message, "err"); return; }
+  if (!meetings.length) {
+    toast("No upcoming meetings to link", "info");
+    return;
+  }
+  const sel = el("select", { class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 bg-white" });
+  sel.appendChild(el("option", { value: "" }, "— Pick a meeting —"));
+  for (const m of meetings) {
+    const day = new Date(m.startTime).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+    const time = fmtTime(m.startTime);
+    sel.appendChild(el("option", { value: m.meetingId || m.eventId }, \`\${day} \${time} — \${m.title || "(untitled)"}\`));
+  }
+  const card = el("div", { class: "space-y-3" },
+    el("h2", { class: "text-base font-semibold" }, "Link existing meeting"),
+    sel,
+    el("div", { class: "flex justify-end gap-2" },
+      el("button", { class: "px-3 py-1.5 text-sm rounded-lg ring-1 ring-slate-200",
+        onclick: () => modal.close() }, "Cancel"),
+      el("button", { class: "px-3 py-1.5 text-sm rounded-lg bg-ink text-white",
+        onclick: async () => {
+          if (!sel.value) { toast("Pick a meeting", "err"); return; }
+          try {
+            await api(\`/api/meetings/\${encodeURIComponent(sel.value)}/link-project\`, {
+              method: "POST", body: { projectId },
+            });
+            modal.close(); toast("Linked", "ok"); onDone?.();
+          } catch (err) { toast(err.message, "err"); }
+        },
+      }, "Link"),
     ),
   );
   const modal = openModal(card);

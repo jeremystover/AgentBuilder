@@ -420,19 +420,41 @@ function openMeetingEditor(m, { onChanged } = {}) {
   const modal = openModal(card);
 }
 
+// ── Show-completed toggle (used by Today / Week / Project / Person) ───────
+// Persists across navigations so the user doesn't have to re-enable it.
+function showCompletedFlag(scope) {
+  try { return localStorage.getItem("cos:showCompleted:" + scope) === "1"; }
+  catch { return false; }
+}
+function setShowCompletedFlag(scope, v) {
+  try { localStorage.setItem("cos:showCompleted:" + scope, v ? "1" : "0"); } catch {}
+}
+function showCompletedToggle(scope, onToggle) {
+  const v = showCompletedFlag(scope);
+  const btn = el("button", {
+    class: \`text-xs px-3 py-1 rounded-full ring-1 transition \${v ? "bg-emerald-50 text-emerald-700 ring-emerald-200" : "bg-white text-slate-500 ring-slate-200 hover:ring-indigo-300"}\`,
+    onclick: () => { setShowCompletedFlag(scope, !v); onToggle(); },
+  }, v ? "✓ Showing completed" : "Show completed");
+  return btn;
+}
+
 // ── Page: Today ────────────────────────────────────────────────────────────
 async function pageToday(main) {
-  const data = await api("/api/today");
+  const includeCompleted = showCompletedFlag("today");
+  const data = await api("/api/today" + (includeCompleted ? "?includeCompleted=1" : ""));
   const projects = (await api("/api/projects")).projects || [];
   const projectsById = Object.fromEntries(projects.map((p) => [p.projectId, p]));
   main.innerHTML = "";
   const root = el("div", { class: "max-w-3xl mx-auto px-10 py-10 space-y-8" });
-  root.appendChild(el("header", { class: "flex items-baseline justify-between" },
+  root.appendChild(el("header", { class: "flex items-baseline justify-between gap-3" },
     el("h1", { class: "text-3xl font-semibold" }, new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })),
-    el("button", {
-      class: "text-sm text-slate-500 hover:text-ink",
-      onclick: () => openCreateTaskModal({ projectsById, onChanged: () => window.__cos.route() }),
-    }, "+ New task"),
+    el("div", { class: "flex items-center gap-3" },
+      showCompletedToggle("today", () => window.__cos.route()),
+      el("button", {
+        class: "text-sm text-slate-500 hover:text-ink",
+        onclick: () => openCreateTaskModal({ projectsById, onChanged: () => window.__cos.route() }),
+      }, "+ New task"),
+    ),
   ));
 
   root.appendChild(briefEditor({ kind: "day", periodKey: data.date, brief: data.brief }));
@@ -459,15 +481,19 @@ async function pageToday(main) {
 
 // ── Page: This Week ────────────────────────────────────────────────────────
 async function pageWeek(main) {
-  const data = await api("/api/week");
+  const includeCompleted = showCompletedFlag("week");
+  const data = await api("/api/week" + (includeCompleted ? "?includeCompleted=1" : ""));
   const projects = (await api("/api/projects")).projects || [];
   const projectsById = Object.fromEntries(projects.map((p) => [p.projectId, p]));
   main.innerHTML = "";
   const root = el("div", { class: "max-w-3xl mx-auto px-10 py-10 space-y-8" });
   const weekRange = data.from && data.to ? \`\${fmtDate(data.from)} – \${fmtDate(data.to)}\` : data.periodKey;
-  root.appendChild(el("header", { class: "flex items-baseline justify-between" },
+  root.appendChild(el("header", { class: "flex items-baseline justify-between gap-3" },
     el("h1", { class: "text-3xl font-semibold" }, "This Week"),
-    el("span", { class: "text-sm text-slate-500" }, weekRange),
+    el("div", { class: "flex items-center gap-3" },
+      showCompletedToggle("week", () => window.__cos.route()),
+      el("span", { class: "text-sm text-slate-500" }, weekRange),
+    ),
   ));
   root.appendChild(briefEditor({ kind: "week", periodKey: data.periodKey, brief: data.brief, range: weekRange }));
   root.appendChild(planReviewButtons({ kind: "week", periodKey: data.periodKey, brief: data.brief, onDone: () => window.__cos.route() }));
@@ -498,4 +524,7 @@ window.meetingCard = meetingCard;
 window.openMeetingEditor = openMeetingEditor;
 window.openTaskEditor = openTaskEditor;
 window.openCreateTaskModal = openCreateTaskModal;
+window.showCompletedFlag = showCompletedFlag;
+window.setShowCompletedFlag = setShowCompletedFlag;
+window.showCompletedToggle = showCompletedToggle;
 `;

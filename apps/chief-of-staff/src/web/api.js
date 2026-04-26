@@ -287,9 +287,15 @@ export async function handleApiRequest(request, ctx) {
         .map((s) => String(s.email || "").toLowerCase())
         .filter(Boolean));
       const nowMs = Date.now();
+      const projectId = m[1];
       const projectMeetings = allMeetings
         .filter((m2) => {
           if (!m2.startTime) return false;
+          // Explicit links — set by POST /api/meetings/:id/link-project.
+          let raw = {};
+          try { raw = m2.rawJson ? JSON.parse(m2.rawJson) : {}; } catch { raw = {}; }
+          if (Array.isArray(raw.linkedProjectIds) && raw.linkedProjectIds.includes(projectId)) return true;
+          // Fallback: stakeholder-email overlap.
           const attendeesText = String(m2.attendeesJson || "").toLowerCase();
           for (const e of stakeholderEmails) if (attendeesText.includes(e)) return true;
           return false;
@@ -566,6 +572,26 @@ export async function handleApiRequest(request, ctx) {
         location: body.location,
       });
       return jsonResponse({ ok: true, event: data });
+    }
+  }
+  {
+    // Link a meeting to a project. Stored on the Meetings row in
+    // rawJson.linkedProjectIds so it doesn't pollute the calendar invite
+    // visible to attendees. Project pages match meetings via attendee
+    // email overlap *or* this list.
+    const m = path.match(/^\/api\/meetings\/([^/]+)\/link-project$/);
+    if (m && method === "POST") {
+      const body = await readJson();
+      if (!body.projectId) return jsonResponse({ error: "projectId required" }, 400);
+      const found = await sheets.findRowByKey("Meetings", "meetingId", m[1]);
+      if (!found) return jsonResponse({ error: "Meeting not found" }, 404);
+      let raw = {};
+      try { raw = found.data.rawJson ? JSON.parse(found.data.rawJson) : {}; } catch { raw = {}; }
+      const linked = new Set(Array.isArray(raw.linkedProjectIds) ? raw.linkedProjectIds : []);
+      linked.add(body.projectId);
+      raw.linkedProjectIds = [...linked];
+      await sheets.updateRow("Meetings", found.rowNum, { rawJson: JSON.stringify(raw) });
+      return jsonResponse({ ok: true });
     }
   }
 
