@@ -193,12 +193,12 @@ export async function ingestUrl(
   });
 
   if (vector) {
-    ctx.waitUntil(
-      upsertVector(env.CONTENT_VECTORS, {
-        id: articleId, values: vector,
-        metadata: { url, title: title ?? "", topics: topics.join(","), ingested: now, source_id: source_id ?? "" },
-      }).catch((err) => console.warn("[ingest_url] Vectorize upsert failed:", err)),
-    );
+    const upsertPromise = upsertVector(env.CONTENT_VECTORS, {
+      id: articleId, values: vector,
+      metadata: { url, title: title ?? "", topics: topics.join(","), ingested: now, source_id: source_id ?? "" },
+    }).catch((err) => console.warn("[ingest_url] Vectorize upsert failed:", err));
+    if (typeof ctx?.waitUntil === "function") ctx.waitUntil(upsertPromise);
+    else await upsertPromise;
   }
 
   // Assign categories

@@ -4,6 +4,13 @@ import type {
   VectorizeIndex,
 } from "@cloudflare/workers-types";
 
+// Cloudflare Email Workers outbound binding. Used with a `[[send_email]]`
+// binding in wrangler.toml; the argument is an `EmailMessage` instance from
+// `cloudflare:email`. Typed loosely to avoid version coupling.
+export interface SendEmailBinding {
+  send(message: unknown): Promise<void>;
+}
+
 // ── Workers AI ─────────────────────────────────────────────────
 
 export type AiTextGenerationModel =
@@ -61,21 +68,41 @@ export interface DurableObjectStub {
 
 // ── Env ────────────────────────────────────────────────────────
 
+// Cloudflare Assets binding (Workers Static Assets). The Worker can fetch
+// the served file by calling env.ASSETS.fetch(request).
+export interface AssetsBinding {
+  fetch(request: Request): Promise<Response>;
+}
+
+// D1 binding for the web-ui-kit's WebSessions table. Aliased so the kit's
+// auth helpers find `env.DB` without us having to rename CONTENT_DB.
+// CONTENT_DB and DB_LAB point at the same physical database (research-agent-db).
 export interface Env {
   CONTENT_DB:      D1Database;
   CONTENT_VECTORS: VectorizeIndex;
   CONTENT_STORE:   R2Bucket;
   AI:              Ai;
   CHAT_SESSION:    DurableObjectNamespace;
+  SEND_EMAIL?:     SendEmailBinding;
+  ASSETS?:         AssetsBinding;
 
   // Secrets
-  MCP_BEARER_TOKEN:     string;
-  BLUESKY_IDENTIFIER:   string;
-  BLUESKY_APP_PASSWORD: string;
-  // Shared secret for server-to-server ingestion from fleet agents (e.g. linkedin-watcher)
-  // that post pre-fetched content to /ingest. Optional.
-  INTERNAL_SECRET?:     string;
-  ENVIRONMENT:          string;
+  MCP_BEARER_TOKEN:        string;
+  BLUESKY_IDENTIFIER:      string;
+  BLUESKY_APP_PASSWORD:    string;
+  ENVIRONMENT:             string;
+  WATCH_NOTIFY_FROM?:      string;
+
+  // Shared secret for server-to-server ingestion from fleet agents (e.g.
+  // linkedin-watcher) that post pre-fetched content to /ingest. Optional.
+  INTERNAL_SECRET?:        string;
+
+  // Lab — added by the /lab web UI
+  ANTHROPIC_API_KEY?:      string;
+  WEB_UI_PASSWORD?:        string;
+  EXTERNAL_API_KEY?:       string;
+  CHIEF_OF_STAFF_MCP_KEY?: string;
+  CHIEF_OF_STAFF_MCP_URL?: string;
 }
 
 // ── MCP protocol types ─────────────────────────────────────────

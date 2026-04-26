@@ -1,0 +1,28 @@
+// fetch wrappers for /api/{{SURFACE}}/*. Cookie auth is handled by the
+// browser's same-origin policy after /{{SURFACE}}/login redirects.
+
+async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
+  const res = await fetch(path, {
+    ...opts,
+    credentials: "same-origin",
+    headers: { "content-type": "application/json", ...(opts.headers || {}) },
+  });
+  if (res.status === 401) {
+    location.href = "/{{SURFACE}}/login";
+    throw new Error("unauthorized");
+  }
+  const ct = res.headers.get("content-type") || "";
+  const data = ct.includes("json") ? await res.json() : await res.text();
+  if (!res.ok) {
+    const msg = (data && typeof data === "object" && "error" in data)
+      ? String((data as Record<string, unknown>).error)
+      : `HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+  return data as T;
+}
+
+// EXAMPLE: replace with your agent's endpoints.
+// export async function listItems() {
+//   return await request<{ items: Item[] }>("/api/{{SURFACE}}/items");
+// }

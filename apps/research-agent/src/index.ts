@@ -22,8 +22,30 @@ import { handleMcpRequest }                from "./mcp/router";
 import { ingestUrl, IngestUrlInput }       from "./mcp/tools/ingest_url";
 import { generateDigest, GenerateDigestInput } from "./mcp/tools/generate_digest";
 import { listSources, ListSourcesInput }   from "./mcp/tools/list_sources";
+import { handleLabApi }                    from "./lab-api";
+import { handleLabChat }                   from "./lab-chat";
+import {
+  requireApiAuth,
+  requireWebSession,
+  createSession,
+  destroySession,
+  setSessionCookieHeader,
+  clearSessionCookieHeader,
+  verifyPassword,
+  loginHtml,
+} from "@agentbuilder/web-ui-kit";
 
 export { ChatSession } from "./durable/ChatSession";
+
+// The kit's auth helpers expect env.DB. CONTENT_DB is research-agent's
+// existing D1 binding; we pass an env-shaped object that aliases it.
+function kitEnv(env: Env): Record<string, unknown> {
+  return {
+    DB: env.CONTENT_DB,
+    WEB_UI_PASSWORD: env.WEB_UI_PASSWORD,
+    EXTERNAL_API_KEY: env.EXTERNAL_API_KEY,
+  };
+}
 
 // Open CORS for the MCP endpoint — MCP clients (Claude, Cowork, etc.)
 // connect from various origins and need unrestricted access.
@@ -182,6 +204,108 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
     }
   }
 
+  // ── /lab — The Lab web UI ─────────────────────────────────────────────
+  // Auth flow follows the @agentbuilder/web-ui-kit convention:
+  //   GET  /lab/login   shows the password form
+  //   POST /lab/login   verifies WEB_UI_PASSWORD + sets session cookie
+  //   GET  /lab/logout  destroys the session
+  //   /lab + /lab/*     serve the Vite-built SPA from the ASSETS binding
+  //                     (gated by cookie session)
+  //
+  // /api/lab/*          JSON API for the SPA + external apps
+  //                     (cookie session OR EXTERNAL_API_KEY bearer)
+  if (url.pathname === "/lab/login" && method === "GET") {
+    return new Response(loginHtml({ title: "The Lab", action: "/lab/login" }), {
+      status: 200,
+      headers: { "content-type": "text/html; charset=utf-8" },
+    });
+  }
+  if (url.pathname === "/lab/login" && method === "POST") {
+    if (!env.WEB_UI_PASSWORD) {
+      return new Response(loginHtml({ title: "The Lab", action: "/lab/login", error: "WEB_UI_PASSWORD is not configured." }), {
+        status: 500, headers: { "content-type": "text/html; charset=utf-8" },
+      });
+    }
+    const form = await request.formData().catch(() => null);
+    const password = form?.get?.("password") || "";
+    if (!verifyPassword(kitEnv(env), password)) {
+      return new Response(loginHtml({ title: "The Lab", action: "/lab/login", error: "Wrong password." }), {
+        status: 401, headers: { "content-type": "text/html; charset=utf-8" },
+      });
+    }
+    const { sessionId } = await createSession(kitEnv(env));
+    const secure = url.protocol === "https:";
+    return new Response(null, {
+      status: 302,
+      headers: {
+        location: "/lab",
+        "set-cookie": setSessionCookieHeader(sessionId, { secure }),
+      },
+    });
+  }
+  if (url.pathname === "/lab/logout") {
+    const session = await requireWebSession(request, kitEnv(env), { mode: "page", loginPath: "/lab/login" });
+    if (session.ok) await destroySession(kitEnv(env), session.sessionId);
+    const secure = url.protocol === "https:";
+    return new Response(null, {
+      status: 302,
+      headers: {
+        location: "/lab/login",
+        "set-cookie": clearSessionCookieHeader({ secure }),
+      },
+    });
+  }
+
+  // Static asset fallthrough: the SPA itself + any /lab/* asset request.
+  // We require a cookie session for ALL /lab routes so the bundle isn't
+  // public.
+  //
+  // Vite is configured with `base: "/lab/"`, so the built index.html
+  // references assets under /lab/assets/... — but Cloudflare's ASSETS
+  // binding looks them up at their path-from-dist-root, which is just
+  // /assets/... (dist/ has no /lab/ subdirectory). Strip the /lab prefix
+  // before calling ASSETS so the lookup succeeds; otherwise the binding
+  // hits its SPA fallback and returns index.html for every JS/CSS
+  // request, breaking the browser's MIME check on module scripts.
+  //
+  // /lab/assets/* is intentionally PUBLIC (no auth gate). Vite emits
+  // <script type="module" crossorigin> tags, which the browser fetches
+  // in CORS mode — same-origin or not, those requests do NOT include
+  // cookies (crossorigin defaults to "anonymous"). If we gate the
+  // assets, the browser gets a 302 redirect to /lab/login when loading
+  // the JS module, which fails strict-MIME because the response is HTML.
+  // The bundle contains no secrets; the API behind it is what's
+  // protected. /lab itself (the SPA shell) stays gated below.
+  if (url.pathname.startsWith("/lab/assets/")) {
+    if (!env.ASSETS) return new Response("ASSETS not configured", { status: 503 });
+    const stripped = new URL(request.url);
+    stripped.pathname = stripped.pathname.replace(/^\/lab\/?/, "/");
+    return env.ASSETS.fetch(new Request(stripped.toString(), request));
+  }
+
+  if (url.pathname === "/lab" || url.pathname.startsWith("/lab/")) {
+    const session = await requireWebSession(request, kitEnv(env), { mode: "page", loginPath: "/lab/login" });
+    if (!session.ok) return session.response;
+    if (!env.ASSETS) {
+      return new Response("ASSETS binding not configured (build the Lab with `pnpm lab:build` then redeploy).", { status: 503 });
+    }
+    const stripped = new URL(request.url);
+    stripped.pathname = stripped.pathname.replace(/^\/lab\/?/, "/") || "/";
+    return env.ASSETS.fetch(new Request(stripped.toString(), request));
+  }
+
+  // ── /api/lab/* — JSON API for the Lab SPA + external apps ─────────────
+  if (url.pathname.startsWith("/api/lab/")) {
+    const auth = await requireApiAuth(request, kitEnv(env));
+    if (!auth.ok) return auth.response;
+    if (url.pathname === "/api/lab/chat" && method === "POST") {
+      return await handleLabChat(request, env, ctx);
+    }
+    const labResponse = await handleLabApi(request, env);
+    if (labResponse) return labResponse;
+    return jsonResponse({ error: `Not found: ${method} ${url.pathname}` }, 404);
+  }
+
   return jsonResponse({ error: `Not found: ${method} ${url.pathname}` }, 404);
 }
 
@@ -205,9 +329,19 @@ async function handleScheduled(controller: ScheduledController, env: Env, ctx: E
     ctx.waitUntil((async () => {
       try {
         const { runPollBluesky } = await import("./cron/poll_bluesky");
-        await runPollBluesky(env);
+        await runPollBluesky(env, ctx);
       } catch (e) {
         console.error("[cron/poll_bluesky] failed:", e);
+      }
+    })());
+  }
+  if (controller.cron === "*/5 * * * *") {
+    ctx.waitUntil((async () => {
+      try {
+        const { runCheckWatches } = await import("./cron/check_watches");
+        await runCheckWatches(env, ctx);
+      } catch (e) {
+        console.error("[cron/check_watches] failed:", e);
       }
     })());
   }

@@ -1,0 +1,17 @@
+import type { Config } from "tailwindcss";
+
+// Replace these tokens with your agent's design language. Keep the
+// `accent-primary` indigo if you want visual consistency with other
+// fleet UIs; everything else is fair game.
+export default {
+  content: ["./src/lab/**/*.{ts,tsx,html}"],
+  theme: {
+    extend: {
+      colors: {
+        bg: { primary: "#FFFFFF", surface: "#F7F7F5", elevated: "#FFFFFF" },
+        text: { primary: "#1F2433", muted: "#6B7280" },
+        accent: { primary: "#6366F1" },
+      },
+    },
+  },
+} satisfies Config;

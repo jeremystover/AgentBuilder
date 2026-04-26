@@ -1,6 +1,6 @@
 {
   "$schemaVersion": 1,
-  "updatedAt": "2026-04-17T00:00:00.000Z",
+  "updatedAt": "2026-04-26T22:44:39.000Z",
   "agents": [
     {
       "id": "agent-builder",
@@ -9,9 +9,23 @@
       "owner": "jeremystover",
       "status": "draft",
       "kind": "headless",
-      "skills": ["scaffold-agent", "register-agent", "flag-overlap", "propagate-shared-changes"],
-      "tools": ["file-system", "wrangler", "pnpm", "git", "github-app", "registry-rw"],
-      "mcpServers": ["github"],
+      "skills": [
+        "scaffold-agent",
+        "register-agent",
+        "flag-overlap",
+        "propagate-shared-changes"
+      ],
+      "tools": [
+        "file-system",
+        "wrangler",
+        "pnpm",
+        "git",
+        "github-app",
+        "registry-rw"
+      ],
+      "mcpServers": [
+        "github"
+      ],
       "sharedPackages": [
         "@agentbuilder/core",
         "@agentbuilder/llm",
@@ -21,8 +35,12 @@
       "oauthScopes": [],
       "cloudflare": {
         "workerName": "agent-builder",
-        "durableObjects": ["AgentBuilderDO"],
-        "d1": ["agentbuilder_core"],
+        "durableObjects": [
+          "AgentBuilderDO"
+        ],
+        "d1": [
+          "agentbuilder_core"
+        ],
         "kv": [],
         "r2": [],
         "queues": [],
@@ -185,9 +203,13 @@
       "cloudflare": {
         "workerName": "cfo",
         "durableObjects": [],
-        "d1": ["cfo-db"],
+        "d1": [
+          "cfo-db"
+        ],
         "kv": [],
-        "r2": ["cfo-files"],
+        "r2": [
+          "cfo-files"
+        ],
         "queues": [],
         "hasAssets": true
       },
@@ -253,11 +275,19 @@
       "oauthScopes": [],
       "cloudflare": {
         "workerName": "guest-booking",
-        "durableObjects": ["GuestBookingDO"],
-        "d1": ["guest-booking-db"],
-        "kv": ["guest-booking-cache"],
+        "durableObjects": [
+          "GuestBookingDO"
+        ],
+        "d1": [
+          "guest-booking-db"
+        ],
+        "kv": [
+          "guest-booking-cache"
+        ],
         "r2": [],
-        "queues": ["guest-booking-sync-queue"],
+        "queues": [
+          "guest-booking-sync-queue"
+        ],
         "hasAssets": true
       },
       "routing": {
@@ -379,10 +409,16 @@
       "oauthScopes": [],
       "cloudflare": {
         "workerName": "research-agent",
-        "durableObjects": ["ChatSession"],
-        "d1": ["research-agent-db"],
+        "durableObjects": [
+          "ChatSession"
+        ],
+        "d1": [
+          "research-agent-db"
+        ],
         "kv": [],
-        "r2": ["research-agent-content"],
+        "r2": [
+          "research-agent-content"
+        ],
         "queues": [],
         "hasAssets": false
       },
@@ -412,6 +448,186 @@
           "Guest booking or property management (that's Guest Booking)",
           "Building or modifying other agents (that's Agent Builder)",
           "Real-time web search — this agent searches ingested content only"
+        ]
+      },
+      "version": "0.0.1"
+    },
+    {
+      "id": "graphic-designer",
+      "name": "Graphic Designer",
+      "purpose": "Designs and produces visual artifacts — Google Slides from templates, Cloudflare Pages websites, logos and brand guides, image/icon sourcing, and brand-compliance audits.",
+      "owner": "jeremystover",
+      "status": "draft",
+      "kind": "app",
+      "skills": [
+        "presentation-design",
+        "template-analysis",
+        "site-design",
+        "logo-design",
+        "brand-style-guide-creation",
+        "brand-compliance-audit",
+        "image-icon-sourcing",
+        "ai-image-generation",
+        "cloudflare-pages-deploy"
+      ],
+      "tools": [
+        "analyze-template",
+        "plan-presentation",
+        "build-presentation",
+        "search-media",
+        "check-brand-compliance",
+        "plan-site",
+        "build-and-deploy-site",
+        "generate-logo-concepts",
+        "finalize-logo-package",
+        "manage-brand-assets",
+        "canva-export"
+      ],
+      "mcpServers": [],
+      "sharedPackages": [
+        "@agentbuilder/core",
+        "@agentbuilder/llm",
+        "@agentbuilder/auth-google"
+      ],
+      "oauthScopes": [
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/presentations",
+        "https://www.googleapis.com/auth/documents.readonly"
+      ],
+      "cloudflare": {
+        "workerName": "graphic-designer",
+        "durableObjects": [
+          "GraphicDesignerDO"
+        ],
+        "d1": [
+          "graphic-designer-db"
+        ],
+        "kv": [],
+        "r2": [
+          "graphic-designer-assets"
+        ],
+        "queues": [],
+        "hasAssets": true
+      },
+      "routing": {
+        "triggerPhrases": [
+          "build a deck",
+          "build a presentation",
+          "design a logo",
+          "build a website",
+          "deploy a landing page",
+          "find an image",
+          "find an icon",
+          "check brand compliance",
+          "create a brand style guide",
+          "make a slide"
+        ],
+        "examples": [
+          "Build a pitch deck from this outline using my template",
+          "Design a logo for my new company",
+          "Build a landing page for the product launch and deploy it",
+          "Find me 5 icons that match our brand style for the services page",
+          "Check if this Google Doc follows our brand guidelines",
+          "Create a brand style guide to go with this logo",
+          "Iterate on logo concept #3 — make it more minimal",
+          "Update slide 4 to use a two-column layout with an image"
+        ],
+        "nonGoals": [
+          "Print design, packaging, or video/motion graphics (out of scope v1)",
+          "Long-form copywriting or content strategy (user provides the outline)",
+          "Calendar, tasks, goals, or stakeholder management (that's Chief of Staff)",
+          "Financial accounting, bookkeeping, or tax work (that's CFO)",
+          "Building or modifying other agents (that's Agent Builder)",
+          "Persistent article/knowledge ingestion (that's Research Agent)",
+          "Dynamic web apps with backends — this builds static Cloudflare Pages sites only",
+          "Guest booking or property management (that's Guest Booking)"
+        ]
+      },
+      "version": "0.0.1"
+    },
+    {
+      "id": "termination-documentation",
+      "name": "Termination Documentation",
+      "purpose": "Guides a California employee through documenting a possible wrongful-termination or hostile-workplace claim: interviews the user, builds an evidence checklist grounded in US and California employment law, tracks collection, ingests Claude.ai file uploads into an organized Google Drive folder, drafts a Google Docs evidence memo for counsel or HR, and walks through a 24-hour company-exit checklist.",
+      "owner": "jeremystover",
+      "status": "draft",
+      "kind": "headless",
+      "skills": [
+        "intake-interview",
+        "evidence-plan",
+        "checklist-tracking",
+        "chronology",
+        "upload-ingestion",
+        "drive-organization",
+        "top-packet-ranking",
+        "gap-analysis",
+        "memo-drafting"
+      ],
+      "tools": [
+        "intake_interview",
+        "build_evidence_plan",
+        "update_checklist",
+        "status",
+        "chronology",
+        "generate_top_packet",
+        "gap_report",
+        "draft_memo",
+        "ingest_upload"
+      ],
+      "mcpServers": [],
+      "sharedPackages": [
+        "@agentbuilder/core",
+        "@agentbuilder/llm",
+        "@agentbuilder/auth-google"
+      ],
+      "oauthScopes": [
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/documents"
+      ],
+      "cloudflare": {
+        "workerName": "termination-documentation",
+        "durableObjects": [
+          "TerminationDocumentationDO"
+        ],
+        "d1": [],
+        "kv": [],
+        "r2": [],
+        "queues": [],
+        "hasAssets": false
+      },
+      "routing": {
+        "triggerPhrases": [
+          "wrongful termination",
+          "document my termination",
+          "I was fired",
+          "I'm being laid off",
+          "hostile workplace documentation",
+          "severance negotiation evidence",
+          "build an evidence checklist",
+          "organize my termination case",
+          "24 hours with my work laptop",
+          "company exit checklist"
+        ],
+        "examples": [
+          "I think I'm about to be laid off in California — help me document it",
+          "Interview me about my situation and build a wrongful-termination evidence plan",
+          "I was fired after reporting harassment — what should I collect?",
+          "I'm uploading my offer letter, reviews, and Slack exports — file them in my case folder",
+          "Draft an evidence memo I can share with my employment lawyer",
+          "I have 24 hours with my work laptop — walk me through what to grab and what to leave",
+          "What's still missing from my evidence packet?"
+        ],
+        "nonGoals": [
+          "Giving legal advice, predicting claim outcomes, or representing the user",
+          "Filing DFEH/CRD or EEOC charges, or sending demand letters on the user's behalf",
+          "Negotiating severance or drafting settlement demands",
+          "Advising the user to remove employer-confidential or trade-secret material from company systems",
+          "Contacting witnesses, coworkers, HR, or employer counsel on the user's behalf",
+          "Personal productivity, calendar, tasks, or stakeholder management (that's Chief of Staff)",
+          "Severance tax planning, 401(k) rollover modeling, or bookkeeping (that's CFO)",
+          "Persistent article ingestion or research-corpus search (that's Research Agent)",
+          "Building or modifying other agents (that's Agent Builder)",
+          "Employment law outside California / US federal law"
         ]
       },
       "version": "0.0.1"

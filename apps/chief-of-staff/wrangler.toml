@@ -30,6 +30,7 @@ PPP_MCP_WEB_RATE_LIMIT_PER_MIN = "30"
 PPP_MCP_WEB_ALLOWLIST         = ""   # Comma-separated hostnames to allow (empty = all)
 PPP_MCP_WEB_DENYLIST          = ""   # Comma-separated hostnames to block
 PPP_WORK_CAL_SHEET_ID         = "1joKa9hjG627uLTU9BmEBNWW2UhY4G6ZvQ2xF7-TYMaw"
+IDEAS_URL                     = "https://research-agent.jsstover.workers.dev/lab"   # External link surfaced as the "Ideas" nav item in /app
 
 # ── Secrets ────────────────────────────────────────────────────────────────────
 # Set these via CLI — never commit secret values to this file.
@@ -42,6 +43,24 @@ PPP_WORK_CAL_SHEET_ID         = "1joKa9hjG627uLTU9BmEBNWW2UhY4G6ZvQ2xF7-TYMaw"
 #   wrangler secret put PPP_SHEETS_SPREADSHEET_ID
 #     The spreadsheet ID from the URL:
 #     https://docs.google.com/spreadsheets/d/<SPREADSHEET_ID>/edit
+#
+#   wrangler secret put ANTHROPIC_API_KEY
+#     Required for the /app web UI chat sidebar (and Day Plan / Week Plan
+#     features). Without it, /app pages still load but the chat panel and
+#     plan/review buttons return a clear error. The MCP /mcp endpoint does
+#     not need this — only the web UI does.
+#
+#   wrangler secret put WEB_UI_PASSWORD
+#     Single shared password for the /app web UI. The UI is cookie-session
+#     based: POST /app/login with this password sets an opaque session id
+#     cookie. Pick a long passphrase — there is no rate limit.
+#
+#   wrangler secret put EXTERNAL_API_KEY
+#     Bearer token for the simple REST API at /api/v1/* (create-task,
+#     create-project, create-person from external apps). Generate with
+#     `openssl rand -hex 32` and pass as `Authorization: Bearer <key>`.
+#     Separate from MCP_HTTP_KEY on purpose — the MCP key gates the full
+#     planner surface; this key gates a small CRUD subset.
 #
 #   wrangler secret put MCP_HTTP_KEY
 #     An arbitrary secret string. Guards the /mcp endpoint (Claude agent
@@ -117,6 +136,7 @@ PPP_WORK_CAL_SHEET_ID         = "1joKa9hjG627uLTU9BmEBNWW2UhY4G6ZvQ2xF7-TYMaw"
 # Apply schema + import:
 #   wrangler d1 execute chief-of-staff-db --file=migrations/0001_initial_schema.sql
 #   wrangler d1 execute chief-of-staff-db --file=migrations/0002_import_data.sql
+#   wrangler d1 execute chief-of-staff-db --file=migrations/0005_web_ui.sql
 
 [[d1_databases]]
 binding = "DB"

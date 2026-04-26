@@ -49,14 +49,57 @@ import {
   handleBudgetStatus,
 } from './routes/budget';
 import { handlePnL, handlePnLAll, handlePnLTrend } from './routes/pnl';
+import {
+  handleBookkeepingSession,
+  handleBookkeepingBatch,
+  handleBookkeepingCommit,
+  handleGetBookkeepingNotes,
+  handleSaveBookkeepingNotes,
+} from './routes/bookkeeping';
 import { handleCreateTaxYearWorkflow, handleGetTaxYearWorkflow } from './routes/workflow';
 import { handleClaudeHealth } from './routes/health';
 
 // MCP
 import { handleMcp, type JsonRpcMessage } from './mcp-tools';
 
+// Web UI (React SPA + cookie auth)
+import { handleWebApi } from './web-api';
+import { handleWebChat } from './web-chat';
+import {
+  requireApiAuth,
+  requireWebSession,
+  createSession,
+  destroySession,
+  setSessionCookieHeader,
+  clearSessionCookieHeader,
+  verifyPassword,
+  loginHtml,
+} from '@agentbuilder/web-ui-kit';
+
+// SMS (Phase A — Twilio-backed categorization prompts)
+import { handleSmsInbound } from './lib/sms-inbound';
+import { runDispatch } from './lib/sms-dispatcher';
+import {
+  handleListSmsSettings,
+  handleUpsertSmsSettings,
+  handleDeleteSmsPerson,
+  handleManualDispatch,
+  handleSmsStats,
+} from './routes/sms';
+
 // Scheduled jobs
 import { runNightlyTellerSync } from './lib/nightly-sync';
+
+// The kit's auth helpers expect env.DB — which is exactly what the CFO
+// has. This shim narrows env to the subset the kit reads, keeping the
+// dependency explicit.
+function kitEnv(env: Env): Record<string, unknown> {
+  return {
+    DB: env.DB,
+    WEB_UI_PASSWORD: env.WEB_UI_PASSWORD,
+    EXTERNAL_API_KEY: env.EXTERNAL_API_KEY,
+  };
+}
 
 // ── Simple regex router ───────────────────────────────────────────────────────
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -134,8 +177,16 @@ const ROUTES: Route[] = [
   { method: 'GET',    pattern: /^\/pnl\/all$/,                           handler: (req, env) => handlePnLAll(req, env) },
   { method: 'GET',    pattern: /^\/pnl\/trend$/,                         handler: (req, env) => handlePnLTrend(req, env) },
 
+  // Bookkeeping sessions
+  { method: 'GET',    pattern: /^\/bookkeeping\/session$/,               handler: (req, env) => handleBookkeepingSession(req, env) },
+  { method: 'GET',    pattern: /^\/bookkeeping\/batch$/,                 handler: (req, env) => handleBookkeepingBatch(req, env) },
+  { method: 'POST',   pattern: /^\/bookkeeping\/commit$/,                handler: (req, env) => handleBookkeepingCommit(req, env) },
+  { method: 'GET',    pattern: /^\/bookkeeping\/notes$/,                 handler: (req, env) => handleGetBookkeepingNotes(req, env) },
+  { method: 'PUT',    pattern: /^\/bookkeeping\/notes$/,                 handler: (req, env) => handleSaveBookkeepingNotes(req, env) },
+
   // Cron triggers — manual entry points for testing/debugging the scheduled handler
   { method: 'POST',   pattern: /^\/cron\/nightly-sync$/,                 handler: async (_req, env) => Response.json(await runNightlyTellerSync(env)) },
+  { method: 'POST',   pattern: /^\/cron\/sms\/dispatch$/,                handler: (req, env) => handleManualDispatch(req, env) },
 
   // Rules
   { method: 'GET',    pattern: /^\/rules$/,                              handler: (req, env) => handleListRules(req, env) },
@@ -179,6 +230,86 @@ export default {
 
     const url = new URL(request.url);
     const path = url.pathname;
+    const method = request.method;
+
+    // ── Web UI auth (kit cookie session) ──────────────────────────────────
+    // Pattern mirrors research-agent's /lab/* surface so the same tooling
+    // (loginHtml, requireWebSession, requireApiAuth) is shared.
+    if (path === '/login' && method === 'GET') {
+      return new Response(loginHtml({ title: 'CFO', action: '/login' }), {
+        status: 200,
+        headers: { 'content-type': 'text/html; charset=utf-8' },
+      });
+    }
+    if (path === '/login' && method === 'POST') {
+      if (!env.WEB_UI_PASSWORD) {
+        return new Response(loginHtml({ title: 'CFO', action: '/login', error: 'WEB_UI_PASSWORD is not configured.' }), {
+          status: 500, headers: { 'content-type': 'text/html; charset=utf-8' },
+        });
+      }
+      const form = await request.formData().catch(() => null);
+      const password = form?.get?.('password') || '';
+      if (!verifyPassword(kitEnv(env), password)) {
+        return new Response(loginHtml({ title: 'CFO', action: '/login', error: 'Wrong password.' }), {
+          status: 401, headers: { 'content-type': 'text/html; charset=utf-8' },
+        });
+      }
+      const { sessionId } = await createSession(kitEnv(env));
+      const secure = url.protocol === 'https:';
+      return new Response(null, {
+        status: 302,
+        headers: {
+          location: '/',
+          'set-cookie': setSessionCookieHeader(sessionId, { secure }),
+        },
+      });
+    }
+    if (path === '/logout') {
+      const session = await requireWebSession(request, kitEnv(env), { mode: 'page' });
+      if (session.ok) await destroySession(kitEnv(env), session.sessionId);
+      const secure = url.protocol === 'https:';
+      return new Response(null, {
+        status: 302,
+        headers: {
+          location: '/login',
+          'set-cookie': clearSessionCookieHeader({ secure }),
+        },
+      });
+    }
+
+    // ── Twilio inbound webhook (signature-verified, no cookie auth) ───────
+    // Twilio doesn't carry cookies. /sms/inbound verifies X-Twilio-Signature
+    // with TWILIO_AUTH_TOKEN; everything else is rejected with 403.
+    if (path === '/sms/inbound' && method === 'POST') {
+      return handleSmsInbound(request, env);
+    }
+
+    // ── /api/web/* — JSON API for the React SPA ───────────────────────────
+    if (path.startsWith('/api/web/')) {
+      const auth = await requireApiAuth(request, kitEnv(env));
+      if (!auth.ok) return auth.response;
+
+      if (path === '/api/web/chat' && method === 'POST') {
+        return handleWebChat(request, env, /* ctx */ {} as ExecutionContext);
+      }
+      // SMS settings live under /api/web/sms/*
+      if (path === '/api/web/sms/settings' && method === 'GET') {
+        return handleListSmsSettings(request, env);
+      }
+      if (path === '/api/web/sms/settings' && method === 'PUT') {
+        return handleUpsertSmsSettings(request, env);
+      }
+      const smsPersonMatch = path.match(/^\/api\/web\/sms\/settings\/([^/]+)$/);
+      if (smsPersonMatch && method === 'DELETE') {
+        return handleDeleteSmsPerson(request, env, smsPersonMatch[1]!);
+      }
+      if (path === '/api/web/sms/stats' && method === 'GET') {
+        return handleSmsStats(request, env);
+      }
+      const webResponse = await handleWebApi(request, env);
+      if (webResponse) return webResponse;
+      return Response.json({ error: `Not found: ${method} ${path}` }, { status: 404 });
+    }
 
     // MCP /mcp for Claude custom tool integration
     if (path === '/mcp' && request.method === 'POST') {
@@ -219,23 +350,60 @@ export default {
       }
     }
 
-    // Serve the SPA for any unmatched GET (client-side routing via hash).
+    // ── Legacy tax-prep SPA at /legacy (cookie-gated) ─────────────────────
+    // The pre-rewrite SPA still exists at public/legacy.html and uses
+    // header auth (X-User-Id) for its API calls. We gate the bundle
+    // behind the kit's web session so the page itself isn't public.
+    if ((path === '/legacy' || path === '/legacy/') && request.method === 'GET') {
+      const session = await requireWebSession(request, kitEnv(env), { mode: 'page' });
+      if (!session.ok) return session.response;
+      return env.ASSETS.fetch(new Request(new URL('/legacy.html', request.url).toString(), request));
+    }
+
+    // ── New React SPA at / (cookie-gated) ─────────────────────────────────
+    // Vite-built bundle lives under dist/ and is served by the [assets]
+    // binding. Any unmatched GET falls through to the SPA so client-side
+    // routing works.
     if (request.method === 'GET') {
+      const session = await requireWebSession(request, kitEnv(env), { mode: 'page' });
+      if (!session.ok) return session.response;
+      // Hashed asset paths (/assets/index-abc.js etc.) — let ASSETS
+      // resolve them directly. Anything else is the SPA shell.
+      if (path.startsWith('/assets/')) {
+        return env.ASSETS.fetch(request);
+      }
       return env.ASSETS.fetch(new Request(new URL('/index.html', request.url).toString(), request));
     }
 
     return jsonError('Not found', 404);
   },
 
-  // Cloudflare Cron Trigger entrypoint. Gated to the nightly-sync cron
-  // today, but the scheduled() hook is the right place to add other
-  // periodic tasks later (snapshots, classification passes, digests).
+  // Cloudflare Cron Trigger entrypoint. We dispatch by cron expression:
+  //   "0 9 * * *"        → nightly Teller sync
+  //   "*/30 * * * *"     → SMS dispatcher (it self-checks Pacific local
+  //                        time + per-person preferred slots, so 47 of
+  //                        the 48 daily fires are no-ops).
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     console.log('[scheduled] cron fired', { cron: event.cron, scheduledTime: event.scheduledTime });
-    ctx.waitUntil(
-      runNightlyTellerSync(env).catch((err) => {
-        console.error('[scheduled] nightly sync failed', err);
-      }),
-    );
+
+    if (event.cron === '0 9 * * *') {
+      ctx.waitUntil(
+        runNightlyTellerSync(env).catch((err) => {
+          console.error('[scheduled] nightly sync failed', err);
+        }),
+      );
+      return;
+    }
+
+    if (event.cron === '*/30 * * * *') {
+      ctx.waitUntil(
+        runDispatch(env)
+          .then((s) => console.log('[scheduled] sms dispatch', s))
+          .catch((err) => console.error('[scheduled] sms dispatch failed', err)),
+      );
+      return;
+    }
+
+    console.warn('[scheduled] unknown cron expression', event.cron);
   },
 } satisfies ExportedHandler<Env>;

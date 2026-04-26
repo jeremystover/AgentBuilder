@@ -1,0 +1,83 @@
+/**
+ * web/spa-pages.js — page renderers + NAV/ROUTES wiring for {{AGENT_NAME}}.
+ *
+ * Concatenated after @agentbuilder/web-ui-kit's SPA_CORE_JS into
+ * /app/app.js. The kit exposes shared helpers via window.__cos:
+ *
+ *   const { $, el, fmtDate, fmtTime, isOverdue, api, toast,
+ *           openModal, attachVoice, route } = window.__cos;
+ *
+ * To add a new page:
+ *   1. Write `async function pageX(main) { ... }` rendering into `main`.
+ *   2. Append `{ hash: "#/x", label: "X" }` to NAV.
+ *   3. Append `{ pattern: /^#\/x$/, handler: "pageX" }` to ROUTES.
+ *   4. Add `window.pageX = pageX;` so the kit's router can find it.
+ */
+
+export const SPA_PAGES_JS = String.raw`
+const { el, fmtDate, fmtTime, api, toast, openModal, attachVoice } = window.__cos;
+
+// ── EXAMPLE PAGE ────────────────────────────────────────────────────────────
+async function pageHome(main) {
+  const data = await api("/api/items");
+  main.innerHTML = "";
+  const root = el("div", { class: "max-w-3xl mx-auto px-10 py-10 space-y-6" });
+  root.appendChild(el("header", { class: "flex items-baseline justify-between" },
+    el("h1", { class: "text-3xl font-semibold" }, "{{AGENT_NAME}}"),
+    el("button", {
+      class: "text-sm text-slate-500 hover:text-ink",
+      onclick: () => openCreateItemModal({ onChanged: () => window.__cos.route() }),
+    }, "+ New"),
+  ));
+
+  if (!data.items?.length) {
+    root.appendChild(el("div", { class: "text-sm text-slate-500" }, "Nothing here yet."));
+  }
+  for (const item of data.items || []) {
+    root.appendChild(el("div", {
+      class: "bg-white rounded-xl ring-1 ring-slate-200 p-4 hover:ring-indigo-300 transition",
+    },
+      el("div", { class: "text-sm font-medium text-ink" }, item.title || "(untitled)"),
+      item.updatedAt ? el("div", { class: "text-xs text-slate-500 mt-1" }, fmtDate(item.updatedAt)) : null,
+    ));
+  }
+  main.appendChild(root);
+}
+
+function openCreateItemModal({ onChanged } = {}) {
+  const titleI = el("input", {
+    type: "text", placeholder: "Title", autofocus: true,
+    class: "w-full text-lg font-medium rounded-lg ring-1 ring-slate-200 px-3 py-2 focus:ring-indigo-400 focus:outline-none",
+  });
+  const card = el("div", { class: "space-y-4" },
+    el("h2", { class: "text-xl font-semibold" }, "New item"),
+    titleI,
+    el("div", { class: "flex justify-end" },
+      el("button", {
+        class: "rounded-lg bg-ink text-white px-4 py-2 text-sm font-medium hover:bg-slate-700",
+        onclick: async () => {
+          if (!titleI.value.trim()) { toast("Title required", "err"); return; }
+          try {
+            await api("/api/items", { method: "POST", body: { title: titleI.value.trim() } });
+            modal.close(); toast("Created", "ok"); onChanged?.();
+          } catch (err) { toast(err.message, "err"); }
+        },
+      }, "Create"),
+    ),
+  );
+  const modal = openModal(card);
+}
+
+// ── Wire pages into the kit's router ───────────────────────────────────────
+window.pageHome = pageHome;
+
+window.AGENT_BRAND = { mark: "✦", label: "{{AGENT_NAME}}" };
+window.NAV = [
+  { hash: "#/home", label: "Home" },
+  // Add more pages: { hash: "#/things", label: "Things" }, ...
+];
+window.ROUTES = [
+  { pattern: /^#\/home$/, handler: "pageHome" },
+  // Add more routes: { pattern: /^#\/things$/, handler: "pageThings" },
+];
+`;

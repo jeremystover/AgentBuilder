@@ -23,6 +23,12 @@ tools/                Repo-wide CLI tooling (run with `tsx`).
 6. **Model tiers, not model ids.** Call `llm.complete({ tier: 'default' })`. Don't hardcode `claude-sonnet-4-6`.
 7. **Prompt caching is on by default.** Keep system prompts stable to benefit from it.
 8. **D1 is the shared store.** All fleet persistence goes through the `agentbuilder-core` D1 database with per-agent table prefixes.
+9. **Web UIs always use `@agentbuilder/web-ui-kit` for auth, sessions, and the `/api/v1/*` external surface.** The SPA visual layer can be either:
+
+    - **Vanilla mode (default)** — no build step, Tailwind via CDN, light/paper theme. Use this for almost every agent. Template: `.agent-builder/templates/web-ui/`. Reference: `apps/chief-of-staff/src/web/`.
+    - **React+Vite mode (escape hatch)** — only when the user has explicit design requirements the vanilla shell can't deliver (e.g. dark theme, mind map, drag-and-drop, design tokens unique to the agent). Template: `.agent-builder/templates/web-ui-react/`. Reference: `apps/research-agent/src/lab/` (The Lab).
+
+    Both modes share the same auth surface (cookie `WEB_UI_PASSWORD` + bearer `EXTERNAL_API_KEY`), the `WebSessions` D1 table, and the `/api/<surface>/v1/*` external REST convention. To add a UI, invoke the Claude Code `add-web-ui` skill — it asks which mode and copies the right template.
 
 ## Creating a new agent
 

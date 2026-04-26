@@ -39,6 +39,13 @@ import {
   handleBudgetStatus,
 } from './routes/budget';
 import { handlePnL, handlePnLAll, handlePnLTrend } from './routes/pnl';
+import {
+  handleBookkeepingSession,
+  handleBookkeepingBatch,
+  handleBookkeepingCommit,
+  handleGetBookkeepingNotes,
+  handleSaveBookkeepingNotes,
+} from './routes/bookkeeping';
 
 export interface JsonRpcMessage {
   jsonrpc?: string;
@@ -156,7 +163,7 @@ export const MCP_TOOLS = [
         },
         entity: {
           type: 'string' as const,
-          enum: ['coaching_business', 'airbnb_activity', 'family_personal'],
+          enum: ['elyse_coaching', 'jeremy_coaching', 'airbnb_activity', 'family_personal'],
           description: "Required for action='classify'.",
         },
         category_tax: { type: 'string' as const, description: "Required for action='classify'." },
@@ -169,10 +176,15 @@ export const MCP_TOOLS = [
   {
     name: 'schedule_c_report',
     description:
-      'Generate the Schedule C (sole-proprietor coaching business) report for the current tax year. Returns per-category totals keyed to IRS form line numbers.',
+      "Generate a Schedule C report for one of the two coaching businesses. Use entity='elyse_coaching' for Elyse's or 'jeremy_coaching' for Jeremy's. Returns per-category totals keyed to IRS form line numbers.",
     inputSchema: {
       type: 'object' as const,
       properties: {
+        entity: {
+          type: 'string' as const,
+          enum: ['elyse_coaching', 'jeremy_coaching'],
+          description: "Which coaching business Schedule C to generate. Defaults to elyse_coaching.",
+        },
         tax_year: { type: 'number' as const, description: 'Optional — defaults to the active workflow year.' },
       },
       additionalProperties: false,
@@ -246,13 +258,13 @@ export const MCP_TOOLS = [
   {
     name: 'pnl_for_entity',
     description:
-      "Income statement (P&L) for a single entity over a period. Entities are 'coaching_business' (Schedule C), 'airbnb_activity' (Schedule E), or 'family_personal'. Returns income and expenses grouped by tax category, plus net income and a count of still-unreviewed transactions in the window. Use when the user asks 'how's the business doing', 'what did I spend on the airbnb last month', or 'am I profitable this quarter'. Period defaults to this_month; accepts the same presets as budget_status.",
+      "Income statement (P&L) for a single entity over a period. Entities are 'elyse_coaching' (Elyse's Schedule C), 'jeremy_coaching' (Jeremy's Schedule C), 'airbnb_activity' (Schedule E), or 'family_personal'. Returns income and expenses grouped by tax category, plus net income and a count of still-unreviewed transactions in the window. Use when the user asks 'how's the business doing', 'what did I spend on the airbnb last month', or 'am I profitable this quarter'. Period defaults to this_month; accepts the same presets as budget_status.",
     inputSchema: {
       type: 'object' as const,
       properties: {
         entity: {
           type: 'string' as const,
-          enum: ['coaching_business', 'airbnb_activity', 'family_personal'],
+          enum: ['elyse_coaching', 'jeremy_coaching', 'airbnb_activity', 'family_personal'],
         },
         preset: {
           type: 'string' as const,
@@ -268,7 +280,7 @@ export const MCP_TOOLS = [
   {
     name: 'pnl_all_entities',
     description:
-      "Consolidated income statement covering all three entities (coaching_business, airbnb_activity, family_personal) at once, plus a rollup total. Use for 'how did the household do this month' or 'give me a snapshot of everything'. Period defaults to this_month.",
+      "Consolidated income statement covering all four entities (elyse_coaching, jeremy_coaching, airbnb_activity, family_personal) at once, plus a rollup total. Use for 'how did the household do this month' or 'give me a snapshot of everything'. Period defaults to this_month.",
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -291,7 +303,7 @@ export const MCP_TOOLS = [
       properties: {
         entity: {
           type: 'string' as const,
-          enum: ['coaching_business', 'airbnb_activity', 'family_personal'],
+          enum: ['elyse_coaching', 'jeremy_coaching', 'airbnb_activity', 'family_personal'],
         },
         months: {
           type: 'number' as const,
@@ -320,6 +332,116 @@ export const MCP_TOOLS = [
       additionalProperties: false,
     },
   },
+
+  // ── Bookkeeping session tools ───────────────────────────────────────────────
+  {
+    name: 'start_bookkeeping_session',
+    description:
+      "Start a bookkeeping session for one of the four businesses: elyse_coaching (Elyse's Coaching), jeremy_coaching (Jeremy's Coaching), airbnb_activity (Whitford House Airbnb), or family_personal (Family / Personal). Returns a summary of how many transactions need attention in each phase (income_confident, income_uncertain, expense_confident, expense_uncertain), the stored bookkeeping notes from prior sessions, and which phase to start with. Not tied to any tax year — works across all dates. Call this first, then use get_bookkeeping_batch to pull batches of 20, review them with the user, and commit_bookkeeping_decisions to save. The session flow is: (1) income the AI is fairly confident about → confirm or fix, (2) income the AI is less sure about → classify, (3) expenses the AI is confident about → confirm or fix, (4) uncertain expenses → classify. Along the way, save notes about patterns you learn via save_bookkeeping_notes so future sessions get smarter.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        business: {
+          type: 'string' as const,
+          enum: ['elyse_coaching', 'jeremy_coaching', 'airbnb_activity', 'family_personal'],
+          description: "Which business to run bookkeeping for.",
+        },
+      },
+      required: ['business'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'get_bookkeeping_batch',
+    description:
+      "Fetch the next batch of up to 20 transactions for a bookkeeping session phase. Each transaction includes a line number, the AI's current suggestion (entity + category + confidence), account info, and merchant details. Present these to the user as a numbered list. The user can accept the suggestion, reclassify, or skip. Use offset to paginate through large phases.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        business: {
+          type: 'string' as const,
+          enum: ['elyse_coaching', 'jeremy_coaching', 'airbnb_activity', 'family_personal'],
+        },
+        phase: {
+          type: 'string' as const,
+          enum: ['income_confident', 'income_uncertain', 'expense_confident', 'expense_uncertain'],
+          description: 'Which phase to pull transactions from.',
+        },
+        offset: {
+          type: 'number' as const,
+          description: 'Skip this many transactions (for pagination). Default 0.',
+        },
+      },
+      required: ['business', 'phase'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'commit_bookkeeping_decisions',
+    description:
+      "Commit a batch of bookkeeping decisions. Each decision is { transaction_id, action, entity?, category_tax?, category_budget? }. Actions: 'classify' (set entity + category_tax, feeds the learning loop), 'accept' (keep existing AI suggestion), 'skip' (defer to later). Returns counts of classified/accepted/skipped/errors. Every classify decision trains the auto-categorization rules — after 3+ consistent manual decisions for the same merchant, a rule is auto-created.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        decisions: {
+          type: 'array' as const,
+          items: {
+            type: 'object' as const,
+            properties: {
+              transaction_id: { type: 'string' as const },
+              action: { type: 'string' as const, enum: ['classify', 'accept', 'skip'] },
+              entity: {
+                type: 'string' as const,
+                enum: ['elyse_coaching', 'jeremy_coaching', 'airbnb_activity', 'family_personal'],
+              },
+              category_tax: { type: 'string' as const },
+              category_budget: { type: 'string' as const },
+            },
+            required: ['transaction_id', 'action'],
+          },
+          description: 'Array of decisions, max 100 per call.',
+        },
+      },
+      required: ['decisions'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'get_bookkeeping_notes',
+    description:
+      "Read the bookkeeping notes file for a business. These notes are written by the assistant during prior bookkeeping sessions and contain learned patterns, merchant categorization decisions, and session history. Read these at the start of every bookkeeping session to make better categorization decisions.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        business: {
+          type: 'string' as const,
+          enum: ['elyse_coaching', 'jeremy_coaching', 'airbnb_activity', 'family_personal'],
+        },
+      },
+      required: ['business'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'save_bookkeeping_notes',
+    description:
+      "Write the bookkeeping notes file for a business. Replaces the entire file. Use this during or after a bookkeeping session to record: (1) merchant categorization patterns learned (e.g. 'Kajabi charges are elyse_coaching / office_expense'), (2) edge cases or ambiguous merchants to watch for, (3) session summaries. Keep notes concise and structured so they're useful for future sessions.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        business: {
+          type: 'string' as const,
+          enum: ['elyse_coaching', 'jeremy_coaching', 'airbnb_activity', 'family_personal'],
+        },
+        notes: {
+          type: 'string' as const,
+          description: 'The full markdown content to save as the notes file.',
+        },
+      },
+      required: ['business', 'notes'],
+      additionalProperties: false,
+    },
+  },
 ];
 
 // ── Dispatch ──────────────────────────────────────────────────────────────────
@@ -343,7 +465,7 @@ export async function handleMcp(
         capabilities: { tools: {} },
         serverInfo: { name: 'cfo', version: '0.1.0' },
         instructions:
-          'CFO agent: bookkeeping, budgeting, cash-flow, retirement and tax prep. Bank ingest via Teller, classification via Claude, reports for Schedule C and Schedule E.',
+          "CFO agent: bookkeeping, budgeting, cash-flow, retirement and tax prep. Four entities: Elyse's Coaching (Schedule C), Jeremy's Coaching (Schedule C), Whitford House (Schedule E), Family/Personal. Bank ingest via Teller, classification via Claude.",
       },
     };
   }
@@ -427,7 +549,10 @@ async function dispatchTool(
     }
 
     case 'schedule_c_report': {
-      const url = withQuery('https://cfo.invalid/reports/schedule-c', args);
+      const schedCArgs = { ...args };
+      if (schedCArgs.tax_year) schedCArgs.year = schedCArgs.tax_year;
+      delete schedCArgs.tax_year;
+      const url = withQuery('https://cfo.invalid/reports/schedule-c', schedCArgs);
       const req = jsonRequest('GET', url);
       return respondText(await handleScheduleC(req, env));
     }
@@ -481,6 +606,41 @@ async function dispatchTool(
       const url = withQuery('https://cfo.invalid/pnl/trend', args);
       const req = jsonRequest('GET', url);
       return respondText(await handlePnLTrend(req, env));
+    }
+
+    case 'start_bookkeeping_session': {
+      const url = withQuery('https://cfo.invalid/bookkeeping/session', { entity: args.business });
+      const req = jsonRequest('GET', url);
+      return respondText(await handleBookkeepingSession(req, env));
+    }
+
+    case 'get_bookkeeping_batch': {
+      const url = withQuery('https://cfo.invalid/bookkeeping/batch', {
+        entity: args.business,
+        phase: args.phase,
+        offset: args.offset,
+      });
+      const req = jsonRequest('GET', url);
+      return respondText(await handleBookkeepingBatch(req, env));
+    }
+
+    case 'commit_bookkeeping_decisions': {
+      const req = jsonRequest('POST', 'https://cfo.invalid/bookkeeping/commit', args);
+      return respondText(await handleBookkeepingCommit(req, env));
+    }
+
+    case 'get_bookkeeping_notes': {
+      const url = withQuery('https://cfo.invalid/bookkeeping/notes', { entity: args.business });
+      const req = jsonRequest('GET', url);
+      return respondText(await handleGetBookkeepingNotes(req, env));
+    }
+
+    case 'save_bookkeeping_notes': {
+      const req = jsonRequest('PUT', 'https://cfo.invalid/bookkeeping/notes', {
+        entity: args.business,
+        notes: args.notes,
+      });
+      return respondText(await handleSaveBookkeepingNotes(req, env));
     }
 
     default:
