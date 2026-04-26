@@ -10,9 +10,10 @@ interface Props {
   onWindowChange: (w: ArticleWindow) => void;
   pinnedIds: Set<string>;
   onTogglePin: (id: string) => void;
+  onOpenArticle?: (article: Article) => void;
 }
 
-export function ResearchFeed({ articles, loading, window, onWindowChange, pinnedIds, onTogglePin }: Props) {
+export function ResearchFeed({ articles, loading, window, onWindowChange, pinnedIds, onTogglePin, onOpenArticle }: Props) {
   const [query, setQuery] = useState("");
 
   const filtered = useMemo(() => {
@@ -66,6 +67,7 @@ export function ResearchFeed({ articles, loading, window, onWindowChange, pinned
             article={a}
             pinned={pinnedIds.has(a.id)}
             onTogglePin={() => onTogglePin(a.id)}
+            onOpen={onOpenArticle ? () => onOpenArticle(a) : undefined}
           />
         ))}
       </div>

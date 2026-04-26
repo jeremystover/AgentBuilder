@@ -61,3 +61,51 @@ export interface ChatMessage {
 }
 
 export type ArticleWindow = "7d" | "30d" | "all";
+
+// ── Chat sessions ────────────────────────────────────────────────────────
+
+export interface ChatSession {
+  id: string;
+  title: string;
+  tags: string[];
+  notes: string;
+  scope: ChatScope;
+  pinned_article_ids: string[];
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+  last_message_at: string | null;
+}
+
+/** Persisted message row as returned by GET /api/lab/sessions/:id. */
+export interface PersistedMessage {
+  id: string;
+  role: "user" | "assistant";
+  /**
+   * Anthropic-shaped content — string for plain turns, ContentBlock[] when
+   * tool_use/tool_result blocks are present. The chat hook re-renders only
+   * the text from these (tool blocks are status pills already lost on
+   * refresh — that's an acceptable tradeoff for V1).
+   */
+  content: unknown;
+  created_at: string;
+}
+
+// ── Notes ────────────────────────────────────────────────────────────────
+
+export type NoteTargetKind = "idea" | "article";
+
+export interface Note {
+  id: string;
+  title: string;
+  body: string;
+  tags: string[];
+  /** null when the note is standalone (not attached to an idea/article). */
+  target_kind: NoteTargetKind | null;
+  target_id: string | null;
+  /** Set when the note was created via "Save as note" from a chat reply. */
+  source_session_id: string | null;
+  linked_article_ids: string[];
+  created_at: string;
+  updated_at: string;
+}
