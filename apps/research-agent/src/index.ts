@@ -236,7 +236,7 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
     });
   }
   if (url.pathname === "/lab/logout") {
-    const session = await requireWebSession(request, kitEnv(env), { mode: "page" });
+    const session = await requireWebSession(request, kitEnv(env), { mode: "page", loginPath: "/lab/login" });
     if (session.ok) await destroySession(kitEnv(env), session.sessionId);
     const secure = url.protocol === "https:";
     return new Response(null, {
@@ -252,7 +252,7 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
   // We require a cookie session for ALL /lab routes so the bundle isn't
   // public.
   if (url.pathname === "/lab" || url.pathname.startsWith("/lab/")) {
-    const session = await requireWebSession(request, kitEnv(env), { mode: "page" });
+    const session = await requireWebSession(request, kitEnv(env), { mode: "page", loginPath: "/lab/login" });
     if (!session.ok) return session.response;
     if (env.ASSETS) return env.ASSETS.fetch(request);
     return new Response("ASSETS binding not configured (build the Lab with `pnpm lab:build` then redeploy).", { status: 503 });
