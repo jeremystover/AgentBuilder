@@ -147,10 +147,19 @@ async function pageProjectDetail(main, projectId) {
   ));
   const stakeholderRow = el("div", { class: "flex flex-wrap gap-2" });
   for (const sh of data.stakeholders || []) {
+    // Backend hydrates {stakeholderId, name, email, tierTag}. Fall through
+    // name → email → id so the pill always shows something a human recognizes.
+    const id = sh.stakeholderId || sh.id || sh.email || sh.name || "";
+    const label = sh.name || sh.email || sh.stakeholderId || "(unnamed)";
+    const sub = sh.email && sh.name ? sh.email : "";
     stakeholderRow.appendChild(el("a", {
-      href: "#/people/" + encodeURIComponent(sh.stakeholderId || sh.email || sh.name),
-      class: "px-3 py-1.5 bg-white rounded-full ring-1 ring-slate-200 text-sm hover:ring-indigo-300",
-    }, sh.name || sh.email));
+      href: "#/people/" + encodeURIComponent(id),
+      class: "px-3 py-1.5 bg-white rounded-full ring-1 ring-slate-200 text-sm hover:ring-indigo-300 inline-flex items-baseline gap-2",
+      title: sub || label,
+    },
+      el("span", { class: "text-ink" }, label),
+      sub ? el("span", { class: "text-xs text-slate-400" }, sub) : null,
+    ));
   }
   if (!data.stakeholders?.length) stakeholderRow.appendChild(el("div", { class: "text-sm text-slate-500" }, "None yet."));
   stakeholdersSec.appendChild(stakeholderRow);
@@ -170,16 +179,19 @@ async function pageProjectDetail(main, projectId) {
   }
   root.appendChild(tasksSec);
 
-  // Meetings
+  // Meetings — upcoming, then recent. Reuses the rich meetingCard from
+  // spa-pages.js so day-of-week, calendar invite, and Zoom links render
+  // the same everywhere.
+  if (data.upcomingMeetings?.length) {
+    const sec = el("section", { class: "space-y-3" });
+    sec.appendChild(el("h2", { class: "text-lg font-semibold mb-2" }, "Upcoming meetings"));
+    for (const m of data.upcomingMeetings) sec.appendChild(window.meetingCard(m, { onChanged: () => $$.route() }));
+    root.appendChild(sec);
+  }
   if (data.recentMeetings?.length) {
     const sec = el("section", { class: "space-y-3" });
     sec.appendChild(el("h2", { class: "text-lg font-semibold mb-2" }, "Recent meetings"));
-    for (const m of data.recentMeetings) {
-      sec.appendChild(el("div", { class: "bg-white rounded-xl ring-1 ring-slate-200 p-3" },
-        el("div", { class: "text-sm font-medium" }, m.title || "(untitled)"),
-        el("div", { class: "text-xs text-slate-500" }, fmtDate(m.startTime) + " · " + fmtTime(m.startTime)),
-      ));
-    }
+    for (const m of data.recentMeetings) sec.appendChild(window.meetingCard(m, { onChanged: () => $$.route() }));
     root.appendChild(sec);
   }
   const addMeetingBtn = el("button", {

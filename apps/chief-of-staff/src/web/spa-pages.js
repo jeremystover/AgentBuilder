@@ -216,13 +216,62 @@ function openPlanReviewModal({ kind, action, periodKey, brief, onDone }) {
   openModal(card);
 }
 
-// ── Calendar list (used on Today + This Week) ──────────────────────────────
-function meetingCard(m) {
-  const card = el("div", { class: "bg-white rounded-xl ring-1 ring-slate-200 p-4 space-y-2" });
+// ── Calendar list (used on Today + This Week + Project/Person detail) ─────
+function fmtDayDate(s) {
+  if (!s) return "";
+  const d = new Date(s);
+  if (isNaN(d)) return s;
+  return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+}
+
+function isoToLocalInput(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d)) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return \`\${d.getFullYear()}-\${pad(d.getMonth()+1)}-\${pad(d.getDate())}T\${pad(d.getHours())}:\${pad(d.getMinutes())}\`;
+}
+
+function meetingCard(m, opts = {}) {
+  const { onChanged } = opts;
+  const card = el("div", {
+    class: "bg-white rounded-xl ring-1 ring-slate-200 hover:ring-indigo-300 p-4 space-y-2 cursor-pointer transition",
+    onclick: (e) => {
+      // Don't open editor when the user clicks a real link inside the card.
+      if (e.target.closest("a")) return;
+      openMeetingEditor(m, { onChanged: onChanged || (() => window.__cos.route()) });
+    },
+  });
+  // Header: title + day/date/time
   card.appendChild(el("div", { class: "flex items-baseline justify-between gap-3" },
     el("div", { class: "text-sm font-medium text-ink truncate" }, m.title || "(untitled)"),
-    el("div", { class: "text-xs text-slate-500 shrink-0" }, fmtTime(m.startTime) + " – " + fmtTime(m.endTime)),
+    el("div", { class: "text-xs text-slate-500 shrink-0" },
+      [fmtDayDate(m.startTime), fmtTime(m.startTime) + " – " + fmtTime(m.endTime)]
+        .filter(Boolean).join(" · ")),
   ));
+  // Link row: calendar invite + zoom/meet
+  const links = [];
+  if (m.htmlLink) {
+    links.push(el("a", {
+      href: m.htmlLink, target: "_blank", rel: "noopener",
+      class: "text-xs text-indigo-600 hover:underline inline-flex items-center gap-1",
+      onclick: (e) => e.stopPropagation(),
+    }, "📅 Open invite"));
+  }
+  if (m.zoomUrl) {
+    links.push(el("a", {
+      href: m.zoomUrl, target: "_blank", rel: "noopener",
+      class: "text-xs text-indigo-600 hover:underline inline-flex items-center gap-1",
+      onclick: (e) => e.stopPropagation(),
+    }, "🎥 Join Zoom"));
+  } else if (m.meetUrl) {
+    links.push(el("a", {
+      href: m.meetUrl, target: "_blank", rel: "noopener",
+      class: "text-xs text-indigo-600 hover:underline inline-flex items-center gap-1",
+      onclick: (e) => e.stopPropagation(),
+    }, "🎥 Join Meet"));
+  }
+  if (links.length) card.appendChild(el("div", { class: "flex gap-3 flex-wrap" }, ...links));
   if (m.attendees?.length) {
     card.appendChild(el("div", { class: "text-xs text-slate-500" },
       m.attendees.slice(0, 5).map((a) => a.name || a.email).filter(Boolean).join(", ")
@@ -242,6 +291,81 @@ function meetingCard(m) {
     card.appendChild(prep);
   }
   return card;
+}
+
+function openMeetingEditor(m, { onChanged } = {}) {
+  if (!m.eventId) {
+    toast("Missing eventId — can't edit this meeting", "err");
+    return;
+  }
+  const titleI = el("input", {
+    type: "text", value: m.title || "",
+    class: "w-full text-lg font-medium rounded-lg ring-1 ring-slate-200 px-3 py-2 focus:ring-indigo-400 focus:outline-none",
+  });
+  const startI = el("input", {
+    type: "datetime-local", value: isoToLocalInput(m.startTime),
+    class: "rounded-lg ring-1 ring-slate-200 px-3 py-2",
+  });
+  const endI = el("input", {
+    type: "datetime-local", value: isoToLocalInput(m.endTime),
+    class: "rounded-lg ring-1 ring-slate-200 px-3 py-2",
+  });
+  const descI = el("textarea", {
+    rows: 5,
+    class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 text-sm focus:ring-indigo-400 focus:outline-none resize-none",
+    placeholder: "Description / agenda…",
+  });
+  descI.value = m.description || "";
+  const locI = el("input", {
+    type: "text", value: m.location || "",
+    class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 text-sm",
+    placeholder: "Location / Zoom URL",
+  });
+  const attendees = el("div", { class: "text-xs text-slate-500" },
+    m.attendees?.length
+      ? "Attendees: " + m.attendees.map((a) => a.name || a.email).filter(Boolean).join(", ")
+      : "No attendees on file.");
+  const links = el("div", { class: "flex gap-3 text-xs" });
+  if (m.htmlLink) links.appendChild(el("a", {
+    href: m.htmlLink, target: "_blank", rel: "noopener",
+    class: "text-indigo-600 hover:underline",
+  }, "Open in Google Calendar ↗"));
+  if (m.zoomUrl) links.appendChild(el("a", {
+    href: m.zoomUrl, target: "_blank", rel: "noopener",
+    class: "text-indigo-600 hover:underline",
+  }, "Join Zoom ↗"));
+
+  const card = el("div", { class: "space-y-4" },
+    el("h2", { class: "text-xl font-semibold" }, "Edit meeting"),
+    titleI,
+    el("div", { class: "grid grid-cols-2 gap-3" },
+      el("label", { class: "text-xs uppercase tracking-wide text-slate-500" }, "Start", startI),
+      el("label", { class: "text-xs uppercase tracking-wide text-slate-500" }, "End", endI),
+    ),
+    el("label", { class: "block text-xs uppercase tracking-wide text-slate-500" }, "Location", locI),
+    el("label", { class: "block text-xs uppercase tracking-wide text-slate-500" }, "Description", descI),
+    attendees,
+    links,
+    el("div", { class: "flex justify-end pt-2" },
+      el("button", {
+        class: "rounded-lg bg-ink text-white px-4 py-2 text-sm font-medium hover:bg-slate-700",
+        onclick: async () => {
+          try {
+            const body = {
+              title: titleI.value,
+              startTime: startI.value ? new Date(startI.value).toISOString() : undefined,
+              endTime: endI.value ? new Date(endI.value).toISOString() : undefined,
+              description: descI.value,
+              location: locI.value,
+            };
+            await api(\`/api/calendar/\${encodeURIComponent(m.eventId)}\`, { method: "PATCH", body });
+            modal.close(); toast("Saved", "ok"); onChanged?.();
+          } catch (err) { toast(err.message, "err"); }
+        },
+      }, "Save"),
+    ),
+  );
+  const modal = openModal(card);
 }
 
 // ── Page: Today ────────────────────────────────────────────────────────────
@@ -318,6 +442,7 @@ window.taskRow   = taskRow;
 window.briefEditor = briefEditor;
 window.planReviewButtons = planReviewButtons;
 window.meetingCard = meetingCard;
+window.openMeetingEditor = openMeetingEditor;
 window.openTaskEditor = openTaskEditor;
 window.openCreateTaskModal = openCreateTaskModal;
 `;
