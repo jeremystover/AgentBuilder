@@ -21,6 +21,7 @@
 
 import type { Env } from './types';
 import { dispatchTool, MCP_TOOLS } from './mcp-tools';
+import { truncateForChat, drillInFor } from './lib/tool-result-truncate';
 
 // Curated subset, ordered by likelihood the model will reach for each.
 export const TOOL_ALLOWLIST = [
@@ -60,8 +61,12 @@ export function buildWebChatTools(env: Env): Record<string, KitTool> {
       inputSchema: def.inputSchema as Record<string, unknown>,
       run: async (args) => {
         try {
-          const text = await dispatchTool(name, args ?? {}, env);
-          return envelope(text);
+          const raw = await dispatchTool(name, args ?? {}, env);
+          // Cap chat-bound payloads so a single tool result can never
+          // blow the model's per-turn context budget. The full data is
+          // always available via the SPA hash route in drillInFor(name).
+          const capped = truncateForChat(raw, { drillInHint: drillInFor(name) });
+          return envelope(capped);
         } catch (err) {
           return envelope(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
         }
