@@ -97,6 +97,11 @@ export interface Env {
   // linkedin-watcher) that post pre-fetched content to /ingest. Optional.
   INTERNAL_SECRET?:        string;
 
+  // JSON map of newsletter senders → { provider, sourceId? }. When an
+  // inbound email's From matches a key, the email body is ingested as the
+  // article rather than scanned for URLs. See email/handler.ts.
+  NEWSLETTER_SENDERS?:     string;
+
   // Lab — added by the /lab web UI
   ANTHROPIC_API_KEY?:      string;
   WEB_UI_PASSWORD?:        string;
