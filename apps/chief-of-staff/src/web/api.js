@@ -363,24 +363,33 @@ export async function handleApiRequest(request, ctx) {
     const m = path.match(/^\/api\/people\/([^/]+)$/);
     if (m && method === "GET") {
       const data = await callTool(tools, "get_stakeholder_360", { personId: m[1] });
-      // get_stakeholder_360 returns recent meetings only. Add upcoming meetings.
+      // get_stakeholder_360's recentMeetings only carries title + startTime.
+      // Re-project from the Meetings table directly so the UI gets the same
+      // rich shape (htmlLink, zoomUrl, attendees) as everywhere else.
       const stakeholderRows = await readAll(sheets, "Stakeholders");
       const sh = stakeholderRows.find((s) =>
         s.stakeholderId === m[1] || String(s.email || "").toLowerCase() === m[1].toLowerCase(),
       );
       const email = String(sh?.email || data.email || "").toLowerCase();
       let upcomingMeetings = [];
+      let recentMeetings = data.recentMeetings || [];
       if (email) {
         const allMeetings = await readAll(sheets, "Meetings");
         const nowMs = Date.now();
-        upcomingMeetings = allMeetings
-          .filter((mm) => mm.startTime && Date.parse(mm.startTime) >= nowMs)
-          .filter((mm) => String(mm.attendeesJson || "").toLowerCase().includes(email))
+        const matching = allMeetings
+          .filter((mm) => mm.startTime && String(mm.attendeesJson || "").toLowerCase().includes(email));
+        upcomingMeetings = matching
+          .filter((mm) => Date.parse(mm.startTime) >= nowMs)
           .map(projectMeeting)
           .sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime))
           .slice(0, 10);
+        recentMeetings = matching
+          .filter((mm) => Date.parse(mm.startTime) < nowMs)
+          .map(projectMeeting)
+          .sort((a, b) => Date.parse(b.startTime) - Date.parse(a.startTime))
+          .slice(0, 10);
       }
-      return jsonResponse({ ...data, upcomingMeetings });
+      return jsonResponse({ ...data, upcomingMeetings, recentMeetings });
     }
     if (m && method === "PATCH") {
       const body = await readJson();

@@ -30,6 +30,7 @@ PPP_MCP_WEB_RATE_LIMIT_PER_MIN = "30"
 PPP_MCP_WEB_ALLOWLIST         = ""   # Comma-separated hostnames to allow (empty = all)
 PPP_MCP_WEB_DENYLIST          = ""   # Comma-separated hostnames to block
 PPP_WORK_CAL_SHEET_ID         = "1joKa9hjG627uLTU9BmEBNWW2UhY4G6ZvQ2xF7-TYMaw"
+IDEAS_URL                     = "https://research-agent.jsstover.workers.dev/lab"   # External link surfaced as the "Ideas" nav item in /app
 
 # ── Secrets ────────────────────────────────────────────────────────────────────
 # Set these via CLI — never commit secret values to this file.

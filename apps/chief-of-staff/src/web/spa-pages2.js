@@ -497,19 +497,12 @@ async function pagePersonDetail(main, personId) {
     root.appendChild(sec);
   }
 
-  // Recent meetings — uses the shared meetingCard so it gets links + click-to-edit
+  // Recent meetings — backend re-projects from the Meetings table so the
+  // rich card (links, click-to-edit) lights up here too.
   if (data.recentMeetings?.length) {
     const sec = el("section", { class: "space-y-3" });
     sec.appendChild(el("h2", { class: "text-lg font-semibold mb-2" }, "Recent meetings"));
-    for (const m of data.recentMeetings) {
-      // recentMeetings from get_stakeholder_360 only carries title+startTime+
-      // transcriptRef. That's not enough for the rich card, so render lite.
-      sec.appendChild(el("div", { class: "bg-white rounded-xl ring-1 ring-slate-200 p-3 text-sm" },
-        el("div", { class: "font-medium" }, m.title || "(untitled)"),
-        el("div", { class: "text-xs text-slate-500" },
-          new Date(m.startTime).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })),
-      ));
-    }
+    for (const m of data.recentMeetings) sec.appendChild(window.meetingCard(m, { onChanged: () => $$.route() }));
     root.appendChild(sec);
   }
 
