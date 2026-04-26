@@ -55,6 +55,7 @@ interface OpenSessionRow {
   suggested_method: string | null;
   sent_at: string;
   batch_json: string | null;
+  variant_id: string | null;
 }
 
 export async function handleSmsInbound(request: Request, env: Env): Promise<Response> {
@@ -173,7 +174,7 @@ async function handleSingleReply(
     // the outcome accordingly so stats can distinguish preset vs natural.
     const source = session.suggested_method === 'free_text' ? 'free_text' : 'preset';
     await applyConfirmedClassification(env, session, source);
-    const praise = await praiseFor(env, session.user_id, session.person, person.timezone);
+    const praise = await praiseFor(env, session.user_id, session.person, person.timezone, session.variant_id);
     return twimlMessage(`${praise} Reply MORE for three more, or come back later.`);
   }
 
@@ -238,7 +239,7 @@ async function handleBatchReply(
       return twimlMessage("Hmm — I don't have suggestions for any of those. Reply per item, e.g. 'A groceries, B office, C 2'.");
     }
     await closeSession(env, session.id, 'confirmed');
-    const praise = await praiseFor(env, session.user_id, session.person, person.timezone);
+    const praise = await praiseFor(env, session.user_id, session.person, person.timezone, session.variant_id);
     return twimlMessage(`${praise} ${resolved} done. Reply MORE for three more.`);
   }
 
@@ -286,7 +287,7 @@ async function handleBatchReply(
 
   if (unresolved.length === 0) {
     await closeSession(env, session.id, 'confirmed');
-    const praise = await praiseFor(env, session.user_id, session.person, person.timezone);
+    const praise = await praiseFor(env, session.user_id, session.person, person.timezone, session.variant_id);
     return twimlMessage(
       `${praise} ${resolvedCount} done — ${summary.join(', ')}. Reply MORE for three more.`,
     );
@@ -385,7 +386,7 @@ async function loadOpenSession(env: Env, person: PersonRow): Promise<OpenSession
   const row = await env.DB.prepare(
     `SELECT id, user_id, person, transaction_id,
             suggested_entity, suggested_category_tax, suggested_category_budget,
-            suggested_confidence, suggested_method, sent_at, batch_json
+            suggested_confidence, suggested_method, sent_at, batch_json, variant_id
      FROM sms_sessions
      WHERE user_id = ? AND person = ? AND status = 'awaiting_reply'
      ORDER BY sent_at DESC LIMIT 1`,
@@ -504,8 +505,8 @@ async function sendNextBatchAsTwiml(env: Env, person: PersonRow): Promise<Respon
   }
   // Try a 3-pack; pickAndOpenBatchSession falls back to a single
   // automatically when there aren't 3 left.
-  const result = await pickAndOpenBatchSession(env, person.user_id, person.person)
-    ?? await pickAndOpenSession(env, person.user_id, person.person);
+  const result = await pickAndOpenBatchSession(env, person.user_id, person.person, person.timezone)
+    ?? await pickAndOpenSession(env, person.user_id, person.person, person.timezone);
   if (!result) {
     return twimlMessage("All caught up — nothing left in your queue. 🎉");
   }

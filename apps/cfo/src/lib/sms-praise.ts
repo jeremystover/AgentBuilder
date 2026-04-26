@@ -1,25 +1,20 @@
 /**
- * Context-aware praise messages. Phase A used a static rotation of four
- * strings; Phase B reads sms_outcomes for today and tailors the wording
- * to actual progress so "you're crushing it" lines up with reality.
+ * Context-aware praise messages.
  *
  * Streak = consecutive 'confirmed' or 'free_text'-resolved-to-confirm
  * outcomes today, broken by 'rerouted' or 'timed_out'. We keep the
  * streak window scoped to today so a fresh morning doesn't claim a
  * stale streak from last night.
+ *
+ * Phase C: tone is selected from the session's variant_id (or
+ * recomputed from the day's deterministic variant if the session
+ * doesn't have one, e.g. legacy data). Falls back to 'casual' if no
+ * variant resolves.
  */
 
 import type { Env } from '../types';
 import { localNow } from './pacific-time';
-
-interface PraiseContext {
-  /** Outcomes resolved today as confirmed/free_text — counts toward "X today". */
-  resolvedToday: number;
-  /** Current streak of consecutive resolutions today. */
-  streak: number;
-  /** True if this is the first resolution we've seen for the person ever. */
-  firstEver: boolean;
-}
+import { VARIANTS, pickVariant, renderPraiseByTone, type Tone, type PraiseInputs } from './sms-variants';
 
 export async function fetchPraiseContext(
   env: Env,
@@ -27,10 +22,9 @@ export async function fetchPraiseContext(
   person: 'jeremy' | 'elyse',
   timezone: string,
   now = new Date(),
-): Promise<PraiseContext> {
+): Promise<PraiseInputs> {
   const today = localNow(timezone, now).dateKey;
 
-  // Pull today's outcomes oldest-first so we can walk for streak.
   const outcomes = await env.DB.prepare(
     `SELECT action, created_at FROM sms_outcomes
      WHERE user_id = ? AND person = ?
@@ -42,7 +36,6 @@ export async function fetchPraiseContext(
     (o) => o.action === 'confirmed' || o.action === 'free_text',
   ).length;
 
-  // Streak: walk backwards, count consecutive resolutions until a break.
   let streak = 0;
   for (let i = outcomes.results.length - 1; i >= 0; i--) {
     const action = outcomes.results[i]!.action;
@@ -50,8 +43,6 @@ export async function fetchPraiseContext(
     else break;
   }
 
-  // First-ever check is cheap because we only care if there are zero
-  // historical outcomes.
   let firstEver = false;
   if (outcomes.results.length === 0) {
     const ever = await env.DB.prepare(
@@ -65,37 +56,25 @@ export async function fetchPraiseContext(
   return { resolvedToday, streak, firstEver };
 }
 
-export function renderPraise(ctx: PraiseContext): string {
-  if (ctx.firstEver) {
-    return "First one — locked in. Thank you!";
-  }
-  if (ctx.streak >= 5) {
-    return `${ctx.streak} in a row — you're a machine.`;
-  }
-  if (ctx.streak >= 3) {
-    return `That's ${ctx.streak} in a row! Nice rhythm.`;
-  }
-  if (ctx.resolvedToday >= 5) {
-    return `${ctx.resolvedToday} today — books are getting clean.`;
-  }
-  if (ctx.resolvedToday >= 2) {
-    return `Got it. That's ${ctx.resolvedToday} today.`;
-  }
-  // resolvedToday === 1 (just this one) — keep it simple, not braggy.
-  const opts = [
-    "Got it. Thank you!",
-    "Nice — locked in.",
-    "Saved.",
-  ];
-  return opts[Math.floor(Math.random() * opts.length)]!;
-}
-
+/** Praise tied to the variant ID we recorded when the session opened. */
 export async function praiseFor(
   env: Env,
   userId: string,
   person: 'jeremy' | 'elyse',
   timezone: string,
+  variantId?: string | null,
 ): Promise<string> {
   const ctx = await fetchPraiseContext(env, userId, person, timezone);
-  return renderPraise(ctx);
+  const tone = resolveTone(variantId, person, timezone);
+  return renderPraiseByTone(tone, ctx);
+}
+
+function resolveTone(variantId: string | null | undefined, person: 'jeremy' | 'elyse', timezone: string): Tone {
+  if (variantId) {
+    const found = VARIANTS.find((v) => v.id === variantId);
+    if (found) return found.tone;
+  }
+  // Fallback: recompute today's variant. Keeps Phase A/B sessions
+  // (no variant_id stored) from breaking on praise.
+  return pickVariant(person, localNow(timezone).dateKey).tone;
 }

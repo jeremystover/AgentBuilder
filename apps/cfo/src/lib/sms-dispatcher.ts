@@ -81,7 +81,7 @@ export async function runDispatch(env: Env, now = new Date()): Promise<DispatchS
       continue;
     }
 
-    const picked = await pickAndOpenSession(env, person.user_id, person.person);
+    const picked = await pickAndOpenSession(env, person.user_id, person.person, person.timezone);
     if (!picked) {
       summary.recipients.push({ person: person.person, decision: 'skipped', reason: 'no eligible transactions or open session' });
       continue;
