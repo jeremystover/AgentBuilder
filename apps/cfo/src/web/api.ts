@@ -312,6 +312,116 @@ export async function importTiller(file: File): Promise<{ transactions_imported:
   return multipartRequest("/imports/tiller", fd);
 }
 
+// ── Rules ────────────────────────────────────────────────────────────────
+
+export type RuleMatchField = "merchant_name" | "description" | "account_id" | "amount";
+export type RuleMatchOperator = "contains" | "equals" | "starts_with" | "ends_with" | "regex";
+
+export interface Rule {
+  id: string;
+  user_id: string;
+  name: string;
+  match_field: RuleMatchField;
+  match_operator: RuleMatchOperator;
+  match_value: string;
+  entity: "elyse_coaching" | "jeremy_coaching" | "airbnb_activity" | "family_personal";
+  category_tax: string | null;
+  category_budget: string | null;
+  priority: number;
+  is_active: number;
+  created_at: string;
+}
+
+export interface RuleInput {
+  name: string;
+  match_field: RuleMatchField;
+  match_operator: RuleMatchOperator;
+  match_value: string;
+  entity: Rule["entity"];
+  category_tax?: string;
+  category_budget?: string;
+  priority?: number;
+  is_active?: boolean;
+}
+
+export async function listRules(): Promise<{ rules: Rule[] }> {
+  return request("/rules");
+}
+export async function createRule(input: RuleInput): Promise<{ rule: Rule }> {
+  return request("/rules", { method: "POST", body: JSON.stringify(input) });
+}
+export async function updateRule(id: string, input: Partial<RuleInput>): Promise<{ rule: Rule }> {
+  return request(`/rules/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(input) });
+}
+export async function deleteRule(id: string): Promise<{ ok: true }> {
+  return request(`/rules/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+export async function importAutoCat(file: File): Promise<{ imported: number; skipped: number; [k: string]: unknown }> {
+  const fd = new FormData();
+  fd.append("file", file);
+  return multipartRequest("/rules/import-autocat", fd);
+}
+
+// ── Budget ───────────────────────────────────────────────────────────────
+
+export type Cadence = "weekly" | "monthly" | "annual";
+
+export interface BudgetCategory {
+  id: string;
+  slug: string;
+  name: string;
+  parent_slug: string | null;
+  is_active: number;
+  created_at: string;
+}
+
+export interface BudgetTarget {
+  id: string;
+  category_slug: string;
+  cadence: Cadence;
+  amount: number;
+  effective_from: string | null;
+  effective_to: string | null;
+  notes: string | null;
+  category_name?: string | null;
+}
+
+export interface BudgetStatus {
+  period: { start: string; end: string; days: number; label: string };
+  categories: Array<{
+    category_slug: string;
+    category_name: string;
+    target: { native_amount: number; native_cadence: Cadence; prorated_amount: number } | null;
+    spent: number;
+    tx_count: number;
+    remaining: number | null;
+    percent_used: number | null;
+    status: "no_target" | "over" | "near" | "under";
+  }>;
+}
+
+export async function listBudgetCategories(): Promise<{ categories: BudgetCategory[] }> {
+  return request("/budget/categories");
+}
+export async function createBudgetCategory(input: { slug: string; name: string; parent_slug?: string }): Promise<{ category: BudgetCategory }> {
+  return request("/budget/categories", { method: "POST", body: JSON.stringify(input) });
+}
+export async function updateBudgetCategory(slug: string, input: { name?: string; parent_slug?: string | null; is_active?: boolean }): Promise<{ category: BudgetCategory }> {
+  return request(`/budget/categories/${encodeURIComponent(slug)}`, { method: "PATCH", body: JSON.stringify(input) });
+}
+export async function listBudgetTargets(): Promise<{ targets: BudgetTarget[] }> {
+  return request("/budget/targets");
+}
+export async function upsertBudgetTarget(input: { category_slug: string; cadence: Cadence; amount: number; effective_from?: string; effective_to?: string | null; notes?: string }): Promise<{ target: BudgetTarget }> {
+  return request("/budget/targets", { method: "PUT", body: JSON.stringify(input) });
+}
+export async function deleteBudgetTarget(id: string): Promise<{ ok: true }> {
+  return request(`/budget/targets/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+export async function getBudgetStatus(preset = "this_month"): Promise<BudgetStatus> {
+  return request<BudgetStatus>(`/budget/status?preset=${encodeURIComponent(preset)}`);
+}
+
 // ── Chat (SSE) ────────────────────────────────────────────────────────────
 
 export interface ChatStreamInput {
