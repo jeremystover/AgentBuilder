@@ -497,7 +497,7 @@ export async function handleMcp(
 
 // ── Tool handlers ─────────────────────────────────────────────────────────────
 
-async function dispatchTool(
+export async function dispatchTool(
   name: string,
   args: Record<string, unknown>,
   env: Env,
