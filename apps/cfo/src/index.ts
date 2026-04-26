@@ -84,6 +84,7 @@ import {
   handleUpsertSmsSettings,
   handleDeleteSmsPerson,
   handleManualDispatch,
+  handleSmsStats,
 } from './routes/sms';
 
 // Scheduled jobs
@@ -301,6 +302,9 @@ export default {
       const smsPersonMatch = path.match(/^\/api\/web\/sms\/settings\/([^/]+)$/);
       if (smsPersonMatch && method === 'DELETE') {
         return handleDeleteSmsPerson(request, env, smsPersonMatch[1]!);
+      }
+      if (path === '/api/web/sms/stats' && method === 'GET') {
+        return handleSmsStats(request, env);
       }
       const webResponse = await handleWebApi(request, env);
       if (webResponse) return webResponse;

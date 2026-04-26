@@ -17,11 +17,14 @@
 
 import type { Env, Transaction, Rule } from '../types';
 import { applyRules } from './rules';
+import { localNow } from './pacific-time';
+import { pickVariant, renderInitialByTone, renderBatchByTone, type Variant } from './sms-variants';
 
 export interface PickedSession {
   session_id: string;
   transaction_id: string;
   message: string;
+  variant_id: string;
 }
 
 interface CandidateTx {
@@ -49,12 +52,17 @@ export interface Suggestion {
  * Caller is responsible for actually sending the SMS (or returning it
  * as TwiML).
  *
+ * `timezone` is used solely for variant selection — same person + same
+ * local date = same variant all day, satisfying the spec's "day-to-day"
+ * A/B framing.
+ *
  * Returns null if there are no eligible transactions left.
  */
 export async function pickAndOpenSession(
   env: Env,
   userId: string,
   person: 'jeremy' | 'elyse',
+  timezone: string = 'America/Los_Angeles',
 ): Promise<PickedSession | null> {
   // Skip if we already have an open session — a single user shouldn't
   // get parallel prompts. (The cron path also checks this; the MORE
@@ -69,22 +77,23 @@ export async function pickAndOpenSession(
   if (!tx) return null;
 
   const suggestion = await computeSuggestion(env, userId, tx);
+  const variant = pickVariant(person, localNow(timezone).dateKey);
   const sessionId = `sms_${crypto.randomUUID()}`;
-  const message = renderInitialMessage(tx, suggestion);
+  const message = renderInitialMessage(tx, suggestion, variant);
 
   await env.DB.prepare(
     `INSERT INTO sms_sessions
        (id, user_id, person, transaction_id,
         suggested_entity, suggested_category_tax, suggested_category_budget,
-        suggested_confidence, suggested_method, status, sent_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_reply', datetime('now'))`,
+        suggested_confidence, suggested_method, variant_id, status, sent_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_reply', datetime('now'))`,
   ).bind(
     sessionId, userId, person, tx.id,
     suggestion.entity, suggestion.category_tax, suggestion.category_budget,
-    suggestion.confidence, suggestion.method,
+    suggestion.confidence, suggestion.method, variant.id,
   ).run();
 
-  return { session_id: sessionId, transaction_id: tx.id, message };
+  return { session_id: sessionId, transaction_id: tx.id, message, variant_id: variant.id };
 }
 
 export async function pickNextTransaction(
@@ -161,26 +170,13 @@ export async function computeSuggestion(
   return { entity: 'family_personal', category_tax: null, category_budget: null, confidence: 0, method: 'fallback' };
 }
 
-export function renderInitialMessage(tx: CandidateTx, suggestion: Suggestion): string {
-  const merchant = tx.merchant_name?.trim() || tx.description.slice(0, 40);
-  const amt = `$${Math.abs(tx.amount).toFixed(2)}`;
-  const date = tx.posted_date.slice(5); // MM-DD
-  const guess = humanizeCategory(suggestion);
-  if (guess) {
-    return [
-      `Can you help me categorize this transaction?`,
-      `${merchant} · ${amt} · ${date}`,
-      `I think it's ${guess} — is that right?`,
-      `Reply 1 for yes, 2 to send to Jeremy instead, or describe what it is.`,
-      `PAUSE (or 3) to pause for today.`,
-    ].join('\n');
-  }
-  return [
-    `Can you help me categorize this transaction?`,
-    `${merchant} · ${amt} · ${date}`,
-    `What category is this? Reply with a description.`,
-    `Or 2 to send to Jeremy instead. PAUSE (or 3) to pause for today.`,
-  ].join('\n');
+export function renderInitialMessage(tx: CandidateTx, suggestion: Suggestion, variant: Variant): string {
+  return renderInitialByTone(variant.tone, {
+    merchant: tx.merchant_name?.trim() || tx.description.slice(0, 40),
+    amount_str: `$${Math.abs(tx.amount).toFixed(2)}`,
+    date: tx.posted_date.slice(5), // MM-DD
+    guess: humanizeCategory(suggestion),
+  });
 }
 
 export function humanizeCategory(s: Suggestion): string | null {
@@ -215,6 +211,7 @@ export async function pickAndOpenBatchSession(
   env: Env,
   userId: string,
   person: 'jeremy' | 'elyse',
+  timezone: string = 'America/Los_Angeles',
 ): Promise<PickedSession | null> {
   const open = await env.DB.prepare(
     `SELECT 1 FROM sms_sessions
@@ -249,7 +246,7 @@ export async function pickAndOpenBatchSession(
   if (rows.results.length < 3) {
     // Not enough for a batch — fall back to single mode so the user
     // doesn't get a half-empty 3-pack.
-    return pickAndOpenSession(env, userId, person);
+    return pickAndOpenSession(env, userId, person, timezone);
   }
 
   const labels: Array<'A' | 'B' | 'C'> = ['A', 'B', 'C'];
@@ -273,47 +270,40 @@ export async function pickAndOpenBatchSession(
     });
   }
 
+  const variant = pickVariant(person, localNow(timezone).dateKey);
   const sessionId = `sms_${crypto.randomUUID()}`;
-  const message = renderBatchMessage(items);
+  const message = renderBatchMessage(items, variant);
   const primary = items[0]!;
 
   await env.DB.prepare(
     `INSERT INTO sms_sessions
        (id, user_id, person, transaction_id,
         suggested_entity, suggested_category_tax, suggested_category_budget,
-        suggested_confidence, suggested_method, status, sent_at, batch_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_reply', datetime('now'), ?)`,
+        suggested_confidence, suggested_method, variant_id, status, sent_at, batch_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_reply', datetime('now'), ?)`,
   ).bind(
     sessionId, userId, person, primary.transaction_id,
     primary.suggested_entity, primary.suggested_category_tax, primary.suggested_category_budget,
-    primary.suggested_confidence, primary.suggested_method,
+    primary.suggested_confidence, primary.suggested_method, variant.id,
     JSON.stringify(items),
   ).run();
 
-  return { session_id: sessionId, transaction_id: primary.transaction_id, message };
+  return { session_id: sessionId, transaction_id: primary.transaction_id, message, variant_id: variant.id };
 }
 
-function renderBatchMessage(items: BatchItem[]): string {
-  const lines = [`Three more — can you tag these?`];
-  for (const it of items) {
-    const merchant = it.merchant?.trim() || it.description.slice(0, 30);
-    const amt = `$${Math.abs(it.amount).toFixed(2)}`;
-    const date = it.date.slice(5);
-    const guess = humanizeCategory({
+function renderBatchMessage(items: BatchItem[], variant: Variant): string {
+  return renderBatchByTone(variant.tone, items, (it) => ({
+    merchant: it.merchant?.trim() || it.description.slice(0, 30),
+    amount_str: `$${Math.abs(it.amount).toFixed(2)}`,
+    date: it.date.slice(5),
+    guess: humanizeCategory({
       entity: it.suggested_entity,
       category_tax: it.suggested_category_tax,
       category_budget: it.suggested_category_budget,
       confidence: it.suggested_confidence,
       method: it.suggested_method,
-    });
-    if (guess) {
-      lines.push(`${it.label}: ${merchant} · ${amt} · ${date} → ${guess}?`);
-    } else {
-      lines.push(`${it.label}: ${merchant} · ${amt} · ${date} → ?`);
-    }
-  }
-  lines.push(`Reply 1 to confirm all, or per item ("A 1, B groceries, C 2"). PAUSE to stop.`);
-  return lines.join('\n');
+    }),
+  }));
 }
 
 export function parseBatchJson(raw: string | null): BatchItem[] | null {
