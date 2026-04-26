@@ -1,54 +1,42 @@
-import { Wallet, Menu } from "lucide-react";
-import { useState } from "react";
 import { ChatPanel } from "./components/ChatPanel";
 import { SnapshotPanel } from "./components/SnapshotPanel";
-import { ReviewQueueStub } from "./components/ReviewQueueStub";
+import { ReviewQueueRail } from "./components/ReviewQueueRail";
+import { TopNav } from "./components/TopNav";
+import { ReviewQueueView } from "./components/drilldowns/ReviewQueueView";
 import { useChat } from "./hooks/useChat";
 import { useSnapshot } from "./hooks/useSnapshot";
+import { useRoute } from "./router";
 
 export function App() {
-  const chatH = useChat();
-  const snapshotH = useSnapshot();
-  const [leftOpen, setLeftOpen] = useState(true);
+  const [route] = useRoute();
 
   return (
-    <div className="h-screen flex bg-bg-primary text-text-primary overflow-hidden">
-      {/* Left rail — review queue */}
-      {leftOpen && (
-        <div className="w-72 flex-none border-r border-border bg-bg-surface hidden lg:flex flex-col">
-          <ReviewQueueStub />
-        </div>
-      )}
-
-      {/* Center — chat */}
-      <div className="flex-1 min-w-0 flex flex-col">
-        <header className="flex items-center justify-between border-b border-border bg-bg-surface px-5 py-3">
-          <div className="flex items-center gap-3">
-            <button
-              className="lg:hidden text-text-muted hover:text-text-primary"
-              onClick={() => setLeftOpen((o) => !o)}
-              aria-label="Toggle review queue"
-            >
-              <Menu className="w-5 h-5" />
-            </button>
-            <Wallet className="w-5 h-5 text-accent-primary" />
-            <h1 className="text-base font-semibold tracking-tight">CFO</h1>
-          </div>
-          <div className="flex items-center gap-4 text-xs text-text-muted">
-            <a href="/legacy" className="hover:text-text-primary">Legacy UI</a>
-            <a href="/logout" className="hover:text-text-primary">Sign out</a>
-          </div>
-        </header>
-        <ChatPanel
-          turns={chatH.turns}
-          loading={chatH.loading}
-          onSend={(m) => void chatH.send(m)}
-          onCancel={chatH.cancel}
-          onClear={chatH.clear}
-        />
+    <div className="h-screen flex flex-col bg-bg-primary text-text-primary overflow-hidden">
+      <TopNav />
+      <div className="flex-1 min-h-0">
+        {route === "chat" && <ChatLayout />}
+        {route === "review" && <ReviewQueueView />}
+        {route !== "chat" && route !== "review" && <ComingSoon route={route} />}
       </div>
+    </div>
+  );
+}
 
-      {/* Right rail — snapshot */}
+function ChatLayout() {
+  const chatH = useChat();
+  const snapshotH = useSnapshot();
+  return (
+    <div className="h-full flex">
+      <div className="w-72 flex-none border-r border-border bg-bg-surface hidden lg:flex flex-col">
+        <ReviewQueueRail />
+      </div>
+      <ChatPanel
+        turns={chatH.turns}
+        loading={chatH.loading}
+        onSend={(m) => void chatH.send(m)}
+        onCancel={chatH.cancel}
+        onClear={chatH.clear}
+      />
       <div className="w-80 flex-none border-l border-border bg-bg-surface hidden md:flex flex-col">
         <SnapshotPanel
           snapshot={snapshotH.snapshot}
@@ -56,6 +44,19 @@ export function App() {
           error={snapshotH.error}
           onRefresh={() => void snapshotH.refresh()}
         />
+      </div>
+    </div>
+  );
+}
+
+function ComingSoon({ route }: { route: string }) {
+  return (
+    <div className="h-full flex items-center justify-center">
+      <div className="max-w-md text-center">
+        <h2 className="text-lg font-semibold text-text-primary capitalize mb-2">{route}</h2>
+        <p className="text-sm text-text-muted">
+          Not ported yet — head to <a className="text-accent-primary hover:underline" href="/legacy">the legacy UI</a> for now.
+        </p>
       </div>
     </div>
   );

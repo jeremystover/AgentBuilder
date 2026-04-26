@@ -1,7 +1,11 @@
-// Fetch wrappers for /api/web/*. Same-origin so the cookie set by /login
-// authorises every call. 401 → bounce to /login.
+// Fetch wrappers for /api/web/* AND for the legacy REST surface
+// (/transactions, /review, /accounts, etc.). Same-origin so the cookie
+// set by /login authorises every call. 401 → bounce to /login.
 
-import type { ChatMessage, ChatStreamEvent, Snapshot } from "./types";
+import type {
+  ChatMessage, ChatStreamEvent, Snapshot,
+  ReviewListResponse, ReviewItem, ResolveAction, BulkResolveInput,
+} from "./types";
 
 async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
   const res = await fetch(path, {
@@ -29,6 +33,71 @@ async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
 
 export async function getSnapshot(): Promise<Snapshot> {
   return request<Snapshot>("/api/web/snapshot");
+}
+
+// ── Review queue ─────────────────────────────────────────────────────────
+// The legacy REST surface still uses X-User-Id header auth. The cookie
+// session doesn't carry one, so the worker needs to recognize the cookie
+// for /review/* etc. — for now the kit's session cookie is checked at the
+// route level, but legacy endpoints fall back to header auth. We forward
+// X-User-Id from the env-pinned WEB_UI_USER_ID via a server proxy to
+// avoid clients ever needing to know it.
+//
+// Practically: until we wire that proxy, /review etc. work because the
+// worker treats the cookie as "user_id=default" implicitly via getUserId
+// (which defaults to 'default' when no header is present).
+
+export interface ListReviewParams {
+  status?: "pending" | "resolved" | "skipped";
+  category_tax?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export async function listReview(params: ListReviewParams = {}): Promise<ReviewListResponse> {
+  const qs = new URLSearchParams();
+  if (params.status) qs.set("status", params.status);
+  if (params.category_tax) qs.set("category_tax", params.category_tax);
+  if (params.limit != null) qs.set("limit", String(params.limit));
+  if (params.offset != null) qs.set("offset", String(params.offset));
+  return request<ReviewListResponse>(`/review?${qs.toString()}`);
+}
+
+export interface ResolveReviewInput {
+  action: ResolveAction;
+  entity?: string;
+  category_tax?: string;
+  category_budget?: string;
+}
+
+export async function resolveReview(id: string, input: ResolveReviewInput): Promise<{ ok: true }> {
+  return request(`/review/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function bulkResolveReview(input: BulkResolveInput): Promise<{ updated: number }> {
+  return request(`/review/bulk`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
+export interface ClassifyRunResult {
+  total?: number;
+  rules?: number;
+  ai?: number;
+  review_required?: number;
+  [k: string]: unknown;
+}
+
+export async function runClassification(): Promise<ClassifyRunResult> {
+  return request(`/classify/run`, { method: "POST", body: JSON.stringify({}) });
+}
+
+export async function getNextReviewItem(): Promise<ReviewItem | { empty: true; message: string }> {
+  return request<ReviewItem | { empty: true; message: string }>("/review/next");
 }
 
 // ── Chat (SSE) ────────────────────────────────────────────────────────────

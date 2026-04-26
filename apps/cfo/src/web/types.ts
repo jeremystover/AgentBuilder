@@ -46,3 +46,54 @@ export type ChatStreamEvent =
   | { type: "done"; text: string; stopReason: string; iterations: number; messages?: ChatMessage[]; usage?: unknown }
   | { type: "history"; messages: ChatMessage[]; usage: unknown; iterations: number }
   | { type: "error"; message: string };
+
+// ── Review queue ─────────────────────────────────────────────────────────
+
+export type ReviewStatus = "pending" | "resolved" | "skipped";
+export type ResolveAction = "accept" | "classify" | "skip" | "reopen";
+
+export interface ReviewItem {
+  id: string;
+  user_id: string;
+  transaction_id: string;
+  reason: string;
+  status: ReviewStatus;
+  suggested_entity: string | null;
+  suggested_category_tax: string | null;
+  suggested_category_budget: string | null;
+  suggested_confidence: number | null;
+  details: string | null;
+  needs_input: string | null;
+  created_at: string;
+  resolved_at: string | null;
+  // joined
+  posted_date: string | null;
+  amount: number | null;
+  merchant_name: string | null;
+  description: string | null;
+  account_name: string | null;
+  account_type: string | null;
+  account_subtype: string | null;
+  owner_tag: string | null;
+  current_entity: string | null;
+  current_category_tax: string | null;
+  current_confidence: number | null;
+}
+
+export interface ReviewListResponse {
+  items: ReviewItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface BulkResolveInput {
+  action: ResolveAction;
+  review_ids?: string[];
+  apply_to_filtered?: boolean;
+  status?: ReviewStatus;
+  filter_category_tax?: string;
+  entity?: string;
+  category_tax?: string;
+  category_budget?: string;
+}
