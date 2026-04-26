@@ -197,6 +197,121 @@ export async function splitTransaction(id: string, input: {
   });
 }
 
+// ── Reports ──────────────────────────────────────────────────────────────
+
+export interface ScheduleLine {
+  category_tax: string;
+  category_name: string | null;
+  form_line: string | null;
+  total_amount: number;
+  transaction_count: number;
+}
+
+export interface ScheduleReport {
+  tax_year: string;
+  entity?: string;
+  schedule: "C" | "E";
+  income: { categories: ScheduleLine[]; total: number };
+  expenses: { categories: ScheduleLine[]; total: number };
+  net_profit?: number;
+  net_income?: number;
+  pending_review: number;
+}
+
+export async function getScheduleC(year: string | number, entity: "elyse_coaching" | "jeremy_coaching" = "elyse_coaching"): Promise<ScheduleReport> {
+  return request<ScheduleReport>(`/reports/schedule-c?year=${encodeURIComponent(String(year))}&entity=${encodeURIComponent(entity)}`);
+}
+
+export async function getScheduleE(year: string | number): Promise<ScheduleReport> {
+  return request<ScheduleReport>(`/reports/schedule-e?year=${encodeURIComponent(String(year))}`);
+}
+
+export interface SummaryReport {
+  tax_year: string;
+  by_entity: Array<{ entity: string; total: number; count: number }>;
+  by_month: Array<{ month: string; entity: string; total: number }>;
+  review_queue: Array<{ status: string; count: number }>;
+}
+
+export async function getSummary(year: string | number): Promise<SummaryReport> {
+  return request<SummaryReport>(`/reports/summary?year=${encodeURIComponent(String(year))}`);
+}
+
+export function exportCsvUrl(year: string | number, entity?: string): string {
+  const qs = new URLSearchParams({ year: String(year) });
+  if (entity) qs.set("entity", entity);
+  return `/reports/export?${qs.toString()}`;
+}
+
+export async function takeSnapshot(year: string | number): Promise<{ snapshot_id: string }> {
+  return request("/reports/snapshot", { method: "POST", body: JSON.stringify({ year: String(year) }) });
+}
+
+// ── Imports ──────────────────────────────────────────────────────────────
+
+export interface ImportRecord {
+  id: string;
+  source: string;
+  account_id: string | null;
+  status: string;
+  date_from: string | null;
+  date_to: string | null;
+  transactions_found: number;
+  transactions_imported: number;
+  error_message: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export async function listImports(): Promise<{ imports: ImportRecord[] }> {
+  return request("/imports");
+}
+
+export async function deleteImport(id: string): Promise<{ ok: true; transactions_deleted: number; locked_transactions_skipped: number }> {
+  return request(`/imports/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function deleteAllImports(): Promise<{ ok: true; transactions_deleted: number; locked_transactions_skipped: number }> {
+  return request("/imports", { method: "DELETE" });
+}
+
+// Imports use multipart/form-data — bypass the JSON request() helper.
+async function multipartRequest<T>(path: string, body: FormData): Promise<T> {
+  const res = await fetch(path, { method: "POST", credentials: "same-origin", body });
+  if (res.status === 401) {
+    location.href = "/login";
+    throw new Error("unauthorized");
+  }
+  const ct = res.headers.get("content-type") || "";
+  const data = ct.includes("json") ? await res.json() : await res.text();
+  if (!res.ok) {
+    const msg = (data && typeof data === "object" && "error" in data)
+      ? String((data as Record<string, unknown>).error)
+      : `HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+  return data as T;
+}
+
+export async function importCsv(file: File, accountId: string): Promise<{ transactions_imported: number; duplicates_skipped: number; [k: string]: unknown }> {
+  const fd = new FormData();
+  fd.append("file", file);
+  fd.append("account_id", accountId);
+  return multipartRequest("/imports/csv", fd);
+}
+
+export async function importAmazon(file: File): Promise<{ orders_imported: number; [k: string]: unknown }> {
+  const fd = new FormData();
+  fd.append("file", file);
+  return multipartRequest("/imports/amazon", fd);
+}
+
+export async function importTiller(file: File): Promise<{ transactions_imported: number; unmapped_categories?: string[]; [k: string]: unknown }> {
+  const fd = new FormData();
+  fd.append("file", file);
+  return multipartRequest("/imports/tiller", fd);
+}
+
 // ── Chat (SSE) ────────────────────────────────────────────────────────────
 
 export interface ChatStreamInput {
