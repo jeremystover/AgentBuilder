@@ -15,9 +15,8 @@ cpu_ms = 300000
 crons = ["0 9 * * *", "*/30 * * * *"]
 
 [assets]
-# Vite-built SPA bundle (index.html + hashed /assets/*). Vite copies
-# public/legacy.html through verbatim so the legacy tax-prep SPA stays
-# reachable at /legacy. Build with `pnpm web:build`.
+# Vite-built SPA bundle (index.html + hashed /assets/*). Build with
+# `pnpm web:build`.
 directory = "./dist"
 binding = "ASSETS"
 
