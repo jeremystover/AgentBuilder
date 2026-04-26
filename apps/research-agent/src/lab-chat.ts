@@ -25,6 +25,12 @@
 import type { Env, McpToolDefinition } from "./types";
 import { ZodError } from "zod";
 import { runChatStream } from "@agentbuilder/web-ui-kit";
+import {
+  ensureSession,
+  persistChatTurn,
+  setSessionTitle,
+  getSessionMessageCount,
+} from "./lab-api";
 
 import { IngestUrlInput,       ingestUrl }       from "./mcp/tools/ingest_url";
 import { SearchSemanticInput,  searchSemantic }  from "./mcp/tools/search_semantic";
@@ -213,6 +219,8 @@ interface ChatRequestBody {
   history?: Array<{ role: "user" | "assistant"; content: unknown }>;
   scope?: Scope;
   pinned_articles?: PinnedArticle[];
+  /** Session id to persist into. If omitted or unknown, a new session is created. */
+  session_id?: string;
 }
 
 function buildSystemPrompt(scope: Scope, pinned: PinnedArticle[]): string {
@@ -277,6 +285,22 @@ export async function handleLabChat(request: Request, env: Env, ctx: ExecutionCo
   const tools = buildToolRegistry(env, ctx);
   const system = buildSystemPrompt(scope, pinned);
 
+  // Persistence: ensure a session row exists, write the user turn before
+  // we hit the LLM (so a model failure doesn't lose the user's input).
+  // Then keep the session's scope + pinned_article_ids fresh so a refresh
+  // restores the same view.
+  const { id: sessionId, created: sessionCreated } = await ensureSession(env, body.session_id ?? null);
+  await persistChatTurn(env, sessionId, "user", message);
+  await env.CONTENT_DB.prepare(
+    `UPDATE chat_sessions SET scope = ?, pinned_article_ids = ?, updated_at = ?
+       WHERE id = ?`,
+  ).bind(
+    scope,
+    JSON.stringify(pinned.map((a) => a.id)),
+    new Date().toISOString(),
+    sessionId,
+  ).run();
+
   try {
     const sseStream = await runChatStream({
       ctx: { tools, env: env as unknown as Record<string, unknown> & { ANTHROPIC_API_KEY?: string } },
@@ -286,7 +310,21 @@ export async function handleLabChat(request: Request, env: Env, ctx: ExecutionCo
       tier: "default",
       maxIterations: 8,
     });
-    return new Response(sseStream, {
+
+    // Tee into client + persist branches. Client gets the raw SSE
+    // (prepended with a `session` event so the SPA learns the id even
+    // when one was auto-created). The persist branch is consumed in the
+    // background — we extract the canonical history and write the
+    // assistant turn, then auto-title if it's the first turn.
+    const [clientBranch, persistBranch] = sseStream.tee();
+    const enriched = prependSseEvent(clientBranch, {
+      type: "session",
+      session_id: sessionId,
+      created: sessionCreated,
+    });
+    ctx.waitUntil(persistAssistantAndAutoTitle(env, sessionId, persistBranch, message));
+
+    return new Response(enriched, {
       status: 200,
       headers: {
         "content-type": "text/event-stream; charset=utf-8",
@@ -302,5 +340,133 @@ export async function handleLabChat(request: Request, env: Env, ctx: ExecutionCo
     return new Response(JSON.stringify({ error: msg }), {
       status, headers: { "content-type": "application/json; charset=utf-8" },
     });
+  }
+}
+
+// ── SSE helpers for tee / prepend ──────────────────────────────────────────
+
+function prependSseEvent(
+  stream: ReadableStream<Uint8Array>,
+  event: unknown,
+): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  const prefix = encoder.encode(`data: ${JSON.stringify(event)}\n\n`);
+  return new ReadableStream({
+    async start(controller) {
+      controller.enqueue(prefix);
+      const reader = stream.getReader();
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          controller.enqueue(value);
+        }
+      } finally {
+        controller.close();
+      }
+    },
+  });
+}
+
+async function persistAssistantAndAutoTitle(
+  env: Env,
+  sessionId: string,
+  stream: ReadableStream<Uint8Array>,
+  userMessage: string,
+): Promise<void> {
+  // Read the kit's SSE frames out of the persist branch. We care about
+  // two events: `history` carries the canonical messages array (the
+  // exact shape the model will see on the next turn — including
+  // tool_use/tool_result blocks), and `done` carries the plain text
+  // reply we use for auto-titling. Anything else is rendered chrome we
+  // can ignore here.
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  type HistoryMsg = { role: "user" | "assistant"; content: unknown };
+  let history: HistoryMsg[] = [];
+  let assistantText = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let sepIdx;
+      while ((sepIdx = buffer.indexOf("\n\n")) !== -1) {
+        const raw = buffer.slice(0, sepIdx);
+        buffer = buffer.slice(sepIdx + 2);
+        for (const line of raw.split("\n")) {
+          if (!line.startsWith("data:")) continue;
+          try {
+            const ev = JSON.parse(line.slice(5).trim()) as { type: string; messages?: unknown[]; text?: string };
+            if (ev.type === "history" && Array.isArray(ev.messages)) {
+              history = ev.messages as HistoryMsg[];
+            } else if (ev.type === "done" && typeof ev.text === "string") {
+              assistantText = ev.text;
+            }
+          } catch { /* ignore malformed frames */ }
+        }
+      }
+    }
+  } catch (e) {
+    console.warn("[lab-chat] persist branch error:", e);
+    return;
+  }
+
+  // Find the assistant turn the canonical history ends with (tool loops
+  // can produce multiple intermediate user turns with tool_results, but
+  // the final reply is always the last assistant turn).
+  if (history.length > 0) {
+    for (let i = history.length - 1; i >= 0; i--) {
+      const m = history[i];
+      if (m && m.role === "assistant") {
+        await persistChatTurn(env, sessionId, "assistant", m.content);
+        break;
+      }
+    }
+  } else if (assistantText) {
+    // Fallback: no history frame (kit version mismatch or stream ended
+    // before the loop completed). Persist the plain text so we at least
+    // have something to display next time.
+    await persistChatTurn(env, sessionId, "assistant", assistantText);
+  }
+
+  // Auto-title only on the FIRST turn. Count messages — 2 means user +
+  // assistant from this turn. Skip if more (subsequent turns) or fewer
+  // (something failed before persist).
+  const count = await getSessionMessageCount(env, sessionId);
+  if (count === 2) {
+    await maybeAutoTitle(env, sessionId, userMessage, assistantText);
+  }
+}
+
+async function maybeAutoTitle(
+  env: Env,
+  sessionId: string,
+  userMessage: string,
+  assistantText: string,
+): Promise<void> {
+  if (!env.ANTHROPIC_API_KEY) return;
+  try {
+    const { LLMClient } = await import("@agentbuilder/llm");
+    const llm = new LLMClient({ anthropicApiKey: env.ANTHROPIC_API_KEY });
+    const result = await llm.complete({
+      tier: "fast",
+      system: "You generate short, descriptive chat session titles. Reply with a 3-6 word title only — no quotes, no trailing punctuation, no preamble.",
+      messages: [{
+        role: "user",
+        content: `Title this chat:\n\nUser: ${userMessage.slice(0, 500)}\n\nAssistant: ${assistantText.slice(0, 500)}`,
+      }],
+      maxOutputTokens: 32,
+      cacheSystemPrompt: false,
+    });
+    const title = result.text.trim()
+      .replace(/^["']|["']$/g, "")
+      .replace(/[.!?]+$/, "")
+      .slice(0, 100);
+    if (title) await setSessionTitle(env, sessionId, title);
+  } catch (e) {
+    // Best-effort — title stays "New session" if titling fails.
+    console.warn("[lab-chat] auto-title failed:", e);
   }
 }

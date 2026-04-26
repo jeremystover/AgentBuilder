@@ -94,6 +94,81 @@ export async function listProjects(): Promise<Project[]> {
   return data.projects;
 }
 
+// ── Chat sessions ────────────────────────────────────────────────────────
+
+import type { ChatSession, PersistedMessage } from "./types";
+
+export async function listSessions(includeArchived = false): Promise<ChatSession[]> {
+  const data = await request<{ sessions: ChatSession[] }>(
+    `/api/lab/sessions${includeArchived ? "?include_archived=true" : ""}`,
+  );
+  return data.sessions;
+}
+
+export async function createSession(input: { title?: string; scope?: ChatScope; pinned_article_ids?: string[] } = {}): Promise<ChatSession> {
+  const data = await request<{ session: ChatSession }>("/api/lab/sessions", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  return data.session;
+}
+
+export async function getSession(id: string): Promise<{ session: ChatSession; messages: PersistedMessage[] }> {
+  return await request<{ session: ChatSession; messages: PersistedMessage[] }>(
+    `/api/lab/sessions/${encodeURIComponent(id)}`,
+  );
+}
+
+export async function updateSession(
+  id: string,
+  patch: Partial<Pick<ChatSession, "title" | "tags" | "notes" | "scope" | "pinned_article_ids">>,
+): Promise<ChatSession> {
+  const data = await request<{ session: ChatSession }>(
+    `/api/lab/sessions/${encodeURIComponent(id)}`,
+    { method: "PATCH", body: JSON.stringify(patch) },
+  );
+  return data.session;
+}
+
+export async function archiveSession(id: string): Promise<void> {
+  await request<{ ok: true }>(`/api/lab/sessions/${encodeURIComponent(id)}/archive`, { method: "POST" });
+}
+
+export async function deleteSession(id: string): Promise<void> {
+  await request<{ ok: true }>(`/api/lab/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+// ── Ingestion (URL or PDF) ───────────────────────────────────────────────
+
+export async function ingestUrl(url: string, note?: string): Promise<{ status: string; article_id?: string; message?: string }> {
+  return await request<{ status: string; article_id?: string; message?: string }>(
+    "/api/lab/ingest",
+    { method: "POST", body: JSON.stringify({ url, note }) },
+  );
+}
+
+/** Multipart upload — does NOT go through the JSON helper since fetch
+ *  needs to set the boundary itself. Same auth (cookie + same-origin). */
+export async function ingestFile(file: File, note?: string): Promise<{ attachment_id?: string; filename?: string; error?: string }> {
+  const form = new FormData();
+  form.append("file", file);
+  if (note) form.append("note", note);
+  const res = await fetch("/api/lab/ingest", {
+    method: "POST",
+    body: form,
+    credentials: "same-origin",
+  });
+  if (res.status === 401) {
+    location.href = "/lab/login";
+    throw new Error("unauthorized");
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data && typeof data === "object" && "error" in data) ? String((data as Record<string, unknown>).error) : `HTTP ${res.status}`);
+  }
+  return data as { attachment_id?: string; filename?: string };
+}
+
 // ── Chat (streaming SSE) ─────────────────────────────────────────────────
 //
 // /api/lab/chat returns a text/event-stream body. We parse it line-by-
@@ -110,6 +185,7 @@ export async function listProjects(): Promise<Project[]> {
 //   error          — surface to user, do not retry transparently
 
 export type ChatStreamEvent =
+  | { type: "session"; session_id: string; created: boolean }
   | { type: "text_delta"; text: string }
   | { type: "tool_use"; toolUseId: string; toolName: string; toolInput: Record<string, unknown> }
   | { type: "tool_result"; toolUseId: string; content: string; isError?: boolean }
@@ -119,6 +195,8 @@ export type ChatStreamEvent =
   | { type: "error"; message: string };
 
 export interface ChatStreamInput {
+  /** Existing session id to append to, or omit to let the worker create one. */
+  session_id?: string;
   message: string;
   history: ChatMessage[];
   scope: ChatScope;
