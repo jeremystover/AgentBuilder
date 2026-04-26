@@ -251,11 +251,23 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
   // Static asset fallthrough: the SPA itself + any /lab/* asset request.
   // We require a cookie session for ALL /lab routes so the bundle isn't
   // public.
+  //
+  // Vite is configured with `base: "/lab/"`, so the built index.html
+  // references assets under /lab/assets/... — but Cloudflare's ASSETS
+  // binding looks them up at their path-from-dist-root, which is just
+  // /assets/... (dist/ has no /lab/ subdirectory). Strip the /lab prefix
+  // before calling ASSETS so the lookup succeeds; otherwise the binding
+  // hits its SPA fallback and returns index.html for every JS/CSS
+  // request, breaking the browser's MIME check on module scripts.
   if (url.pathname === "/lab" || url.pathname.startsWith("/lab/")) {
     const session = await requireWebSession(request, kitEnv(env), { mode: "page", loginPath: "/lab/login" });
     if (!session.ok) return session.response;
-    if (env.ASSETS) return env.ASSETS.fetch(request);
-    return new Response("ASSETS binding not configured (build the Lab with `pnpm lab:build` then redeploy).", { status: 503 });
+    if (!env.ASSETS) {
+      return new Response("ASSETS binding not configured (build the Lab with `pnpm lab:build` then redeploy).", { status: 503 });
+    }
+    const stripped = new URL(request.url);
+    stripped.pathname = stripped.pathname.replace(/^\/lab\/?/, "/") || "/";
+    return env.ASSETS.fetch(new Request(stripped.toString(), request));
   }
 
   // ── /api/lab/* — JSON API for the Lab SPA + external apps ─────────────

@@ -79,11 +79,21 @@ if (url.pathname === "/{{SURFACE}}/logout") {
 }
 
 // SPA shell + assets — auth-gated so the bundle isn't public.
+//
+// Vite is configured with base: "/{{SURFACE}}/", so the built index.html
+// references assets under /{{SURFACE}}/assets/... — but Cloudflare's ASSETS
+// binding looks them up at their path-from-dist-root, which is just
+// /assets/... (dist/ has no /{{SURFACE}}/ subdirectory). Strip the prefix
+// before calling ASSETS so the lookup succeeds; otherwise the binding
+// hits its SPA fallback and returns index.html for every JS/CSS request,
+// breaking the browser's MIME check on module scripts.
 if (url.pathname === "/{{SURFACE}}" || url.pathname.startsWith("/{{SURFACE}}/")) {
   const session = await requireWebSession(request, kitEnv(env), { mode: "page", loginPath: "/{{SURFACE}}/login" });
   if (!session.ok) return session.response;
-  if (env.ASSETS) return env.ASSETS.fetch(request);
-  return new Response("ASSETS binding not configured (build the SPA first).", { status: 503 });
+  if (!env.ASSETS) return new Response("ASSETS binding not configured (build the SPA first).", { status: 503 });
+  const stripped = new URL(request.url);
+  stripped.pathname = stripped.pathname.replace(/^\/{{SURFACE}}\/?/, "/") || "/";
+  return env.ASSETS.fetch(new Request(stripped.toString(), request));
 }
 
 // JSON API — cookie session OR bearer key.
