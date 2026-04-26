@@ -10,5 +10,6 @@
     // docs/migrations/cfo.md.
     "noUncheckedIndexedAccess": false
   },
-  "include": ["src/**/*", "worker-configuration.d.ts"]
+  "include": ["src/**/*", "worker-configuration.d.ts"],
+  "exclude": ["src/web/**/*"]
 }

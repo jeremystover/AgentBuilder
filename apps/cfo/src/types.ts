@@ -13,6 +13,14 @@ export interface Env {
   DEFAULT_BANK_PROVIDER?: string;
   ANTHROPIC_API_KEY: string;
   MCP_HTTP_KEY?: string;
+  // Web UI cookie auth (kit). Required for /, /api/web/*; the legacy
+  // /legacy SPA still uses header auth and ignores these.
+  WEB_UI_PASSWORD?: string;
+  EXTERNAL_API_KEY?: string;
+  // Single-user pin for the new /api/web/* surface — cookie sessions
+  // don't carry a user id. Defaults to 'default' which matches the
+  // legacy header-auth fallback in getUserId().
+  WEB_UI_USER_ID?: string;
 }
 
 export type BankProvider = 'teller';

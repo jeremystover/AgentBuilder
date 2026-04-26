@@ -62,8 +62,33 @@ import { handleClaudeHealth } from './routes/health';
 // MCP
 import { handleMcp, type JsonRpcMessage } from './mcp-tools';
 
+// Web UI (React SPA + cookie auth)
+import { handleWebApi } from './web-api';
+import { handleWebChat } from './web-chat';
+import {
+  requireApiAuth,
+  requireWebSession,
+  createSession,
+  destroySession,
+  setSessionCookieHeader,
+  clearSessionCookieHeader,
+  verifyPassword,
+  loginHtml,
+} from '@agentbuilder/web-ui-kit';
+
 // Scheduled jobs
 import { runNightlyTellerSync } from './lib/nightly-sync';
+
+// The kit's auth helpers expect env.DB — which is exactly what the CFO
+// has. This shim narrows env to the subset the kit reads, keeping the
+// dependency explicit.
+function kitEnv(env: Env): Record<string, unknown> {
+  return {
+    DB: env.DB,
+    WEB_UI_PASSWORD: env.WEB_UI_PASSWORD,
+    EXTERNAL_API_KEY: env.EXTERNAL_API_KEY,
+  };
+}
 
 // ── Simple regex router ───────────────────────────────────────────────────────
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -193,6 +218,65 @@ export default {
 
     const url = new URL(request.url);
     const path = url.pathname;
+    const method = request.method;
+
+    // ── Web UI auth (kit cookie session) ──────────────────────────────────
+    // Pattern mirrors research-agent's /lab/* surface so the same tooling
+    // (loginHtml, requireWebSession, requireApiAuth) is shared.
+    if (path === '/login' && method === 'GET') {
+      return new Response(loginHtml({ title: 'CFO', action: '/login' }), {
+        status: 200,
+        headers: { 'content-type': 'text/html; charset=utf-8' },
+      });
+    }
+    if (path === '/login' && method === 'POST') {
+      if (!env.WEB_UI_PASSWORD) {
+        return new Response(loginHtml({ title: 'CFO', action: '/login', error: 'WEB_UI_PASSWORD is not configured.' }), {
+          status: 500, headers: { 'content-type': 'text/html; charset=utf-8' },
+        });
+      }
+      const form = await request.formData().catch(() => null);
+      const password = form?.get?.('password') || '';
+      if (!verifyPassword(kitEnv(env), password)) {
+        return new Response(loginHtml({ title: 'CFO', action: '/login', error: 'Wrong password.' }), {
+          status: 401, headers: { 'content-type': 'text/html; charset=utf-8' },
+        });
+      }
+      const { sessionId } = await createSession(kitEnv(env));
+      const secure = url.protocol === 'https:';
+      return new Response(null, {
+        status: 302,
+        headers: {
+          location: '/',
+          'set-cookie': setSessionCookieHeader(sessionId, { secure }),
+        },
+      });
+    }
+    if (path === '/logout') {
+      const session = await requireWebSession(request, kitEnv(env), { mode: 'page' });
+      if (session.ok) await destroySession(kitEnv(env), session.sessionId);
+      const secure = url.protocol === 'https:';
+      return new Response(null, {
+        status: 302,
+        headers: {
+          location: '/login',
+          'set-cookie': clearSessionCookieHeader({ secure }),
+        },
+      });
+    }
+
+    // ── /api/web/* — JSON API for the React SPA ───────────────────────────
+    if (path.startsWith('/api/web/')) {
+      const auth = await requireApiAuth(request, kitEnv(env));
+      if (!auth.ok) return auth.response;
+
+      if (path === '/api/web/chat' && method === 'POST') {
+        return handleWebChat(request, env, /* ctx */ {} as ExecutionContext);
+      }
+      const webResponse = await handleWebApi(request, env);
+      if (webResponse) return webResponse;
+      return Response.json({ error: `Not found: ${method} ${path}` }, { status: 404 });
+    }
 
     // MCP /mcp for Claude custom tool integration
     if (path === '/mcp' && request.method === 'POST') {
@@ -233,8 +317,28 @@ export default {
       }
     }
 
-    // Serve the SPA for any unmatched GET (client-side routing via hash).
+    // ── Legacy tax-prep SPA at /legacy (cookie-gated) ─────────────────────
+    // The pre-rewrite SPA still exists at public/legacy.html and uses
+    // header auth (X-User-Id) for its API calls. We gate the bundle
+    // behind the kit's web session so the page itself isn't public.
+    if ((path === '/legacy' || path === '/legacy/') && request.method === 'GET') {
+      const session = await requireWebSession(request, kitEnv(env), { mode: 'page' });
+      if (!session.ok) return session.response;
+      return env.ASSETS.fetch(new Request(new URL('/legacy.html', request.url).toString(), request));
+    }
+
+    // ── New React SPA at / (cookie-gated) ─────────────────────────────────
+    // Vite-built bundle lives under dist/ and is served by the [assets]
+    // binding. Any unmatched GET falls through to the SPA so client-side
+    // routing works.
     if (request.method === 'GET') {
+      const session = await requireWebSession(request, kitEnv(env), { mode: 'page' });
+      if (!session.ok) return session.response;
+      // Hashed asset paths (/assets/index-abc.js etc.) — let ASSETS
+      // resolve them directly. Anything else is the SPA shell.
+      if (path.startsWith('/assets/')) {
+        return env.ASSETS.fetch(request);
+      }
       return env.ASSETS.fetch(new Request(new URL('/index.html', request.url).toString(), request));
     }
 
