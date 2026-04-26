@@ -21,7 +21,7 @@
  *      tail does this — see template).
  */
 
-export const SPA_CORE_JS = String.raw`
+export const SPA_CORE_JS = `
 const $  = (sel, root = document) => root.querySelector(sel);
 const el = (tag, attrs = {}, ...children) => {
   const node = document.createElement(tag);
@@ -115,7 +115,7 @@ function attachVoice(button, textarea) {
         const tr = e.results[i][0].transcript;
         if (e.results[i].isFinal) final += tr; else interim += tr;
       }
-      textarea.value = (baseline + (final ? "\n" + final : "") + (interim ? " " + interim : "")).trim();
+      textarea.value = (baseline + (final ? "\\n" + final : "") + (interim ? " " + interim : "")).trim();
     };
     rec.onend = () => { listening = false; button.classList.remove("bg-rose-600", "text-white"); button.textContent = "🎤"; };
     rec.start();

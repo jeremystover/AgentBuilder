@@ -7,8 +7,10 @@
  * and the default chat sidebar.
  */
 
-export const SPA_PAGES_JS = String.raw`
-const { $, el, fmtDate, fmtTime, isOverdue, api, toast, openModal, attachVoice } = window.__cos;
+export const SPA_PAGES_JS = `
+// $, el, fmtDate, fmtTime, isOverdue, api, toast, openModal, attachVoice
+// are all declared at top level by spa-core (which is concatenated above
+// this file at request time). No need to re-destructure from window.__cos.
 
 // ── Task row (used on Today, This Week, Projects, People) ──────────────────
 function taskRow(task, opts = {}) {

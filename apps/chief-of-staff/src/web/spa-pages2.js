@@ -7,9 +7,11 @@
  * /app/app.js.
  */
 
-export const SPA_PAGES2_JS = String.raw`
+export const SPA_PAGES2_JS = `
+// el, fmtDate, fmtTime, api, toast, openModal, attachVoice are declared
+// at top level by spa-core (concatenated above). $$ aliases window.__cos
+// for the route() helper used by drag-and-drop / promote callbacks.
 const $$ = window.__cos;
-const { el, fmtDate, fmtTime, api, toast, openModal, attachVoice } = $$;
 
 // ── Create-task modal (referenced by Today/Week + chat callbacks) ──────────
 async function openCreateTaskModal({ projectsById = {}, onChanged } = {}) {
@@ -456,12 +458,12 @@ window.NAV = [
   { hash: "#/triage",   label: "Triage" },
 ];
 window.ROUTES = [
-  { pattern: /^#\/today$/,           handler: "pageToday" },
-  { pattern: /^#\/week$/,            handler: "pageWeek" },
-  { pattern: /^#\/projects$/,        handler: "pageProjects" },
-  { pattern: /^#\/projects\/(.+)$/,  handler: "pageProjectDetail" },
-  { pattern: /^#\/people$/,          handler: "pagePeople" },
-  { pattern: /^#\/people\/(.+)$/,    handler: "pagePersonDetail" },
-  { pattern: /^#\/triage$/,          handler: "pageTriage" },
+  { pattern: /^#\\/today$/,           handler: "pageToday" },
+  { pattern: /^#\\/week$/,            handler: "pageWeek" },
+  { pattern: /^#\\/projects$/,        handler: "pageProjects" },
+  { pattern: /^#\\/projects\\/(.+)$/,  handler: "pageProjectDetail" },
+  { pattern: /^#\\/people$/,          handler: "pagePeople" },
+  { pattern: /^#\\/people\\/(.+)$/,    handler: "pagePersonDetail" },
+  { pattern: /^#\\/triage$/,          handler: "pageTriage" },
 ];
 `;
