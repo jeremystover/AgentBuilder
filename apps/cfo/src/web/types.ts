@@ -97,3 +97,87 @@ export interface BulkResolveInput {
   category_tax?: string;
   category_budget?: string;
 }
+
+// ── Accounts ─────────────────────────────────────────────────────────────
+
+export interface Account {
+  id: string;
+  user_id: string;
+  name: string;
+  mask: string | null;
+  type: string | null;
+  subtype: string | null;
+  owner_tag: string | null;
+  is_active: number;
+  provider?: string | null;
+  institution_name?: string | null;
+  teller_enrollment_id?: string | null;
+  plaid_account_id?: string | null;
+  teller_account_id?: string | null;
+  created_at: string;
+}
+
+export interface AccountListResponse {
+  accounts: Account[];
+}
+
+export interface BankConfig {
+  current_provider: "teller" | "plaid";
+  application_id?: string;
+  environment?: string;
+  products?: string[];
+  select_account?: string;
+  link_token?: string;
+  [k: string]: unknown;
+}
+
+// ── Tax year workflow ───────────────────────────────────────────────────
+
+export interface TaxYearWorkflow {
+  workflow: {
+    id: string;
+    tax_year: number;
+    started_at: string;
+    completed_at: string | null;
+  } | null;
+  checklist?: Array<{
+    id: string;
+    item_key: string;
+    label: string;
+    status: "pending" | "in_progress" | "complete";
+    account_id: string | null;
+    account_name: string | null;
+  }>;
+  recommended_tax_year?: number;
+}
+
+// ── Transactions ────────────────────────────────────────────────────────
+
+export interface Transaction {
+  id: string;
+  user_id: string;
+  account_id: string | null;
+  posted_date: string;
+  amount: number;
+  currency: string;
+  merchant_name: string | null;
+  description: string;
+  is_pending: number;
+  account_name?: string | null;
+  account_owner?: string | null;
+  classification?: {
+    entity: string | null;
+    category_tax: string | null;
+    category_budget: string | null;
+    confidence: number | null;
+    method: string | null;
+    review_required: number;
+  } | null;
+}
+
+export interface TransactionListResponse {
+  transactions: Transaction[];
+  total: number;
+  limit: number;
+  offset: number;
+}
