@@ -7,6 +7,12 @@
  * (Twilio API call vs TwiML inline). When called from the inbound
  * handler we skip the Twilio API call — the body goes back as TwiML in
  * the same HTTP turn.
+ *
+ * Two modes:
+ *   - single: pickAndOpenSession — one transaction, used for the first
+ *     daily prompt per the spec ("only send one in the initial message").
+ *   - batch:  pickAndOpenBatchSession — three labeled A/B/C, used after
+ *     the user opts in via MORE (Phase B).
  */
 
 import type { Env, Transaction, Rule } from '../types';
@@ -29,7 +35,7 @@ interface CandidateTx {
   owner_tag: string | null;
 }
 
-interface Suggestion {
+export interface Suggestion {
   entity: string;
   category_tax: string | null;
   category_budget: string | null;
@@ -177,9 +183,147 @@ export function renderInitialMessage(tx: CandidateTx, suggestion: Suggestion): s
   ].join('\n');
 }
 
-function humanizeCategory(s: Suggestion): string | null {
+export function humanizeCategory(s: Suggestion): string | null {
   if (s.method === 'fallback' || (!s.category_tax && !s.category_budget)) return null;
   const slug = s.category_budget ?? s.category_tax;
   if (!slug) return null;
   return slug.replace(/_/g, ' ');
 }
+
+// ── Batch (Phase B) ────────────────────────────────────────────────────────
+
+export interface BatchItem {
+  label: 'A' | 'B' | 'C';
+  transaction_id: string;
+  merchant: string | null;
+  amount: number;
+  date: string;
+  description: string;
+  account_owner: string | null;
+  suggested_entity: string;
+  suggested_category_tax: string | null;
+  suggested_category_budget: string | null;
+  suggested_confidence: number;
+  suggested_method: 'rule' | 'ai' | 'historical' | 'fallback';
+}
+
+/**
+ * Open a batch session (3 labeled transactions). Falls back to a single-
+ * item session if there are fewer than 3 eligible transactions left.
+ */
+export async function pickAndOpenBatchSession(
+  env: Env,
+  userId: string,
+  person: 'jeremy' | 'elyse',
+): Promise<PickedSession | null> {
+  const open = await env.DB.prepare(
+    `SELECT 1 FROM sms_sessions
+     WHERE user_id = ? AND person = ? AND status = 'awaiting_reply' LIMIT 1`,
+  ).bind(userId, person).first();
+  if (open) return null;
+
+  // Pick up to 3 distinct transactions oldest-first, applying the same
+  // owner_tag + reroute logic as pickNextTransaction.
+  const rows = await env.DB.prepare(
+    `SELECT t.id, t.posted_date, t.amount, t.merchant_name, t.description,
+            t.account_id, a.name AS account_name, a.owner_tag
+     FROM transactions t
+     LEFT JOIN accounts a ON a.id = t.account_id
+     LEFT JOIN classifications c ON c.transaction_id = t.id
+     LEFT JOIN sms_routing_overrides r ON r.transaction_id = t.id
+     WHERE t.user_id = ?
+       AND c.id IS NULL
+       AND t.is_pending = 0
+       AND (
+         LOWER(COALESCE(r.target_person, a.owner_tag)) = ?
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM sms_sessions s
+         WHERE s.transaction_id = t.id AND s.status = 'awaiting_reply'
+       )
+     ORDER BY t.posted_date ASC, t.id ASC
+     LIMIT 3`,
+  ).bind(userId, person).all<CandidateTx>();
+
+  if (rows.results.length === 0) return null;
+  if (rows.results.length < 3) {
+    // Not enough for a batch — fall back to single mode so the user
+    // doesn't get a half-empty 3-pack.
+    return pickAndOpenSession(env, userId, person);
+  }
+
+  const labels: Array<'A' | 'B' | 'C'> = ['A', 'B', 'C'];
+  const items: BatchItem[] = [];
+  for (let i = 0; i < 3; i++) {
+    const tx = rows.results[i]!;
+    const sug = await computeSuggestion(env, userId, tx);
+    items.push({
+      label: labels[i]!,
+      transaction_id: tx.id,
+      merchant: tx.merchant_name,
+      amount: tx.amount,
+      date: tx.posted_date,
+      description: tx.description,
+      account_owner: tx.owner_tag,
+      suggested_entity: sug.entity,
+      suggested_category_tax: sug.category_tax,
+      suggested_category_budget: sug.category_budget,
+      suggested_confidence: sug.confidence,
+      suggested_method: sug.method,
+    });
+  }
+
+  const sessionId = `sms_${crypto.randomUUID()}`;
+  const message = renderBatchMessage(items);
+  const primary = items[0]!;
+
+  await env.DB.prepare(
+    `INSERT INTO sms_sessions
+       (id, user_id, person, transaction_id,
+        suggested_entity, suggested_category_tax, suggested_category_budget,
+        suggested_confidence, suggested_method, status, sent_at, batch_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_reply', datetime('now'), ?)`,
+  ).bind(
+    sessionId, userId, person, primary.transaction_id,
+    primary.suggested_entity, primary.suggested_category_tax, primary.suggested_category_budget,
+    primary.suggested_confidence, primary.suggested_method,
+    JSON.stringify(items),
+  ).run();
+
+  return { session_id: sessionId, transaction_id: primary.transaction_id, message };
+}
+
+function renderBatchMessage(items: BatchItem[]): string {
+  const lines = [`Three more — can you tag these?`];
+  for (const it of items) {
+    const merchant = it.merchant?.trim() || it.description.slice(0, 30);
+    const amt = `$${Math.abs(it.amount).toFixed(2)}`;
+    const date = it.date.slice(5);
+    const guess = humanizeCategory({
+      entity: it.suggested_entity,
+      category_tax: it.suggested_category_tax,
+      category_budget: it.suggested_category_budget,
+      confidence: it.suggested_confidence,
+      method: it.suggested_method,
+    });
+    if (guess) {
+      lines.push(`${it.label}: ${merchant} · ${amt} · ${date} → ${guess}?`);
+    } else {
+      lines.push(`${it.label}: ${merchant} · ${amt} · ${date} → ?`);
+    }
+  }
+  lines.push(`Reply 1 to confirm all, or per item ("A 1, B groceries, C 2"). PAUSE to stop.`);
+  return lines.join('\n');
+}
+
+export function parseBatchJson(raw: string | null): BatchItem[] | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length === 0) return null;
+    return parsed as BatchItem[];
+  } catch {
+    return null;
+  }
+}
+
