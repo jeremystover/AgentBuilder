@@ -182,23 +182,23 @@ export async function runChatStream(opts) {
             tools: defs,
             handlers,
             maxIterations,
-            onEvent: (event) => {
-              // Augment the terminal "done" event with the full message
-              // history so the client can persist it.
-              if (event.type === "done") {
-                send({
-                  ...event,
-                  messages: result?.messages ?? [],
-                  usage: result?.usage ?? null,
-                });
-              } else {
-                send(event);
-              }
-            },
+            // Forward every event from the loop verbatim. We DON'T augment
+            // the "done" event with messages/usage here even though it
+            // would be tempting — `result` is the awaited return of this
+            // exact call, so it's in the temporal dead zone for the
+            // duration of the callback. Reading it throws "Cannot access
+            // 'result' before initialization", which kills the SSE stream
+            // mid-flight and (worse) prevents the canonical message
+            // history from ever reaching the client. Without that, every
+            // subsequent send starts fresh and the chat appears to lose
+            // context. The "history" frame sent below — outside the
+            // callback, after `result` is initialized — carries the
+            // canonical messages array.
+            onEvent: (event) => { send(event); },
           });
-          // runToolLoopStream emits its own "done" through onEvent before
-          // returning, but we want the final messages array attached. Send
-          // a follow-up frame with the canonical history.
+          // Canonical history frame — emitted AFTER the loop resolves so
+          // we can safely read result.messages / result.usage. The SPA's
+          // useChat hook listens for this and updates its messages state.
           send({
             type: "history",
             messages: result.messages,
