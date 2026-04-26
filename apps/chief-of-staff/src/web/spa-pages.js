@@ -19,7 +19,7 @@ function taskRow(task, opts = {}) {
   const priColor = pri === "high" ? "bg-rose-100 text-rose-700"
                  : pri === "medium" ? "bg-amber-100 text-amber-800"
                  : pri ? "bg-slate-100 text-slate-600"
-                 : "";
+                 : "bg-slate-50 text-slate-400";
   const due = task.dueAt ? fmtDate(task.dueAt) : "";
   const overdue = isOverdue(task.dueAt);
   const projName = task.projectId && projectsById[task.projectId]
@@ -38,6 +38,27 @@ function taskRow(task, opts = {}) {
     },
   });
 
+  // Inline priority dropdown — click to change without opening the editor.
+  const priSel = el("select", {
+    class: \`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border-0 cursor-pointer appearance-none focus:outline-none focus:ring-2 focus:ring-indigo-300 \${priColor}\`,
+    onclick: (e) => e.stopPropagation(),
+    onchange: async (e) => {
+      e.stopPropagation();
+      try {
+        await api(\`/api/tasks/\${encodeURIComponent(task.taskKey)}\`, {
+          method: "PATCH", body: { patch: { priority: e.target.value } },
+        });
+        toast("Priority updated", "ok");
+        onChanged?.();
+      } catch (err) { toast(err.message, "err"); }
+    },
+  });
+  for (const [v, l] of [["", "— pri"], ["high", "HIGH"], ["medium", "MED"], ["low", "LOW"]]) {
+    const o = el("option", { value: v }, l);
+    if ((task.priority || "") === v) o.selected = true;
+    priSel.appendChild(o);
+  }
+
   const row = el("div", {
     class: "group flex items-center gap-3 py-2.5 px-3 -mx-3 rounded-lg hover:bg-slate-50 cursor-pointer",
     onclick: () => openTaskEditor(task, { onChanged }),
@@ -45,10 +66,10 @@ function taskRow(task, opts = {}) {
     checkbox,
     el("div", { class: "flex-1 min-w-0" },
       el("div", { class: "text-sm text-ink truncate" }, task.title),
-      (showProject && projName) || pri ? el("div", { class: "flex items-center gap-2 mt-0.5" },
-        pri ? el("span", { class: \`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded \${priColor}\` }, pri) : null,
+      el("div", { class: "flex items-center gap-2 mt-0.5" },
+        priSel,
         showProject && projName ? el("span", { class: "text-xs text-slate-500 truncate" }, projName) : null,
-      ) : null,
+      ),
     ),
     due ? el("span", {
       class: \`text-xs \${overdue ? "text-rose-600 font-medium" : "text-slate-500"} shrink-0\`,
@@ -121,12 +142,11 @@ function openTaskEditor(task, { onChanged } = {}) {
 }
 
 // ── Brief editor (used on Today + This Week) ───────────────────────────────
-function briefEditor({ kind, periodKey, brief }) {
+function briefEditor({ kind, periodKey, brief, range }) {
   const wrap = el("div", { class: "bg-white rounded-2xl ring-1 ring-slate-200 p-5 space-y-3" });
-  wrap.appendChild(el("div", { class: "flex items-center justify-between" },
-    el("h3", { class: "text-base font-semibold" }, kind === "day" ? "Today's brief" : "Week brief"),
-    el("span", { class: "text-xs text-slate-400" }, periodKey),
-  ));
+  // Header label: range (e.g. "Apr 22 – Apr 28") preferred over the raw
+  // ISO week key (2026-W17) — the raw key is opaque to humans.
+  const label = range || periodKey;
   const ta = el("textarea", {
     rows: 5,
     class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 text-sm focus:ring-indigo-400 focus:outline-none resize-none",
@@ -144,6 +164,38 @@ function briefEditor({ kind, periodKey, brief }) {
       } catch (err) { toast(err.message, "err"); }
     }, 600);
   });
+  // ✨ Generate — fills the goals box with an AI-drafted starting brief
+  // by hitting the existing day-plan / week-plan endpoint with no input.
+  // The user can then edit. Generated content is also persisted to goalsMd
+  // so a refresh keeps it.
+  const genBtn = el("button", {
+    class: "text-xs text-indigo-600 hover:underline",
+    onclick: async () => {
+      genBtn.disabled = true; genBtn.textContent = "Generating…";
+      try {
+        const data = await api("/api/" + kind + "-plan", {
+          method: "POST",
+          body: { input: "", periodKey, brief: { goalsMd: ta.value || "" } },
+        });
+        if (data.output) {
+          ta.value = data.output;
+          await api(\`/api/briefs/\${kind}/\${encodeURIComponent(periodKey)}\`, {
+            method: "PUT", body: { goalsMd: ta.value },
+          });
+        }
+      } catch (err) { toast(err.message, "err"); }
+      finally {
+        genBtn.disabled = false; genBtn.textContent = "✨ Generate";
+      }
+    },
+  }, "✨ Generate");
+  wrap.appendChild(el("div", { class: "flex items-center justify-between" },
+    el("div", { class: "flex items-baseline gap-3" },
+      el("h3", { class: "text-base font-semibold" }, kind === "day" ? "Today's brief" : "Week brief"),
+      el("span", { class: "text-xs text-slate-400" }, label),
+    ),
+    genBtn,
+  ));
   wrap.appendChild(ta);
   if (brief?.generatedMd) {
     wrap.appendChild(el("details", { class: "text-sm text-slate-600" },
@@ -412,11 +464,12 @@ async function pageWeek(main) {
   const projectsById = Object.fromEntries(projects.map((p) => [p.projectId, p]));
   main.innerHTML = "";
   const root = el("div", { class: "max-w-3xl mx-auto px-10 py-10 space-y-8" });
+  const weekRange = data.from && data.to ? \`\${fmtDate(data.from)} – \${fmtDate(data.to)}\` : data.periodKey;
   root.appendChild(el("header", { class: "flex items-baseline justify-between" },
     el("h1", { class: "text-3xl font-semibold" }, "This Week"),
-    el("span", { class: "text-sm text-slate-500" }, data.periodKey),
+    el("span", { class: "text-sm text-slate-500" }, weekRange),
   ));
-  root.appendChild(briefEditor({ kind: "week", periodKey: data.periodKey, brief: data.brief }));
+  root.appendChild(briefEditor({ kind: "week", periodKey: data.periodKey, brief: data.brief, range: weekRange }));
   root.appendChild(planReviewButtons({ kind: "week", periodKey: data.periodKey, brief: data.brief, onDone: () => window.__cos.route() }));
 
   if (data.tasks?.length) {
