@@ -570,6 +570,7 @@ export async function handleApiRequest(request, ctx) {
         endTime: body.endTime,
         description: body.description,
         location: body.location,
+        addAttendeeEmails: body.addAttendeeEmails,
       });
       return jsonResponse({ ok: true, event: data });
     }

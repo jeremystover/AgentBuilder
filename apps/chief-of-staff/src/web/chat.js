@@ -161,3 +161,62 @@ function pickSystem(kind) {
     default:             return SYSTEM_PROMPT_BASE;
   }
 }
+
+const PERSON_BRIEF_SYSTEM = `${SYSTEM_PROMPT_BASE}
+
+You are drafting a CONCISE PERSON BRIEF for the given stakeholder.
+1. Call get_stakeholder_360 with the personId to load context.
+2. Output a brief that covers:
+   - Who they are (role / tier).
+   - Relationship health, when last touched.
+   - Open commitments (mine to them and theirs to me).
+   - Active projects they're on.
+   - 1-2 things to talk about next time.
+Return ONLY the brief — 6-10 lines, no preamble. Markdown is fine.`;
+
+export async function handlePersonBriefRequest(request, ctx, personId) {
+  const { env } = ctx;
+  if (!personId) {
+    return new Response(JSON.stringify({ error: "personId is required" }), {
+      status: 400, headers: { "content-type": "application/json; charset=utf-8" },
+    });
+  }
+  try {
+    const result = await runChat({
+      ctx,
+      body: { message: `Draft a person brief for personId=${personId}.`, history: [] },
+      toolAllowlist: CHAT_TOOL_ALLOWLIST,
+      system: PERSON_BRIEF_SYSTEM,
+      tier: "default",
+      maxIterations: 6,
+    });
+    // Store it on the Briefs table under kind='person', periodKey=personId
+    // so the next page load picks it up if the user doesn't edit.
+    await env.DB.prepare(
+      `INSERT INTO Briefs (briefId, kind, periodKey, goalsMd, generatedMd, reviewMd, updatedAt)
+         VALUES (?, 'person', ?, ?, ?, '', ?)
+         ON CONFLICT(kind, periodKey) DO UPDATE SET
+           goalsMd     = excluded.goalsMd,
+           generatedMd = excluded.generatedMd,
+           updatedAt   = excluded.updatedAt`
+    ).bind(
+      `brief_person_${personId}_${Date.now().toString(36)}`,
+      personId,
+      result.reply,
+      result.reply,
+      new Date().toISOString(),
+    ).run();
+    return new Response(JSON.stringify({
+      output: result.reply,
+      personId,
+      iterations: result.iterations,
+      usage: result.usage,
+    }), { status: 200, headers: { "content-type": "application/json; charset=utf-8" } });
+  } catch (err) {
+    const msg = String(err?.message || err);
+    const status = msg.includes("ANTHROPIC_API_KEY") ? 503 : 500;
+    return new Response(JSON.stringify({ error: msg }), {
+      status, headers: { "content-type": "application/json; charset=utf-8" },
+    });
+  }
+}

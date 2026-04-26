@@ -219,6 +219,14 @@ async function pageProjectDetail(main, projectId) {
   );
   root.appendChild(meetingActions);
 
+  // Notes (project-scoped)
+  try {
+    const notesData = await api(\`/api/notes?entityType=project&entityId=\${encodeURIComponent(projectId)}\`);
+    root.appendChild(notesSection({
+      entityType: "project", entityId: projectId, initialNotes: notesData.notes || [],
+    }));
+  } catch (err) { /* surface elsewhere */ }
+
   main.appendChild(root);
 }
 
@@ -396,7 +404,12 @@ function openCreatePersonModal({ onDone } = {}) {
 }
 
 async function pagePersonDetail(main, personId) {
-  const data = await api("/api/people/" + encodeURIComponent(personId));
+  const [data, briefData, notesData, allProjects] = await Promise.all([
+    api("/api/people/" + encodeURIComponent(personId)),
+    api(\`/api/people/\${encodeURIComponent(personId)}/brief\`).catch(() => ({ brief: { goalsMd: "" } })),
+    api(\`/api/notes?entityType=person&entityId=\${encodeURIComponent(personId)}\`).catch(() => ({ notes: [] })),
+    api("/api/projects").catch(() => ({ projects: [] })),
+  ]);
   main.innerHTML = "";
   const root = el("div", { class: "max-w-3xl mx-auto px-10 py-10 space-y-8" });
   root.appendChild(el("a", { href: "#/people", class: "text-xs text-slate-500 hover:text-ink" }, "← People"));
@@ -406,6 +419,10 @@ async function pagePersonDetail(main, personId) {
   ));
   if (data.email) root.appendChild(el("div", { class: "text-sm text-slate-500" }, data.email));
 
+  // Person brief — editable goals box + ✨ AI generate.
+  root.appendChild(personBriefEditor(personId, briefData.brief || { goalsMd: "" }));
+
+  // Open tasks
   if (data.openTasks?.length) {
     const sec = el("section", { class: "space-y-1" });
     sec.appendChild(el("h2", { class: "text-lg font-semibold mb-2" }, "Open tasks"));
@@ -413,10 +430,24 @@ async function pagePersonDetail(main, personId) {
     root.appendChild(sec);
   }
 
-  if (data.projects?.length) {
+  // Projects (linked) + actions
+  {
     const sec = el("section", { class: "space-y-2" });
-    sec.appendChild(el("h2", { class: "text-lg font-semibold mb-2" }, "Projects"));
-    for (const p of data.projects) {
+    sec.appendChild(el("div", { class: "flex items-baseline justify-between" },
+      el("h2", { class: "text-lg font-semibold" }, "Projects"),
+      el("div", { class: "flex gap-3 text-xs" },
+        el("button", { class: "text-slate-500 hover:text-ink",
+          onclick: () => openLinkProjectToPersonModal(personId, allProjects.projects || [], () => $$.route()),
+        }, "+ Link existing"),
+        el("button", { class: "text-slate-500 hover:text-ink",
+          onclick: () => openCreateProjectThenLinkModal(personId, () => $$.route()),
+        }, "+ New project"),
+      ),
+    ));
+    if (!data.projects?.length) {
+      sec.appendChild(el("div", { class: "text-sm text-slate-500" }, "No projects linked."));
+    }
+    for (const p of data.projects || []) {
       sec.appendChild(el("a", {
         href: "#/projects/" + encodeURIComponent(p.projectId),
         class: "block bg-white rounded-xl ring-1 ring-slate-200 hover:ring-indigo-300 p-3 px-4 text-sm",
@@ -425,18 +456,254 @@ async function pagePersonDetail(main, personId) {
     root.appendChild(sec);
   }
 
+  // Upcoming meetings
+  {
+    const sec = el("section", { class: "space-y-3" });
+    sec.appendChild(el("div", { class: "flex items-baseline justify-between" },
+      el("h2", { class: "text-lg font-semibold" }, "Upcoming meetings"),
+      el("div", { class: "flex gap-3 text-xs" },
+        el("button", { class: "text-slate-500 hover:text-ink",
+          onclick: () => openInvitePersonToMeetingModal(personId, data.email, () => $$.route()),
+        }, "+ Invite to existing"),
+        el("button", { class: "text-slate-500 hover:text-ink",
+          onclick: () => openCreateMeetingModal({ projectName: "", stakeholders: data.email ? [{ email: data.email, name: data.name }] : [] }),
+        }, "+ Schedule new"),
+      ),
+    ));
+    if (!data.upcomingMeetings?.length) {
+      sec.appendChild(el("div", { class: "text-sm text-slate-500" }, "Nothing on the calendar."));
+    }
+    for (const m of data.upcomingMeetings || []) sec.appendChild(window.meetingCard(m, { onChanged: () => $$.route() }));
+    root.appendChild(sec);
+  }
+
+  // Recent meetings — uses the shared meetingCard so it gets links + click-to-edit
   if (data.recentMeetings?.length) {
-    const sec = el("section", { class: "space-y-2" });
+    const sec = el("section", { class: "space-y-3" });
     sec.appendChild(el("h2", { class: "text-lg font-semibold mb-2" }, "Recent meetings"));
     for (const m of data.recentMeetings) {
+      // recentMeetings from get_stakeholder_360 only carries title+startTime+
+      // transcriptRef. That's not enough for the rich card, so render lite.
       sec.appendChild(el("div", { class: "bg-white rounded-xl ring-1 ring-slate-200 p-3 text-sm" },
         el("div", { class: "font-medium" }, m.title || "(untitled)"),
-        el("div", { class: "text-xs text-slate-500" }, fmtDate(m.startTime))));
+        el("div", { class: "text-xs text-slate-500" },
+          new Date(m.startTime).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })),
+      ));
     }
     root.appendChild(sec);
   }
 
+  // Notes
+  root.appendChild(notesSection({
+    entityType: "person",
+    entityId: personId,
+    initialNotes: notesData.notes || [],
+  }));
+
   main.appendChild(root);
+}
+
+// ── Person brief editor (the box at the top of a person page) ──────────────
+function personBriefEditor(personId, brief) {
+  const wrap = el("div", { class: "bg-white rounded-2xl ring-1 ring-slate-200 p-5 space-y-3" });
+  const ta = el("textarea", {
+    rows: 5,
+    class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 text-sm focus:ring-indigo-400 focus:outline-none resize-none",
+    placeholder: "Brief on this person… (or hit ✨ Generate to draft one with AI)",
+  });
+  ta.value = brief?.goalsMd || brief?.generatedMd || "";
+  let saveTimer;
+  ta.addEventListener("input", () => {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(async () => {
+      try {
+        await api(\`/api/people/\${encodeURIComponent(personId)}/brief\`, {
+          method: "PUT", body: { goalsMd: ta.value },
+        });
+      } catch (err) { toast(err.message, "err"); }
+    }, 600);
+  });
+  const genBtn = el("button", {
+    class: "text-xs text-indigo-600 hover:underline",
+    onclick: async () => {
+      genBtn.disabled = true; genBtn.textContent = "Generating…";
+      try {
+        const r = await api(\`/api/people/\${encodeURIComponent(personId)}/brief/generate\`, {
+          method: "POST", body: {},
+        });
+        if (r.output) {
+          ta.value = r.output;
+          // Persist as goalsMd so a refresh keeps the editable copy.
+          await api(\`/api/people/\${encodeURIComponent(personId)}/brief\`, {
+            method: "PUT", body: { goalsMd: ta.value },
+          });
+        }
+      } catch (err) { toast(err.message, "err"); }
+      finally {
+        genBtn.disabled = false; genBtn.textContent = "✨ Refresh";
+      }
+    },
+  }, "✨ Refresh");
+  wrap.appendChild(el("div", { class: "flex items-center justify-between" },
+    el("h3", { class: "text-base font-semibold" }, "Person brief"),
+    genBtn,
+  ));
+  wrap.appendChild(ta);
+  return wrap;
+}
+
+// ── Notes section (reusable for person / project / task) ───────────────────
+function notesSection({ entityType, entityId, initialNotes }) {
+  const sec = el("section", { class: "space-y-2" });
+  const newI = el("textarea", { rows: 2,
+    class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 text-sm focus:ring-indigo-400 focus:outline-none resize-none",
+    placeholder: "Add a note…" });
+  const list = el("div", { class: "space-y-2" });
+  function renderNote(n) {
+    const ta = el("textarea", { rows: 2,
+      class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 text-sm focus:ring-indigo-400 focus:outline-none resize-none" });
+    ta.value = n.body || "";
+    let saveTimer;
+    ta.addEventListener("input", () => {
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(async () => {
+        try {
+          await api(\`/api/notes/\${encodeURIComponent(n.noteId)}\`, {
+            method: "PATCH", body: { body: ta.value },
+          });
+        } catch (err) { toast(err.message, "err"); }
+      }, 600);
+    });
+    const meta = el("div", { class: "flex items-center justify-between text-xs text-slate-400 mt-1" },
+      el("span", {}, n.updatedAt ? "Updated " + fmtDate(n.updatedAt) : ""),
+      el("button", { class: "text-rose-500 hover:underline",
+        onclick: async () => {
+          if (!confirm("Delete this note?")) return;
+          try {
+            await api(\`/api/notes/\${encodeURIComponent(n.noteId)}\`, { method: "DELETE", body: {} });
+            wrap.remove();
+          } catch (err) { toast(err.message, "err"); }
+        },
+      }, "Delete"),
+    );
+    const wrap = el("div", { class: "bg-white rounded-xl ring-1 ring-slate-200 p-3" }, ta, meta);
+    return wrap;
+  }
+  for (const n of initialNotes) list.appendChild(renderNote(n));
+  const addBtn = el("button", {
+    class: "text-xs text-slate-500 hover:text-ink",
+    onclick: async () => {
+      if (!newI.value.trim()) return;
+      try {
+        const r = await api("/api/notes", { method: "POST", body: {
+          entityType, entityId, body: newI.value,
+        }});
+        const created = { noteId: r.noteId, body: newI.value, updatedAt: new Date().toISOString() };
+        list.insertBefore(renderNote(created), list.firstChild);
+        newI.value = "";
+      } catch (err) { toast(err.message, "err"); }
+    },
+  }, "+ Add note");
+  sec.appendChild(el("h2", { class: "text-lg font-semibold" }, "Notes"));
+  sec.appendChild(newI);
+  sec.appendChild(el("div", { class: "flex justify-end" }, addBtn));
+  sec.appendChild(list);
+  return sec;
+}
+
+// ── Person detail modals ───────────────────────────────────────────────────
+function openLinkProjectToPersonModal(personId, allProjects, onDone) {
+  if (!allProjects.length) { toast("No projects yet — create one first", "info"); return; }
+  const sel = el("select", { class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 bg-white" });
+  sel.appendChild(el("option", { value: "" }, "— Pick a project —"));
+  for (const p of allProjects) sel.appendChild(el("option", { value: p.projectId }, p.name));
+  const card = el("div", { class: "space-y-3" },
+    el("h2", { class: "text-base font-semibold" }, "Link to existing project"),
+    sel,
+    el("div", { class: "flex justify-end gap-2" },
+      el("button", { class: "px-3 py-1.5 text-sm rounded-lg ring-1 ring-slate-200",
+        onclick: () => modal.close() }, "Cancel"),
+      el("button", { class: "px-3 py-1.5 text-sm rounded-lg bg-ink text-white",
+        onclick: async () => {
+          if (!sel.value) { toast("Pick a project", "err"); return; }
+          try {
+            await api(\`/api/people/\${encodeURIComponent(personId)}/projects\`, {
+              method: "POST", body: { projectId: sel.value },
+            });
+            modal.close(); toast("Linked", "ok"); onDone?.();
+          } catch (err) { toast(err.message, "err"); }
+        },
+      }, "Link"),
+    ),
+  );
+  const modal = openModal(card);
+}
+
+function openCreateProjectThenLinkModal(personId, onDone) {
+  const nameI = el("input", { type: "text", placeholder: "Project name", autofocus: true,
+    class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 text-base font-medium" });
+  const descI = el("textarea", { rows: 2, placeholder: "Description…",
+    class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 text-sm resize-none" });
+  const card = el("div", { class: "space-y-3" },
+    el("h2", { class: "text-base font-semibold" }, "New project (linked)"),
+    nameI, descI,
+    el("div", { class: "flex justify-end" },
+      el("button", { class: "rounded-lg bg-ink text-white px-4 py-2 text-sm font-medium hover:bg-slate-700",
+        onclick: async () => {
+          if (!nameI.value.trim()) { toast("Name required", "err"); return; }
+          try {
+            const r = await api("/api/projects", { method: "POST", body: {
+              name: nameI.value.trim(), description: descI.value, stakeholderIds: [personId],
+            }});
+            modal.close(); toast("Created", "ok"); onDone?.();
+          } catch (err) { toast(err.message, "err"); }
+        },
+      }, "Create"),
+    ),
+  );
+  const modal = openModal(card);
+}
+
+async function openInvitePersonToMeetingModal(personId, personEmail, onDone) {
+  if (!personEmail) {
+    toast("This person has no email on file", "err");
+    return;
+  }
+  const from = new Date(); from.setHours(0, 0, 0, 0);
+  const to = new Date(from); to.setDate(to.getDate() + 14);
+  let meetings = [];
+  try {
+    const r = await api(\`/api/calendar?from=\${encodeURIComponent(from.toISOString())}&to=\${encodeURIComponent(to.toISOString())}\`);
+    meetings = r.meetings || [];
+  } catch (err) { toast(err.message, "err"); return; }
+  if (!meetings.length) { toast("No upcoming meetings", "info"); return; }
+  const sel = el("select", { class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 bg-white" });
+  sel.appendChild(el("option", { value: "" }, "— Pick a meeting —"));
+  for (const m of meetings) {
+    const day = new Date(m.startTime).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+    sel.appendChild(el("option", { value: m.eventId }, \`\${day} \${fmtTime(m.startTime)} — \${m.title || "(untitled)"}\`));
+  }
+  const card = el("div", { class: "space-y-3" },
+    el("h2", { class: "text-base font-semibold" }, "Invite to existing meeting"),
+    el("div", { class: "text-xs text-slate-500" }, "This will add " + personEmail + " to the calendar invite."),
+    sel,
+    el("div", { class: "flex justify-end gap-2" },
+      el("button", { class: "px-3 py-1.5 text-sm rounded-lg ring-1 ring-slate-200",
+        onclick: () => modal.close() }, "Cancel"),
+      el("button", { class: "px-3 py-1.5 text-sm rounded-lg bg-ink text-white",
+        onclick: async () => {
+          if (!sel.value) { toast("Pick a meeting", "err"); return; }
+          try {
+            await api(\`/api/calendar/\${encodeURIComponent(sel.value)}\`, {
+              method: "PATCH", body: { addAttendeeEmails: [personEmail] },
+            });
+            modal.close(); toast("Invited", "ok"); onDone?.();
+          } catch (err) { toast(err.message, "err"); }
+        },
+      }, "Invite"),
+    ),
+  );
+  const modal = openModal(card);
 }
 
 // ── Page: Triage ───────────────────────────────────────────────────────────

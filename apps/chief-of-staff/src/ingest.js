@@ -931,6 +931,10 @@ export function createIngestTools({ ufetch, userFetches = null, gfetch, sheets, 
           endTime: { type: "string" },
           description: { type: "string" },
           location: { type: "string" },
+          addAttendeeEmails: {
+            type: "array", items: { type: "string" },
+            description: "Add these emails to the existing attendee list (de-duplicated).",
+          },
         },
         required: ["eventId"],
         additionalProperties: false,
@@ -946,6 +950,19 @@ export function createIngestTools({ ufetch, userFetches = null, gfetch, sheets, 
           if (args.endTime) patch.end = { dateTime: args.endTime };
           if (args.description !== undefined) patch.description = args.description;
           if (args.location !== undefined) patch.location = args.location;
+          if (Array.isArray(args.addAttendeeEmails) && args.addAttendeeEmails.length) {
+            const have = new Set((existing.attendees || [])
+              .map((a) => String(a.email || "").toLowerCase()).filter(Boolean));
+            const merged = [...(existing.attendees || [])];
+            for (const e of args.addAttendeeEmails) {
+              const lower = String(e || "").toLowerCase();
+              if (lower && !have.has(lower)) {
+                merged.push({ email: e });
+                have.add(lower);
+              }
+            }
+            patch.attendees = merged;
+          }
           const updated = await calendar.patchEvent(calId, args.eventId, patch);
           return formatContent({ ok: true, eventId: updated.id, title: updated.summary });
         } catch (e) {
