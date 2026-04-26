@@ -41,6 +41,7 @@ All 10 tools are available via the standard MCP endpoint and via POST /chat.
 | `list_sources` | List, add, remove, or toggle ingestion sources (Bluesky, RSS, email). |
 | `score_content` | Score an article's relevance against the current interest profile. |
 | `manage_watches` | Create/list/update/pause/resume/delete page-monitoring watches. Checks URL on a 5m–1d interval, emails when the match condition fires (contains / not_contains / regex / hash). |
+| `linkedin_watch` | Manage the LinkedIn-profile watcher fleet agent. action=list/add/remove/run. Proxies to the linkedin-watcher worker; new posts auto-flow into this knowledge base. |
 
 ## REST endpoints
 - `POST /ingest` — quick-ingest from bookmarklet or browser extension

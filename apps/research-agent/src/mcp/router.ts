@@ -20,6 +20,7 @@ import { TagContentInput,       tagContent }         from "./tools/tag_content";
 import { UploadFileInput,       uploadFile }         from "./tools/upload_file";
 import { CleanupInput,          cleanup }            from "./tools/cleanup";
 import { ManageWatchesInput,    manageWatches }      from "./tools/manage_watches";
+import { LinkedinWatchInput,    linkedinWatch }      from "./tools/linkedin_watch";
 
 const TOOL_MANIFESTS = [
   {
@@ -237,6 +238,20 @@ const TOOL_MANIFESTS = [
       },
     },
   },
+  {
+    name: "linkedin_watch",
+    description: "Manage the LinkedIn-profile post watcher. action=list shows watched profiles; action=add starts watching a profile (requires linkedin_url and name); action=remove stops watching (requires slug, the last URL segment); action=run triggers a poll now instead of waiting for the daily cron. New posts auto-flow into this knowledge base.",
+    inputSchema: {
+      type: "object", required: ["action"], additionalProperties: false,
+      properties: {
+        action:       { type: "string", enum: ["list", "add", "remove", "run"] },
+        linkedin_url: { type: "string", format: "uri", description: "LinkedIn profile URL (action=add)" },
+        name:         { type: "string", minLength: 1, maxLength: 120, description: "Display name (action=add)" },
+        source_id:    { type: "string", description: "Optional Research Agent source ID to attribute posts to (action=add)" },
+        slug:         { type: "string", minLength: 1, maxLength: 120, description: "Profile slug, e.g. 'kylelagunas' (action=remove)" },
+      },
+    },
+  },
 ] as const;
 
 const RPC_ERRORS = {
@@ -276,6 +291,7 @@ async function dispatchTool(
     case "upload_file":        return uploadFile(UploadFileInput.parse(args), env);
     case "cleanup":            return cleanup(CleanupInput.parse(args), env);
     case "manage_watches":     return manageWatches(ManageWatchesInput.parse(args), env);
+    case "linkedin_watch":     return linkedinWatch(LinkedinWatchInput.parse(args), env);
     default:                   return null;
   }
 }

@@ -97,6 +97,11 @@ export interface Env {
   // linkedin-watcher) that post pre-fetched content to /ingest. Optional.
   INTERNAL_SECRET?:        string;
 
+  // linkedin-watcher worker (used by the linkedin_watch MCP tool to proxy
+  // watchlist mgmt + manual runs through this agent's MCP).
+  LINKEDIN_WATCHER_URL?:     string;
+  LINKEDIN_WATCHER_API_KEY?: string;
+
   // Lab — added by the /lab web UI
   ANTHROPIC_API_KEY?:      string;
   WEB_UI_PASSWORD?:        string;

@@ -53,6 +53,10 @@ WATCH_NOTIFY_FROM = "jsstover@gmail.com"
 # project listing). The Lab worker calls this server-to-server with
 # CHIEF_OF_STAFF_MCP_KEY as the bearer token.
 CHIEF_OF_STAFF_MCP_URL = "https://chief-of-staff.jsstover.workers.dev/mcp"
+# linkedin-watcher worker — used by the linkedin_watch MCP tool to manage
+# the watchlist + trigger manual runs. Set LINKEDIN_WATCHER_API_KEY as a
+# secret with the same value as linkedin-watcher's WATCHER_API_KEY.
+LINKEDIN_WATCHER_URL = "https://linkedin-watcher.jsstover.workers.dev"
 
 # Static assets — the Lab SPA is built by Vite into ./dist and served by
 # Cloudflare's assets binding. The worker's fetch handler still owns
@@ -83,3 +87,5 @@ run_worker_first = true
 #   wrangler secret put WEB_UI_PASSWORD          — single shared password for the /lab browser UI
 #   wrangler secret put EXTERNAL_API_KEY         — bearer token for /api/lab/v1/* from other apps
 #   wrangler secret put CHIEF_OF_STAFF_MCP_KEY   — bearer token to call chief-of-staff /mcp from this worker
+#   wrangler secret put LINKEDIN_WATCHER_API_KEY — bearer for linkedin-watcher mgmt API (matches its WATCHER_API_KEY)
+#   wrangler secret put INTERNAL_SECRET          — shared secret for fleet server-to-server /ingest (matches linkedin-watcher's)
