@@ -106,9 +106,14 @@ export async function requireWebSession(request, env, opts = { mode: "api" }) {
   const session = await readSessionFromRequest(request, env);
   if (session) return { ok: true, sessionId: session.sessionId, source: "session" };
   if (opts.mode === "page") {
+    // Redirect target defaults to /app/login (vanilla mode default) but
+    // every agent on a different surface (e.g. /lab) MUST pass loginPath
+    // so the redirect points at a route the worker actually serves.
+    // Otherwise unauthenticated visits to /lab silently 404 with JSON.
+    const loginPath = opts.loginPath || "/app/login";
     return {
       ok: false,
-      response: Response.redirect(new URL("/app/login", request.url).toString(), 302),
+      response: Response.redirect(new URL(loginPath, request.url).toString(), 302),
     };
   }
   return { ok: false, response: jsonError("unauthorized", 401) };

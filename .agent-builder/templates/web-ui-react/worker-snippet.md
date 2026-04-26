@@ -66,7 +66,7 @@ if (url.pathname === "/{{SURFACE}}/login" && method === "POST") {
   });
 }
 if (url.pathname === "/{{SURFACE}}/logout") {
-  const session = await requireWebSession(request, kitEnv(env), { mode: "page" });
+  const session = await requireWebSession(request, kitEnv(env), { mode: "page", loginPath: "/{{SURFACE}}/login" });
   if (session.ok) await destroySession(kitEnv(env), session.sessionId);
   const secure = url.protocol === "https:";
   return new Response(null, {
@@ -80,7 +80,7 @@ if (url.pathname === "/{{SURFACE}}/logout") {
 
 // SPA shell + assets — auth-gated so the bundle isn't public.
 if (url.pathname === "/{{SURFACE}}" || url.pathname.startsWith("/{{SURFACE}}/")) {
-  const session = await requireWebSession(request, kitEnv(env), { mode: "page" });
+  const session = await requireWebSession(request, kitEnv(env), { mode: "page", loginPath: "/{{SURFACE}}/login" });
   if (!session.ok) return session.response;
   if (env.ASSETS) return env.ASSETS.fetch(request);
   return new Response("ASSETS binding not configured (build the SPA first).", { status: 503 });

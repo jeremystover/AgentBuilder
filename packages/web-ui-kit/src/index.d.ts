@@ -29,7 +29,7 @@ export function clearSessionCookieHeader(opts?: { secure: boolean }): string;
 export function requireWebSession(
   request: Request,
   env: WebUiAuthEnv | Record<string, unknown>,
-  opts?: { mode: "page" | "api" },
+  opts?: { mode: "page" | "api"; loginPath?: string },
 ): Promise<AuthResult>;
 export function requireApiAuth(
   request: Request,
