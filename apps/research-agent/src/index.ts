@@ -207,21 +207,21 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
   // /api/lab/*          JSON API for the SPA + external apps
   //                     (cookie session OR EXTERNAL_API_KEY bearer)
   if (url.pathname === "/lab/login" && method === "GET") {
-    return new Response(loginHtml({ title: "The Lab" }), {
+    return new Response(loginHtml({ title: "The Lab", action: "/lab/login" }), {
       status: 200,
       headers: { "content-type": "text/html; charset=utf-8" },
     });
   }
   if (url.pathname === "/lab/login" && method === "POST") {
     if (!env.WEB_UI_PASSWORD) {
-      return new Response(loginHtml({ title: "The Lab", error: "WEB_UI_PASSWORD is not configured." }), {
+      return new Response(loginHtml({ title: "The Lab", action: "/lab/login", error: "WEB_UI_PASSWORD is not configured." }), {
         status: 500, headers: { "content-type": "text/html; charset=utf-8" },
       });
     }
     const form = await request.formData().catch(() => null);
     const password = form?.get?.("password") || "";
     if (!verifyPassword(kitEnv(env), password)) {
-      return new Response(loginHtml({ title: "The Lab", error: "Wrong password." }), {
+      return new Response(loginHtml({ title: "The Lab", action: "/lab/login", error: "Wrong password." }), {
         status: 401, headers: { "content-type": "text/html; charset=utf-8" },
       });
     }

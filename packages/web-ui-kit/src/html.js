@@ -55,6 +55,12 @@ const HEAD_COMMON = `
 export function loginHtml(opts = {}) {
   const title = opts.title || "Sign in";
   const error = opts.error;
+  // Form action defaults to /app/login (vanilla mode — chief-of-staff,
+  // template). Agents using a different surface (e.g. The Lab at /lab)
+  // pass `action: "/lab/login"` so the browser POSTs to a route the
+  // worker actually serves. Without this override the form silently
+  // POSTs to /app/login on every agent and 404s with JSON.
+  const action = opts.action || "/app/login";
   return `<!doctype html>
 <html><head>${HEAD_COMMON}<title>${escapeHtml(title)}</title></head>
 <body class="min-h-screen flex items-center justify-center px-4">
@@ -64,7 +70,7 @@ export function loginHtml(opts = {}) {
       <h1 class="text-3xl font-semibold">${escapeHtml(title)}</h1>
       <p class="text-sm text-slate-500 mt-2">Sign in to continue</p>
     </div>
-    <form method="POST" action="/app/login" class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-200 p-6 space-y-4">
+    <form method="POST" action="${escapeHtml(action)}" class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-200 p-6 space-y-4">
       ${error ? `<div class="rounded-lg bg-rose-50 ring-1 ring-rose-200 px-3 py-2 text-sm text-rose-700">${escapeHtml(error)}</div>` : ''}
       <label class="block">
         <span class="text-xs uppercase tracking-wide text-slate-500">Password</span>
