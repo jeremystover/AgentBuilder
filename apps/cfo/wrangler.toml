@@ -13,7 +13,10 @@ cpu_ms = 300000
 crons = ["0 9 * * *"]
 
 [assets]
-directory = "./public"
+# Vite-built SPA bundle (index.html + hashed /assets/*). Vite copies
+# public/legacy.html through verbatim so the legacy tax-prep SPA stays
+# reachable at /legacy. Build with `pnpm web:build`.
+directory = "./dist"
 binding = "ASSETS"
 
 # Snapshot-and-import D1 during migration. Create with:
@@ -40,6 +43,10 @@ TELLER_ENV = "development"
 #   TELLER_APPLICATION_ID
 #   ANTHROPIC_API_KEY
 #   MCP_HTTP_KEY           (for /mcp auth from Claude custom tool)
+#   WEB_UI_PASSWORD        (login password for the React SPA at /)
+#   EXTERNAL_API_KEY       (optional — bearer token for /api/web/* without cookie)
+#   WEB_UI_USER_ID         (optional — pins the SPA to a specific user_id;
+#                           defaults to "default" matching legacy header auth)
 
 # mTLS binding reuses the existing Teller cert from the tax-prep worker —
 # same cert_id, bound to the new worker. Teller production access requires

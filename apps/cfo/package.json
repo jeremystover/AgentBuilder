@@ -5,19 +5,33 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "build": "wrangler deploy --dry-run --outdir=dist",
-    "typecheck": "tsc --noEmit",
+    "web:dev": "vite",
+    "web:build": "vite build",
+    "deploy": "pnpm web:build && wrangler deploy",
+    "build": "pnpm web:build && wrangler deploy --dry-run --outdir=.wrangler-dist",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.web.json --noEmit",
     "db:migrate": "wrangler d1 migrations apply cfo-db"
   },
   "dependencies": {
     "@agentbuilder/core": "workspace:*",
     "@agentbuilder/llm": "workspace:*",
+    "@agentbuilder/web-ui-kit": "workspace:*",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250410.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.3",
+    "autoprefixer": "^10.4.20",
+    "lucide-react": "^0.468.0",
+    "postcss": "^8.4.49",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "sonner": "^1.7.0",
+    "tailwindcss": "^3.4.15",
     "typescript": "^5.6.3",
+    "vite": "^5.4.11",
     "wrangler": "^3.90.0"
   }
 }
