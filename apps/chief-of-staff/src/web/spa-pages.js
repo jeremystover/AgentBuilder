@@ -458,6 +458,11 @@ async function pageToday(main) {
   ));
 
   root.appendChild(briefEditor({ kind: "day", periodKey: data.date, brief: data.brief }));
+  if (window.chatPromptBubbles) root.appendChild(window.chatPromptBubbles([
+    "What's most important today?",
+    "Reschedule anything I'll miss",
+    "Draft my standup update",
+  ]));
   root.appendChild(planReviewButtons({ kind: "day", periodKey: data.date, brief: data.brief, onDone: () => window.__cos.route() }));
 
   if (data.tasks?.length) {
@@ -496,6 +501,11 @@ async function pageWeek(main) {
     ),
   ));
   root.appendChild(briefEditor({ kind: "week", periodKey: data.periodKey, brief: data.brief, range: weekRange }));
+  if (window.chatPromptBubbles) root.appendChild(window.chatPromptBubbles([
+    "What are the themes for this week?",
+    "Which projects are at risk?",
+    "Who do I need to follow up with?",
+  ]));
   root.appendChild(planReviewButtons({ kind: "week", periodKey: data.periodKey, brief: data.brief, onDone: () => window.__cos.route() }));
 
   if (data.tasks?.length) {

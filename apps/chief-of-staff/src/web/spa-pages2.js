@@ -72,6 +72,11 @@ async function pageProjects(main) {
       onclick: () => openCreateProjectModal({ onChanged: () => $$.route() }),
     }, "+ New project"),
   ));
+  if (window.chatPromptBubbles) root.appendChild(window.chatPromptBubbles([
+    "Which projects need attention this week?",
+    "Summarize the status of each project",
+    "What projects are blocked and why?",
+  ]));
   const grid = el("div", { class: "grid gap-3" });
   if (!data.projects?.length) {
     grid.appendChild(el("div", { class: "text-sm text-slate-500" }, "No projects yet."));
@@ -135,6 +140,11 @@ async function pageProjectDetail(main, projectId) {
     el("h1", { class: "text-3xl font-semibold" }, data.name || "(untitled project)"),
     el("span", { class: "text-sm text-slate-500" }, (data.status || "") + (data.healthStatus ? " · " + data.healthStatus : "")),
   ));
+  if (window.chatPromptBubbles) root.appendChild(window.chatPromptBubbles([
+    "What's the latest on this project?",
+    "What are the risks?",
+    "Draft a status update",
+  ]));
 
   // Stakeholders
   const peopleById = Object.fromEntries((peopleData.people || []).map((p) => [p.stakeholderId, p]));
@@ -357,6 +367,11 @@ async function pagePeople(main) {
     el("button", { class: "text-sm text-slate-500 hover:text-ink",
       onclick: () => openCreatePersonModal({ onDone: () => $$.route() }) }, "+ New person"),
   ));
+  if (window.chatPromptBubbles) root.appendChild(window.chatPromptBubbles([
+    "Who haven't I touched in a while?",
+    "Top 5 stakeholders to check in with",
+    "Draft a 1:1 prep for my next meeting",
+  ]));
   if (!data.people?.length) root.appendChild(el("div", { class: "text-sm text-slate-500" }, "No stakeholders yet."));
   const list = el("div", { class: "grid gap-2" });
   for (const p of data.people || []) {
@@ -418,6 +433,11 @@ async function pagePersonDetail(main, personId) {
     el("span", { class: "text-sm text-slate-500" }, data.tierTag || ""),
   ));
   if (data.email) root.appendChild(el("div", { class: "text-sm text-slate-500" }, data.email));
+  if (window.chatPromptBubbles) root.appendChild(window.chatPromptBubbles([
+    "What should I bring up next time we meet?",
+    "What are my open commitments to them?",
+    "Draft a check-in message",
+  ]));
 
   // Person brief — editable goals box + ✨ AI generate.
   root.appendChild(personBriefEditor(personId, briefData.brief || { goalsMd: "" }));
@@ -714,52 +734,145 @@ async function pageTriage(main) {
   const root = el("div", { class: "max-w-3xl mx-auto px-10 py-10 space-y-6" });
   root.appendChild(el("header", { class: "flex items-baseline justify-between" },
     el("h1", { class: "text-3xl font-semibold" }, "Triage"),
-    el("span", { class: "text-sm text-slate-500" }, (data.count || 0) + " pending"),
+    el("div", { class: "text-sm text-slate-500" },
+      (data.count || 0) + " pending · sorted by urgency"),
   ));
+  root.appendChild(chatPromptBubbles([
+    "Summarize what's in my triage queue and what to do first",
+    "Bulk-dismiss anything that looks like newsletter spam",
+    "Draft replies to the most urgent items",
+  ]));
   if (!data.items?.length) root.appendChild(el("div", { class: "text-sm text-slate-500" }, "Inbox zero."));
   for (const it of data.items || []) {
-    const card = el("div", { class: "bg-white rounded-xl ring-1 ring-slate-200 p-4 space-y-2" });
-    card.appendChild(el("div", { class: "flex items-baseline justify-between gap-3" },
-      el("div", { class: "text-sm font-medium truncate" }, it.summary || "(no summary)"),
-      el("span", { class: "text-xs text-slate-400 shrink-0" }, it.kind || ""),
-    ));
-    if (it.sourceRef) card.appendChild(el("div", { class: "text-xs text-slate-500 truncate" }, it.sourceRef));
-    const actions = el("div", { class: "flex gap-2 pt-1" },
-      el("button", {
-        class: "text-xs px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100",
-        onclick: async () => {
-          const projectId = await pickProjectInline(projects);
-          const title = prompt("Task title:", it.summary || "");
-          if (!title) return;
-          try {
-            const r = await api("/api/tasks", { method: "POST", body: {
-              title, projectId, origin: "intake",
-              sources: [{ sourceType: "intake", sourceRef: it.intakeId, excerpt: it.summary || "" }],
-            }});
-            const taskKey = r.result?.results?.find((x) => x.action === "create_task")?.details?.taskKey;
-            await api("/api/intake/" + encodeURIComponent(it.intakeId) + "/resolve", {
-              method: "POST", body: { linkedTaskKey: taskKey },
-            });
-            toast("Created task", "ok"); $$.route();
-          } catch (err) { toast(err.message, "err"); }
-        },
-      }, "→ Task"),
-      el("button", {
-        class: "text-xs px-3 py-1 rounded-full bg-slate-50 text-slate-600 ring-1 ring-slate-200 hover:bg-slate-100",
-        onclick: async () => {
-          if (!confirm("Dismiss?")) return;
-          try {
-            await api("/api/intake/" + encodeURIComponent(it.intakeId) + "/dismiss", { method: "POST", body: {} });
-            toast("Dismissed", "ok"); $$.route();
-          } catch (err) { toast(err.message, "err"); }
-        },
-      }, "Dismiss"),
-    );
-    card.appendChild(actions);
-    root.appendChild(card);
+    root.appendChild(triageCard(it, projects));
   }
   main.appendChild(root);
 }
+
+function triageCard(it, projects) {
+  const urg = Number(it.urgency || 0);
+  const urgLabel = urg >= 5 ? "HIGH" : urg >= 2 ? "MED" : "LOW";
+  const urgClass = urg >= 5 ? "bg-rose-100 text-rose-700"
+                 : urg >= 2 ? "bg-amber-100 text-amber-800"
+                 : "bg-slate-100 text-slate-500";
+  const card = el("div", { class: "bg-white rounded-xl ring-1 ring-slate-200 p-4 space-y-2" });
+  // Header: urgency badge + summary + kind
+  const header = el("div", { class: "flex items-baseline justify-between gap-3" },
+    el("div", { class: "flex items-baseline gap-2 min-w-0" },
+      el("span", { class: \`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded \${urgClass} shrink-0\` }, urgLabel),
+      el("div", { class: "text-sm font-medium truncate" }, it.subject || it.summary || "(no summary)"),
+    ),
+    el("div", { class: "text-xs text-slate-400 shrink-0 flex items-center gap-2" },
+      it.kind ? el("span", {}, it.kind) : null,
+      it.createdAt ? el("span", {}, fmtDate(it.createdAt)) : null,
+    ),
+  );
+  card.appendChild(header);
+  if (it.fromAddr) card.appendChild(el("div", { class: "text-xs text-slate-500 truncate" }, "From: " + it.fromAddr));
+  if (it.sourceRef) card.appendChild(el("div", { class: "text-xs text-slate-400 truncate" }, it.sourceRef));
+  // Body — collapsed by default, expand on click
+  if (it.body) {
+    const body = el("details", { class: "text-sm text-slate-700" },
+      el("summary", { class: "cursor-pointer text-xs uppercase tracking-wide text-slate-500" }, "Body"),
+      el("pre", { class: "mt-2 whitespace-pre-wrap font-sans text-sm bg-slate-50 rounded p-3 max-h-64 overflow-y-auto" }, it.body),
+    );
+    card.appendChild(body);
+  }
+  // Actions
+  const actions = el("div", { class: "flex flex-wrap gap-2 pt-1" });
+  actions.appendChild(el("button", {
+    class: "text-xs px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100",
+    onclick: async () => {
+      const projectId = await pickProjectInline(projects);
+      const title = prompt("Task title:", it.subject || it.summary || "");
+      if (!title) return;
+      try {
+        const r = await api("/api/tasks", { method: "POST", body: {
+          title, projectId, origin: "intake",
+          sources: [{ sourceType: "intake", sourceRef: it.intakeId, excerpt: it.summary || "" }],
+        }});
+        const taskKey = r.result?.results?.find((x) => x.action === "create_task")?.details?.taskKey;
+        await api("/api/intake/" + encodeURIComponent(it.intakeId) + "/resolve", {
+          method: "POST", body: { linkedTaskKey: taskKey },
+        });
+        toast("Created task", "ok"); $$.route();
+      } catch (err) { toast(err.message, "err"); }
+    },
+  }, "→ Task"));
+  if (it.replyTo) {
+    actions.appendChild(el("button", {
+      class: "text-xs px-3 py-1 rounded-full bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200 hover:bg-indigo-100",
+      onclick: () => openTriageReplyModal(it),
+    }, "↩ Reply"));
+  }
+  actions.appendChild(el("button", {
+    class: "text-xs px-3 py-1 rounded-full bg-slate-50 text-slate-600 ring-1 ring-slate-200 hover:bg-slate-100",
+    onclick: async () => {
+      if (!confirm("Dismiss?")) return;
+      try {
+        await api("/api/intake/" + encodeURIComponent(it.intakeId) + "/dismiss", { method: "POST", body: {} });
+        toast("Dismissed", "ok"); $$.route();
+      } catch (err) { toast(err.message, "err"); }
+    },
+  }, "Dismiss"));
+  card.appendChild(actions);
+  return card;
+}
+
+function openTriageReplyModal(it) {
+  const toI = el("input", { type: "email", value: it.replyTo || it.fromAddr || "",
+    class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 text-sm" });
+  const subjI = el("input", { type: "text",
+    value: (it.subject || "").startsWith("Re:") ? it.subject : "Re: " + (it.subject || ""),
+    class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 text-sm" });
+  const bodyI = el("textarea", { rows: 8,
+    class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 text-sm focus:ring-indigo-400 focus:outline-none resize-none",
+    placeholder: "Type your reply…" });
+  const note = el("div", { class: "text-xs text-slate-500" },
+    "Saved to your Gmail drafts — you'll review and send from Gmail.");
+  const card = el("div", { class: "space-y-3" },
+    el("h2", { class: "text-base font-semibold" }, "Reply"),
+    el("label", { class: "block text-xs uppercase tracking-wide text-slate-500" }, "To", toI),
+    el("label", { class: "block text-xs uppercase tracking-wide text-slate-500" }, "Subject", subjI),
+    el("label", { class: "block text-xs uppercase tracking-wide text-slate-500" }, "Body", bodyI),
+    note,
+    el("div", { class: "flex justify-end gap-2" },
+      el("button", { class: "px-3 py-1.5 text-sm rounded-lg ring-1 ring-slate-200",
+        onclick: () => modal.close() }, "Cancel"),
+      el("button", { class: "px-3 py-1.5 text-sm rounded-lg bg-ink text-white",
+        onclick: async () => {
+          if (!toI.value || !bodyI.value) { toast("To and body required", "err"); return; }
+          try {
+            await api(\`/api/intake/\${encodeURIComponent(it.intakeId)}/reply\`, {
+              method: "POST", body: {
+                to: toI.value, subject: subjI.value, body: bodyI.value, threadId: it.threadId || "",
+              },
+            });
+            modal.close(); toast("Draft saved to Gmail", "ok");
+          } catch (err) { toast(err.message, "err"); }
+        },
+      }, "Save draft"),
+    ),
+  );
+  const modal = openModal(card);
+}
+
+// ── Chat prompt bubbles ────────────────────────────────────────────────────
+// Renders a row of pre-baked prompts. Clicking one drops the text into the
+// chat sidebar input and focuses it. The user can then edit + send.
+function chatPromptBubbles(prompts) {
+  const wrap = el("div", { class: "flex flex-wrap gap-2" });
+  for (const p of prompts) {
+    wrap.appendChild(el("button", {
+      class: "text-xs px-3 py-1 rounded-full bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200 hover:bg-indigo-100 hover:ring-indigo-400 transition",
+      onclick: () => {
+        if (window.fillChatInput) window.fillChatInput(p);
+      },
+    }, p));
+  }
+  return wrap;
+}
+window.chatPromptBubbles = chatPromptBubbles;
 
 async function pickProjectInline(projects) {
   if (!projects.length) return "";
@@ -799,6 +912,15 @@ window.NAV = [
   { hash: "#/people",   label: "People" },
   { hash: "#/triage",   label: "Triage" },
 ];
+
+// Pull runtime config and append Ideas to the nav if the worker has an
+// IDEAS_URL configured. Re-render nav on success.
+api("/api/config").then((cfg) => {
+  if (cfg?.ideasUrl) {
+    window.NAV.push({ hash: cfg.ideasUrl, label: "Ideas", target: "_blank" });
+    window.__cos.route();
+  }
+}).catch(() => {});
 window.ROUTES = [
   { pattern: /^#\\/today$/,           handler: "pageToday" },
   { pattern: /^#\\/week$/,            handler: "pageWeek" },

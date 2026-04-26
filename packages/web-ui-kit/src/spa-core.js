@@ -147,11 +147,16 @@ function buildNav() {
     class: "flex items-center gap-2 mb-8 text-2xl font-serif font-semibold tracking-tight",
   }, el("span", { class: "text-3xl" }, brand.mark), brand.label));
   for (const item of items) {
-    nav.appendChild(el("a", {
+    const attrs = {
       href: item.hash,
       "data-hash": item.hash,
       class: "block px-3 py-2 rounded-lg text-sm text-slate-600 hover:bg-slate-100 hover:text-ink transition",
-    }, item.label));
+    };
+    if (item.target) {
+      attrs.target = item.target;
+      attrs.rel = "noopener";
+    }
+    nav.appendChild(el("a", attrs, item.label));
   }
   const bottom = el("div", { class: "mt-auto pt-6 border-t border-slate-200 text-xs text-slate-400" });
   bottom.appendChild(el("a", { href: "/app/logout", class: "hover:text-slate-700" }, "Sign out"));
@@ -242,7 +247,15 @@ function defaultMountChatSidebar(aside) {
 }
 
 window.addEventListener("hashchange", route);
-window.__cos = { $, el, fmtDate, fmtTime, isOverdue, api, toast, openModal, attachVoice, route };
+function fillChatInput(text) {
+  const ta = document.querySelector("#chat textarea");
+  if (!ta) return false;
+  ta.value = text;
+  ta.focus();
+  return true;
+}
+window.__cos = { $, el, fmtDate, fmtTime, isOverdue, api, toast, openModal, attachVoice, route, fillChatInput };
+window.fillChatInput = fillChatInput;
 
 document.addEventListener("DOMContentLoaded", () => {
   const items = window.NAV || [];
