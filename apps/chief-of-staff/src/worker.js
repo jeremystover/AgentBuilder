@@ -50,7 +50,7 @@ import {
   verifyPassword,
 } from "./web/auth.js";
 import { handleApiRequest } from "./web/api.js";
-import { handleChatRequest, handlePlanReviewRequest } from "./web/chat.js";
+import { handleChatRequest, handlePlanReviewRequest, handlePersonBriefRequest } from "./web/chat.js";
 import { loginHtml, appHtml } from "./web/spa-html.js";
 import { SPA_PAGES_JS } from "./web/spa-pages.js";
 import { SPA_PAGES2_JS } from "./web/spa-pages2.js";
@@ -850,6 +850,10 @@ export default {
       const planMatch = urlObj.pathname.match(/^\/api\/(day-plan|day-review|week-plan|week-review)$/);
       if (planMatch && request.method === "POST") {
         return await handlePlanReviewRequest(request, ctx, planMatch[1]);
+      }
+      const personBriefMatch = urlObj.pathname.match(/^\/api\/people\/([^/]+)\/brief\/generate$/);
+      if (personBriefMatch && request.method === "POST") {
+        return await handlePersonBriefRequest(request, ctx, decodeURIComponent(personBriefMatch[1]));
       }
       return await handleApiRequest(request, ctx);
     }

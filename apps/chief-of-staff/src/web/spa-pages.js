@@ -19,7 +19,7 @@ function taskRow(task, opts = {}) {
   const priColor = pri === "high" ? "bg-rose-100 text-rose-700"
                  : pri === "medium" ? "bg-amber-100 text-amber-800"
                  : pri ? "bg-slate-100 text-slate-600"
-                 : "";
+                 : "bg-slate-50 text-slate-400";
   const due = task.dueAt ? fmtDate(task.dueAt) : "";
   const overdue = isOverdue(task.dueAt);
   const projName = task.projectId && projectsById[task.projectId]
@@ -38,6 +38,27 @@ function taskRow(task, opts = {}) {
     },
   });
 
+  // Inline priority dropdown — click to change without opening the editor.
+  const priSel = el("select", {
+    class: \`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border-0 cursor-pointer appearance-none focus:outline-none focus:ring-2 focus:ring-indigo-300 \${priColor}\`,
+    onclick: (e) => e.stopPropagation(),
+    onchange: async (e) => {
+      e.stopPropagation();
+      try {
+        await api(\`/api/tasks/\${encodeURIComponent(task.taskKey)}\`, {
+          method: "PATCH", body: { patch: { priority: e.target.value } },
+        });
+        toast("Priority updated", "ok");
+        onChanged?.();
+      } catch (err) { toast(err.message, "err"); }
+    },
+  });
+  for (const [v, l] of [["", "— pri"], ["high", "HIGH"], ["medium", "MED"], ["low", "LOW"]]) {
+    const o = el("option", { value: v }, l);
+    if ((task.priority || "") === v) o.selected = true;
+    priSel.appendChild(o);
+  }
+
   const row = el("div", {
     class: "group flex items-center gap-3 py-2.5 px-3 -mx-3 rounded-lg hover:bg-slate-50 cursor-pointer",
     onclick: () => openTaskEditor(task, { onChanged }),
@@ -45,10 +66,10 @@ function taskRow(task, opts = {}) {
     checkbox,
     el("div", { class: "flex-1 min-w-0" },
       el("div", { class: "text-sm text-ink truncate" }, task.title),
-      (showProject && projName) || pri ? el("div", { class: "flex items-center gap-2 mt-0.5" },
-        pri ? el("span", { class: \`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded \${priColor}\` }, pri) : null,
+      el("div", { class: "flex items-center gap-2 mt-0.5" },
+        priSel,
         showProject && projName ? el("span", { class: "text-xs text-slate-500 truncate" }, projName) : null,
-      ) : null,
+      ),
     ),
     due ? el("span", {
       class: \`text-xs \${overdue ? "text-rose-600 font-medium" : "text-slate-500"} shrink-0\`,
@@ -121,12 +142,11 @@ function openTaskEditor(task, { onChanged } = {}) {
 }
 
 // ── Brief editor (used on Today + This Week) ───────────────────────────────
-function briefEditor({ kind, periodKey, brief }) {
+function briefEditor({ kind, periodKey, brief, range }) {
   const wrap = el("div", { class: "bg-white rounded-2xl ring-1 ring-slate-200 p-5 space-y-3" });
-  wrap.appendChild(el("div", { class: "flex items-center justify-between" },
-    el("h3", { class: "text-base font-semibold" }, kind === "day" ? "Today's brief" : "Week brief"),
-    el("span", { class: "text-xs text-slate-400" }, periodKey),
-  ));
+  // Header label: range (e.g. "Apr 22 – Apr 28") preferred over the raw
+  // ISO week key (2026-W17) — the raw key is opaque to humans.
+  const label = range || periodKey;
   const ta = el("textarea", {
     rows: 5,
     class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 text-sm focus:ring-indigo-400 focus:outline-none resize-none",
@@ -144,6 +164,38 @@ function briefEditor({ kind, periodKey, brief }) {
       } catch (err) { toast(err.message, "err"); }
     }, 600);
   });
+  // ✨ Generate — fills the goals box with an AI-drafted starting brief
+  // by hitting the existing day-plan / week-plan endpoint with no input.
+  // The user can then edit. Generated content is also persisted to goalsMd
+  // so a refresh keeps it.
+  const genBtn = el("button", {
+    class: "text-xs text-indigo-600 hover:underline",
+    onclick: async () => {
+      genBtn.disabled = true; genBtn.textContent = "Generating…";
+      try {
+        const data = await api("/api/" + kind + "-plan", {
+          method: "POST",
+          body: { input: "", periodKey, brief: { goalsMd: ta.value || "" } },
+        });
+        if (data.output) {
+          ta.value = data.output;
+          await api(\`/api/briefs/\${kind}/\${encodeURIComponent(periodKey)}\`, {
+            method: "PUT", body: { goalsMd: ta.value },
+          });
+        }
+      } catch (err) { toast(err.message, "err"); }
+      finally {
+        genBtn.disabled = false; genBtn.textContent = "✨ Generate";
+      }
+    },
+  }, "✨ Generate");
+  wrap.appendChild(el("div", { class: "flex items-center justify-between" },
+    el("div", { class: "flex items-baseline gap-3" },
+      el("h3", { class: "text-base font-semibold" }, kind === "day" ? "Today's brief" : "Week brief"),
+      el("span", { class: "text-xs text-slate-400" }, label),
+    ),
+    genBtn,
+  ));
   wrap.appendChild(ta);
   if (brief?.generatedMd) {
     wrap.appendChild(el("details", { class: "text-sm text-slate-600" },
@@ -216,13 +268,62 @@ function openPlanReviewModal({ kind, action, periodKey, brief, onDone }) {
   openModal(card);
 }
 
-// ── Calendar list (used on Today + This Week) ──────────────────────────────
-function meetingCard(m) {
-  const card = el("div", { class: "bg-white rounded-xl ring-1 ring-slate-200 p-4 space-y-2" });
+// ── Calendar list (used on Today + This Week + Project/Person detail) ─────
+function fmtDayDate(s) {
+  if (!s) return "";
+  const d = new Date(s);
+  if (isNaN(d)) return s;
+  return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+}
+
+function isoToLocalInput(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d)) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return \`\${d.getFullYear()}-\${pad(d.getMonth()+1)}-\${pad(d.getDate())}T\${pad(d.getHours())}:\${pad(d.getMinutes())}\`;
+}
+
+function meetingCard(m, opts = {}) {
+  const { onChanged } = opts;
+  const card = el("div", {
+    class: "bg-white rounded-xl ring-1 ring-slate-200 hover:ring-indigo-300 p-4 space-y-2 cursor-pointer transition",
+    onclick: (e) => {
+      // Don't open editor when the user clicks a real link inside the card.
+      if (e.target.closest("a")) return;
+      openMeetingEditor(m, { onChanged: onChanged || (() => window.__cos.route()) });
+    },
+  });
+  // Header: title + day/date/time
   card.appendChild(el("div", { class: "flex items-baseline justify-between gap-3" },
     el("div", { class: "text-sm font-medium text-ink truncate" }, m.title || "(untitled)"),
-    el("div", { class: "text-xs text-slate-500 shrink-0" }, fmtTime(m.startTime) + " – " + fmtTime(m.endTime)),
+    el("div", { class: "text-xs text-slate-500 shrink-0" },
+      [fmtDayDate(m.startTime), fmtTime(m.startTime) + " – " + fmtTime(m.endTime)]
+        .filter(Boolean).join(" · ")),
   ));
+  // Link row: calendar invite + zoom/meet
+  const links = [];
+  if (m.htmlLink) {
+    links.push(el("a", {
+      href: m.htmlLink, target: "_blank", rel: "noopener",
+      class: "text-xs text-indigo-600 hover:underline inline-flex items-center gap-1",
+      onclick: (e) => e.stopPropagation(),
+    }, "📅 Open invite"));
+  }
+  if (m.zoomUrl) {
+    links.push(el("a", {
+      href: m.zoomUrl, target: "_blank", rel: "noopener",
+      class: "text-xs text-indigo-600 hover:underline inline-flex items-center gap-1",
+      onclick: (e) => e.stopPropagation(),
+    }, "🎥 Join Zoom"));
+  } else if (m.meetUrl) {
+    links.push(el("a", {
+      href: m.meetUrl, target: "_blank", rel: "noopener",
+      class: "text-xs text-indigo-600 hover:underline inline-flex items-center gap-1",
+      onclick: (e) => e.stopPropagation(),
+    }, "🎥 Join Meet"));
+  }
+  if (links.length) card.appendChild(el("div", { class: "flex gap-3 flex-wrap" }, ...links));
   if (m.attendees?.length) {
     card.appendChild(el("div", { class: "text-xs text-slate-500" },
       m.attendees.slice(0, 5).map((a) => a.name || a.email).filter(Boolean).join(", ")
@@ -244,22 +345,124 @@ function meetingCard(m) {
   return card;
 }
 
+function openMeetingEditor(m, { onChanged } = {}) {
+  if (!m.eventId) {
+    toast("Missing eventId — can't edit this meeting", "err");
+    return;
+  }
+  const titleI = el("input", {
+    type: "text", value: m.title || "",
+    class: "w-full text-lg font-medium rounded-lg ring-1 ring-slate-200 px-3 py-2 focus:ring-indigo-400 focus:outline-none",
+  });
+  const startI = el("input", {
+    type: "datetime-local", value: isoToLocalInput(m.startTime),
+    class: "rounded-lg ring-1 ring-slate-200 px-3 py-2",
+  });
+  const endI = el("input", {
+    type: "datetime-local", value: isoToLocalInput(m.endTime),
+    class: "rounded-lg ring-1 ring-slate-200 px-3 py-2",
+  });
+  const descI = el("textarea", {
+    rows: 5,
+    class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 text-sm focus:ring-indigo-400 focus:outline-none resize-none",
+    placeholder: "Description / agenda…",
+  });
+  descI.value = m.description || "";
+  const locI = el("input", {
+    type: "text", value: m.location || "",
+    class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 text-sm",
+    placeholder: "Location / Zoom URL",
+  });
+  const attendees = el("div", { class: "text-xs text-slate-500" },
+    m.attendees?.length
+      ? "Attendees: " + m.attendees.map((a) => a.name || a.email).filter(Boolean).join(", ")
+      : "No attendees on file.");
+  const links = el("div", { class: "flex gap-3 text-xs" });
+  if (m.htmlLink) links.appendChild(el("a", {
+    href: m.htmlLink, target: "_blank", rel: "noopener",
+    class: "text-indigo-600 hover:underline",
+  }, "Open in Google Calendar ↗"));
+  if (m.zoomUrl) links.appendChild(el("a", {
+    href: m.zoomUrl, target: "_blank", rel: "noopener",
+    class: "text-indigo-600 hover:underline",
+  }, "Join Zoom ↗"));
+
+  const card = el("div", { class: "space-y-4" },
+    el("h2", { class: "text-xl font-semibold" }, "Edit meeting"),
+    titleI,
+    el("div", { class: "grid grid-cols-2 gap-3" },
+      el("label", { class: "text-xs uppercase tracking-wide text-slate-500" }, "Start", startI),
+      el("label", { class: "text-xs uppercase tracking-wide text-slate-500" }, "End", endI),
+    ),
+    el("label", { class: "block text-xs uppercase tracking-wide text-slate-500" }, "Location", locI),
+    el("label", { class: "block text-xs uppercase tracking-wide text-slate-500" }, "Description", descI),
+    attendees,
+    links,
+    el("div", { class: "flex justify-end pt-2" },
+      el("button", {
+        class: "rounded-lg bg-ink text-white px-4 py-2 text-sm font-medium hover:bg-slate-700",
+        onclick: async () => {
+          try {
+            const body = {
+              title: titleI.value,
+              startTime: startI.value ? new Date(startI.value).toISOString() : undefined,
+              endTime: endI.value ? new Date(endI.value).toISOString() : undefined,
+              description: descI.value,
+              location: locI.value,
+            };
+            await api(\`/api/calendar/\${encodeURIComponent(m.eventId)}\`, { method: "PATCH", body });
+            modal.close(); toast("Saved", "ok"); onChanged?.();
+          } catch (err) { toast(err.message, "err"); }
+        },
+      }, "Save"),
+    ),
+  );
+  const modal = openModal(card);
+}
+
+// ── Show-completed toggle (used by Today / Week / Project / Person) ───────
+// Persists across navigations so the user doesn't have to re-enable it.
+function showCompletedFlag(scope) {
+  try { return localStorage.getItem("cos:showCompleted:" + scope) === "1"; }
+  catch { return false; }
+}
+function setShowCompletedFlag(scope, v) {
+  try { localStorage.setItem("cos:showCompleted:" + scope, v ? "1" : "0"); } catch {}
+}
+function showCompletedToggle(scope, onToggle) {
+  const v = showCompletedFlag(scope);
+  const btn = el("button", {
+    class: \`text-xs px-3 py-1 rounded-full ring-1 transition \${v ? "bg-emerald-50 text-emerald-700 ring-emerald-200" : "bg-white text-slate-500 ring-slate-200 hover:ring-indigo-300"}\`,
+    onclick: () => { setShowCompletedFlag(scope, !v); onToggle(); },
+  }, v ? "✓ Showing completed" : "Show completed");
+  return btn;
+}
+
 // ── Page: Today ────────────────────────────────────────────────────────────
 async function pageToday(main) {
-  const data = await api("/api/today");
+  const includeCompleted = showCompletedFlag("today");
+  const data = await api("/api/today" + (includeCompleted ? "?includeCompleted=1" : ""));
   const projects = (await api("/api/projects")).projects || [];
   const projectsById = Object.fromEntries(projects.map((p) => [p.projectId, p]));
   main.innerHTML = "";
   const root = el("div", { class: "max-w-3xl mx-auto px-10 py-10 space-y-8" });
-  root.appendChild(el("header", { class: "flex items-baseline justify-between" },
+  root.appendChild(el("header", { class: "flex items-baseline justify-between gap-3" },
     el("h1", { class: "text-3xl font-semibold" }, new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })),
-    el("button", {
-      class: "text-sm text-slate-500 hover:text-ink",
-      onclick: () => openCreateTaskModal({ projectsById, onChanged: () => window.__cos.route() }),
-    }, "+ New task"),
+    el("div", { class: "flex items-center gap-3" },
+      showCompletedToggle("today", () => window.__cos.route()),
+      el("button", {
+        class: "text-sm text-slate-500 hover:text-ink",
+        onclick: () => openCreateTaskModal({ projectsById, onChanged: () => window.__cos.route() }),
+      }, "+ New task"),
+    ),
   ));
 
   root.appendChild(briefEditor({ kind: "day", periodKey: data.date, brief: data.brief }));
+  if (window.chatPromptBubbles) root.appendChild(window.chatPromptBubbles([
+    "What's most important today?",
+    "Reschedule anything I'll miss",
+    "Draft my standup update",
+  ]));
   root.appendChild(planReviewButtons({ kind: "day", periodKey: data.date, brief: data.brief, onDone: () => window.__cos.route() }));
 
   if (data.tasks?.length) {
@@ -283,16 +486,26 @@ async function pageToday(main) {
 
 // ── Page: This Week ────────────────────────────────────────────────────────
 async function pageWeek(main) {
-  const data = await api("/api/week");
+  const includeCompleted = showCompletedFlag("week");
+  const data = await api("/api/week" + (includeCompleted ? "?includeCompleted=1" : ""));
   const projects = (await api("/api/projects")).projects || [];
   const projectsById = Object.fromEntries(projects.map((p) => [p.projectId, p]));
   main.innerHTML = "";
   const root = el("div", { class: "max-w-3xl mx-auto px-10 py-10 space-y-8" });
-  root.appendChild(el("header", { class: "flex items-baseline justify-between" },
+  const weekRange = data.from && data.to ? \`\${fmtDate(data.from)} – \${fmtDate(data.to)}\` : data.periodKey;
+  root.appendChild(el("header", { class: "flex items-baseline justify-between gap-3" },
     el("h1", { class: "text-3xl font-semibold" }, "This Week"),
-    el("span", { class: "text-sm text-slate-500" }, data.periodKey),
+    el("div", { class: "flex items-center gap-3" },
+      showCompletedToggle("week", () => window.__cos.route()),
+      el("span", { class: "text-sm text-slate-500" }, weekRange),
+    ),
   ));
-  root.appendChild(briefEditor({ kind: "week", periodKey: data.periodKey, brief: data.brief }));
+  root.appendChild(briefEditor({ kind: "week", periodKey: data.periodKey, brief: data.brief, range: weekRange }));
+  if (window.chatPromptBubbles) root.appendChild(window.chatPromptBubbles([
+    "What are the themes for this week?",
+    "Which projects are at risk?",
+    "Who do I need to follow up with?",
+  ]));
   root.appendChild(planReviewButtons({ kind: "week", periodKey: data.periodKey, brief: data.brief, onDone: () => window.__cos.route() }));
 
   if (data.tasks?.length) {
@@ -318,6 +531,10 @@ window.taskRow   = taskRow;
 window.briefEditor = briefEditor;
 window.planReviewButtons = planReviewButtons;
 window.meetingCard = meetingCard;
+window.openMeetingEditor = openMeetingEditor;
 window.openTaskEditor = openTaskEditor;
 window.openCreateTaskModal = openCreateTaskModal;
+window.showCompletedFlag = showCompletedFlag;
+window.setShowCompletedFlag = setShowCompletedFlag;
+window.showCompletedToggle = showCompletedToggle;
 `;

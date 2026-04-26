@@ -5,36 +5,6 @@
  * trust the caller and skip per-handler auth. Mutations go through the
  * existing propose_* + commit_changeset tools so the audit trail stays
  * intact and the same code paths the MCP surface uses are exercised.
- *
- * The SPA hits these routes:
- *
- *   GET    /api/today                     tasks + meetings + brief for today
- *   GET    /api/week                      tasks + meetings + brief for this week
- *   GET    /api/projects                  list of projects (with stakeholder ids)
- *   GET    /api/projects/:id              project 360 (stakeholders, tasks, meetings)
- *   GET    /api/people                    stakeholder list
- *   GET    /api/people/:id                stakeholder 360
- *   GET    /api/intake                    pending IntakeQueue rows
- *   GET    /api/calendar?from=&to=        raw calendar events (used by Projects → Add Meeting)
- *
- *   POST   /api/tasks                     create task          (propose+commit)
- *   PATCH  /api/tasks/:id                 update task          (propose+commit)
- *   POST   /api/tasks/:id/complete        mark task done       (propose+commit)
- *   POST   /api/tasks/:id/uncomplete      mark task open
- *
- *   POST   /api/projects                  create project       (propose+commit)
- *   PATCH  /api/projects/:id              update project       (propose+commit)
- *
- *   POST   /api/people                    create stakeholder
- *   PATCH  /api/people/:id                update stakeholder
- *
- *   POST   /api/intake/:id/resolve        resolve intake item  (propose+commit)
- *   POST   /api/intake/:id/dismiss        dismiss intake item  (propose+commit, action=dropped)
- *
- *   POST   /api/calendar                  create calendar event (delegates to create_calendar_event)
- *
- *   GET    /api/briefs/:kind/:periodKey   read or empty brief
- *   PUT    /api/briefs/:kind/:periodKey   update brief goalsMd
  */
 
 import { jsonResponse, callTool, proposeAndCommit } from "@agentbuilder/web-ui-kit";
@@ -125,6 +95,58 @@ function compareDueAt(a, b) {
 // ── Calendar helpers ────────────────────────────────────────────────────────
 // Returns an array of { eventId, title, start, end, attendees: [{email,name}], description, location }
 
+function extractZoomUrl(text) {
+  if (!text) return "";
+  const m = String(text).match(/https?:\/\/[^\s<>"]*zoom\.us\/[^\s<>"]+/i);
+  return m ? m[0] : "";
+}
+
+function extractMeetUrl(text) {
+  if (!text) return "";
+  const m = String(text).match(/https?:\/\/meet\.google\.com\/[^\s<>"]+/i);
+  return m ? m[0] : "";
+}
+
+function meetingLinks(r) {
+  // Pull calendar invite + conference URLs from whatever fields they happen
+  // to live in. rawJson is the canonical place; location/description are the
+  // fallbacks for older imports.
+  let raw = {};
+  try { raw = r.rawJson ? JSON.parse(r.rawJson) : {}; } catch { raw = {}; }
+  const conf = raw?.conferenceData;
+  const entry = Array.isArray(conf?.entryPoints) ? conf.entryPoints : [];
+  const video = entry.find((e) => e.entryPointType === "video") || entry[0];
+  const conferenceUrl = video?.uri || "";
+  const htmlLink = raw?.htmlLink || "";
+  const zoomUrl = extractZoomUrl(r.location) || extractZoomUrl(r.description) || extractZoomUrl(conferenceUrl);
+  const meetUrl = extractMeetUrl(r.location) || extractMeetUrl(r.description) || extractMeetUrl(conferenceUrl);
+  return {
+    htmlLink,
+    zoomUrl: zoomUrl || (conferenceUrl && /zoom/i.test(conferenceUrl) ? conferenceUrl : ""),
+    meetUrl: meetUrl || (conferenceUrl && /meet\.google/i.test(conferenceUrl) ? conferenceUrl : ""),
+    conferenceUrl,
+  };
+}
+
+function projectMeeting(r) {
+  const links = meetingLinks(r);
+  return {
+    meetingId: r.meetingId,
+    eventId: r.eventId,
+    title: r.title,
+    startTime: r.startTime,
+    endTime: r.endTime,
+    description: r.description,
+    location: r.location,
+    organizer: r.organizer,
+    attendees: safeParseJsonArray(r.attendeesJson),
+    htmlLink: links.htmlLink,
+    zoomUrl: links.zoomUrl,
+    meetUrl: links.meetUrl,
+    conferenceUrl: links.conferenceUrl,
+  };
+}
+
 async function listMeetings(sheets, fromIso, toIso) {
   const rows = await readAll(sheets, "Meetings");
   return rows
@@ -134,17 +156,7 @@ async function listMeetings(sheets, fromIso, toIso) {
       if (!Number.isFinite(t)) return false;
       return t >= Date.parse(fromIso) && t <= Date.parse(toIso);
     })
-    .map((r) => ({
-      meetingId: r.meetingId,
-      eventId: r.eventId,
-      title: r.title,
-      startTime: r.startTime,
-      endTime: r.endTime,
-      description: r.description,
-      location: r.location,
-      organizer: r.organizer,
-      attendees: safeParseJsonArray(r.attendeesJson),
-    }))
+    .map(projectMeeting)
     .sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime));
 }
 
@@ -213,12 +225,19 @@ export async function handleApiRequest(request, ctx) {
     try { return await request.json(); } catch { return {}; }
   }
 
+  // ── Config (non-secret runtime values for the SPA) ───────────────────────
+  if (method === "GET" && path === "/api/config") {
+    return jsonResponse({
+      ideasUrl: env.IDEAS_URL || "",
+    });
+  }
+
   // ── Today ────────────────────────────────────────────────────────────────
   if (method === "GET" && path === "/api/today") {
-    return await handleToday();
+    return await handleToday(url.searchParams.get("includeCompleted") === "1");
   }
   if (method === "GET" && path === "/api/week") {
-    return await handleWeek();
+    return await handleWeek(url.searchParams.get("includeCompleted") === "1");
   }
 
   // ── Projects ─────────────────────────────────────────────────────────────
@@ -240,8 +259,64 @@ export async function handleApiRequest(request, ctx) {
   {
     const m = path.match(/^\/api\/projects\/([^/]+)$/);
     if (m && method === "GET") {
+      // Augment project_360 with hydrated stakeholders (the tool returns
+      // bare ids/objects; the UI needs name+email to render pills) and
+      // upcoming + recent meetings linked via attendee email overlap.
       const data = await callTool(tools, "get_project_360", { projectId: m[1] });
-      return jsonResponse(data);
+      const [stakeholderRows, allMeetings] = await Promise.all([
+        readAll(sheets, "Stakeholders"),
+        readAll(sheets, "Meetings"),
+      ]);
+      const byId = Object.fromEntries(stakeholderRows.map((s) => [s.stakeholderId, s]));
+      const byEmail = Object.fromEntries(stakeholderRows
+        .filter((s) => s.email)
+        .map((s) => [String(s.email).toLowerCase(), s]));
+      const projectStakeholderIds = (data.stakeholders || []).map((s) =>
+        typeof s === "string" ? s : (s.stakeholderId || s.id || ""),
+      ).filter(Boolean);
+      const hydratedStakeholders = projectStakeholderIds.map((id) => {
+        const s = byId[id] || {};
+        return {
+          stakeholderId: id,
+          name: s.name || "",
+          email: s.email || "",
+          tierTag: s.tierTag || "",
+        };
+      });
+      const stakeholderEmails = new Set(hydratedStakeholders
+        .map((s) => String(s.email || "").toLowerCase())
+        .filter(Boolean));
+      const nowMs = Date.now();
+      const projectId = m[1];
+      const projectMeetings = allMeetings
+        .filter((m2) => {
+          if (!m2.startTime) return false;
+          // Explicit links — set by POST /api/meetings/:id/link-project.
+          let raw = {};
+          try { raw = m2.rawJson ? JSON.parse(m2.rawJson) : {}; } catch { raw = {}; }
+          if (Array.isArray(raw.linkedProjectIds) && raw.linkedProjectIds.includes(projectId)) return true;
+          // Fallback: stakeholder-email overlap.
+          const attendeesText = String(m2.attendeesJson || "").toLowerCase();
+          for (const e of stakeholderEmails) if (attendeesText.includes(e)) return true;
+          return false;
+        })
+        .map(projectMeeting);
+      const upcomingMeetings = projectMeetings
+        .filter((m2) => Date.parse(m2.startTime) >= nowMs)
+        .sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime))
+        .slice(0, 10);
+      // recentMeetings already on `data` but use ours so the same shape
+      // (with htmlLink/zoomUrl) is available everywhere.
+      const recentMeetings = projectMeetings
+        .filter((m2) => Date.parse(m2.startTime) < nowMs)
+        .sort((a, b) => Date.parse(b.startTime) - Date.parse(a.startTime))
+        .slice(0, 5);
+      return jsonResponse({
+        ...data,
+        stakeholders: hydratedStakeholders,
+        upcomingMeetings,
+        recentMeetings,
+      });
     }
     if (m && method === "PATCH") {
       const body = await readJson();
@@ -288,11 +363,64 @@ export async function handleApiRequest(request, ctx) {
     const m = path.match(/^\/api\/people\/([^/]+)$/);
     if (m && method === "GET") {
       const data = await callTool(tools, "get_stakeholder_360", { personId: m[1] });
-      return jsonResponse(data);
+      // get_stakeholder_360 returns recent meetings only. Add upcoming meetings.
+      const stakeholderRows = await readAll(sheets, "Stakeholders");
+      const sh = stakeholderRows.find((s) =>
+        s.stakeholderId === m[1] || String(s.email || "").toLowerCase() === m[1].toLowerCase(),
+      );
+      const email = String(sh?.email || data.email || "").toLowerCase();
+      let upcomingMeetings = [];
+      if (email) {
+        const allMeetings = await readAll(sheets, "Meetings");
+        const nowMs = Date.now();
+        upcomingMeetings = allMeetings
+          .filter((mm) => mm.startTime && Date.parse(mm.startTime) >= nowMs)
+          .filter((mm) => String(mm.attendeesJson || "").toLowerCase().includes(email))
+          .map(projectMeeting)
+          .sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime))
+          .slice(0, 10);
+      }
+      return jsonResponse({ ...data, upcomingMeetings });
     }
     if (m && method === "PATCH") {
       const body = await readJson();
       await updateStakeholderRow(sheets, m[1], body.patch || {});
+      return jsonResponse({ ok: true });
+    }
+  }
+  {
+    // Link a project to a person (additive — does not replace existing links).
+    const m = path.match(/^\/api\/people\/([^/]+)\/projects$/);
+    if (m && method === "POST") {
+      const body = await readJson();
+      if (!body.projectId) return jsonResponse({ error: "projectId required" }, 400);
+      const cur = await callTool(tools, "get_project_360", { projectId: body.projectId });
+      const existingIds = (cur.stakeholders || []).map((s) =>
+        typeof s === "string" ? s : (s.stakeholderId || s.id || ""),
+      ).filter(Boolean);
+      const ids = Array.from(new Set([...existingIds, m[1]]));
+      const result = await proposeAndCommit(tools, "propose_update_project", {
+        projectId: body.projectId,
+        patch: {},
+        stakeholderIds: ids,
+        reason: "linked from person page",
+      });
+      return jsonResponse({ ok: true, result });
+    }
+  }
+  {
+    // Person brief (kind='person', periodKey=stakeholderId). Reuses Briefs.
+    const m = path.match(/^\/api\/people\/([^/]+)\/brief$/);
+    if (m && method === "GET") {
+      const row = await env.DB.prepare(
+        `SELECT briefId, kind, periodKey, goalsMd, generatedMd, reviewMd, updatedAt
+           FROM Briefs WHERE kind='person' AND periodKey=?`
+      ).bind(m[1]).first();
+      return jsonResponse({ brief: row || { kind: "person", periodKey: m[1], goalsMd: "", generatedMd: "" } });
+    }
+    if (m && method === "PUT") {
+      const body = await readJson();
+      await upsertBrief(env, { kind: "person", periodKey: m[1], goalsMd: body.goalsMd ?? "" });
       return jsonResponse({ ok: true });
     }
   }
@@ -348,8 +476,36 @@ export async function handleApiRequest(request, ctx) {
 
   // ── Intake ───────────────────────────────────────────────────────────────
   if (method === "GET" && path === "/api/intake") {
-    const data = await callTool(tools, "get_intake", { limit: 100 });
-    return jsonResponse(data);
+    const rows = await readAll(sheets, "IntakeQueue");
+    const items = rows
+      .filter((r) => String(r.status || "").toLowerCase() === "pending" || !r.status)
+      .map((r) => {
+        let payload = {};
+        try { payload = r.payloadJson ? JSON.parse(r.payloadJson) : {}; } catch { payload = {}; }
+        const body = payload.body || payload.bodyText || payload.snippet
+          || payload.description || payload.content || "";
+        const fromAddr = payload.from || payload.sender || payload.organizer || "";
+        const replyTo = payload.replyTo || payload.from || "";
+        const subject = payload.subject || r.summary || "";
+        const threadId = payload.threadId || payload.gmailThreadId || "";
+        const urgency = scoreIntakeUrgency(r, payload);
+        return {
+          intakeId: r.intakeId,
+          kind: r.kind,
+          summary: r.summary,
+          sourceRef: r.sourceRef,
+          createdAt: r.createdAt || "",
+          updatedAt: r.updatedAt || "",
+          body,
+          subject,
+          fromAddr,
+          replyTo,
+          threadId,
+          urgency,
+        };
+      })
+      .sort((a, b) => (b.urgency - a.urgency) || String(b.createdAt).localeCompare(String(a.createdAt)));
+    return jsonResponse({ count: items.length, items });
   }
   {
     const m = path.match(/^\/api\/intake\/([^/]+)\/(resolve|dismiss)$/);
@@ -361,6 +517,21 @@ export async function handleApiRequest(request, ctx) {
       if (body.linkedCommitmentId) proposeArgs.linkedCommitmentId = body.linkedCommitmentId;
       const result = await proposeAndCommit(tools, "propose_resolve_intake", proposeArgs);
       return jsonResponse({ ok: true, result });
+    }
+  }
+  {
+    const m = path.match(/^\/api\/intake\/([^/]+)\/reply$/);
+    if (m && method === "POST") {
+      const body = await readJson();
+      if (!body.to || !body.body) return jsonResponse({ error: "to and body required" }, 400);
+      const data = await callTool(tools, "create_gmail_draft", {
+        account: body.account || { name: "personal" },
+        to: body.to,
+        subject: body.subject || "",
+        body: body.body,
+        threadId: body.threadId || "",
+      });
+      return jsonResponse({ ok: true, draft: data });
     }
   }
 
@@ -383,6 +554,46 @@ export async function handleApiRequest(request, ctx) {
       attendeeEmails: body.attendeeEmails || [],
     });
     return jsonResponse({ ok: true, event: data });
+  }
+  {
+    // Update an existing calendar event by eventId. Used by the meeting
+    // editor (date/time/description/attendees). Mirrors update_calendar_event.
+    const m = path.match(/^\/api\/calendar\/([^/]+)$/);
+    if (m && method === "PATCH") {
+      const body = await readJson();
+      const data = await callTool(tools, "update_calendar_event", {
+        account: body.account || { name: "personal" },
+        eventId: m[1],
+        calendarId: body.calendarId,
+        title: body.title,
+        startTime: body.startTime,
+        endTime: body.endTime,
+        description: body.description,
+        location: body.location,
+        addAttendeeEmails: body.addAttendeeEmails,
+      });
+      return jsonResponse({ ok: true, event: data });
+    }
+  }
+  {
+    // Link a meeting to a project. Stored on the Meetings row in
+    // rawJson.linkedProjectIds so it doesn't pollute the calendar invite
+    // visible to attendees. Project pages match meetings via attendee
+    // email overlap *or* this list.
+    const m = path.match(/^\/api\/meetings\/([^/]+)\/link-project$/);
+    if (m && method === "POST") {
+      const body = await readJson();
+      if (!body.projectId) return jsonResponse({ error: "projectId required" }, 400);
+      const found = await sheets.findRowByKey("Meetings", "meetingId", m[1]);
+      if (!found) return jsonResponse({ error: "Meeting not found" }, 404);
+      let raw = {};
+      try { raw = found.data.rawJson ? JSON.parse(found.data.rawJson) : {}; } catch { raw = {}; }
+      const linked = new Set(Array.isArray(raw.linkedProjectIds) ? raw.linkedProjectIds : []);
+      linked.add(body.projectId);
+      raw.linkedProjectIds = [...linked];
+      await sheets.updateRow("Meetings", found.rowNum, { rawJson: JSON.stringify(raw) });
+      return jsonResponse({ ok: true });
+    }
   }
 
   // ── Briefs ───────────────────────────────────────────────────────────────
@@ -410,6 +621,71 @@ export async function handleApiRequest(request, ctx) {
   if (method === "GET" && path === "/api/goals") {
     const data = await callTool(tools, "list_goals", { includeClosed: false });
     return jsonResponse(data);
+  }
+
+  // ── Notes (free-form text linked to a person/project/task) ───────────────
+  if (method === "GET" && path === "/api/notes") {
+    const entityType = url.searchParams.get("entityType") || "";
+    const entityId = url.searchParams.get("entityId") || "";
+    if (!entityType || !entityId) return jsonResponse({ notes: [] });
+    const rows = await env.DB.prepare(
+      `SELECT noteId, entityType, entityId, body, createdAt, updatedAt
+         FROM Notes WHERE entityType=? AND entityId=?
+         ORDER BY updatedAt DESC`
+    ).bind(entityType, entityId).all();
+    return jsonResponse({ notes: rows.results || [] });
+  }
+  if (method === "POST" && path === "/api/notes") {
+    const body = await readJson();
+    if (!body.entityType || !body.entityId) {
+      return jsonResponse({ error: "entityType and entityId required" }, 400);
+    }
+    const noteId = `note_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+    const now = nowIso();
+    await env.DB.prepare(
+      `INSERT INTO Notes (noteId, entityType, entityId, body, createdAt, updatedAt)
+         VALUES (?, ?, ?, ?, ?, ?)`
+    ).bind(noteId, body.entityType, body.entityId, body.body || "", now, now).run();
+    return jsonResponse({ ok: true, noteId });
+  }
+  {
+    const m = path.match(/^\/api\/notes\/([^/]+)$/);
+    if (m && method === "PATCH") {
+      const body = await readJson();
+      await env.DB.prepare(
+        `UPDATE Notes SET body=?, updatedAt=? WHERE noteId=?`
+      ).bind(body.body || "", nowIso(), m[1]).run();
+      return jsonResponse({ ok: true });
+    }
+    if (m && method === "DELETE") {
+      await env.DB.prepare(`DELETE FROM Notes WHERE noteId=?`).bind(m[1]).run();
+      return jsonResponse({ ok: true });
+    }
+  }
+
+  // ── Completed tasks (used by the per-page "show completed" toggle) ───────
+  if (method === "GET" && path === "/api/tasks/completed") {
+    const scope = url.searchParams.get("scope") || "today"; // today | week | all
+    const projectId = url.searchParams.get("projectId") || "";
+    const ownerId = url.searchParams.get("ownerId") || "";
+    const tasks = await readAll(sheets, "Tasks");
+    const now = new Date();
+    let from = null;
+    if (scope === "today") from = startOfDay(now);
+    else if (scope === "week") from = startOfWeek(now);
+    const fromMs = from ? from.getTime() : 0;
+    const completed = tasks
+      .filter((t) => String(t.status || "").toLowerCase() === "done")
+      .filter((t) => !projectId || String(t.projectId || "") === projectId)
+      .filter((t) => !ownerId || String(t.ownerId || "").toLowerCase() === ownerId.toLowerCase())
+      .filter((t) => {
+        if (!from) return true;
+        const ts = Date.parse(t.completedAt || t.updatedAt || t.dueAt || "");
+        return Number.isFinite(ts) ? ts >= fromMs : false;
+      })
+      .map(toTaskDto)
+      .sort((a, b) => String(b.dueAt).localeCompare(String(a.dueAt)));
+    return jsonResponse({ tasks: completed });
   }
 
   // ── External REST API (/api/v1/*) ────────────────────────────────────────
@@ -475,7 +751,7 @@ export async function handleApiRequest(request, ctx) {
 
   // ── Inner handlers ───────────────────────────────────────────────────────
 
-  async function handleToday() {
+  async function handleToday(includeCompleted) {
     const now = new Date();
     const dStart = startOfDay(now).toISOString();
     const dEnd = endOfDay(now).toISOString();
@@ -491,7 +767,7 @@ export async function handleApiRequest(request, ctx) {
       ).bind(dayKey(now)).first(),
     ]);
     const todayTasks = tasks
-      .filter((t) => isOpenStatus(t.status))
+      .filter((t) => includeCompleted ? true : isOpenStatus(t.status))
       .filter((t) => {
         if (!t.dueAt) return false;
         const d = Date.parse(t.dueAt);
@@ -511,7 +787,7 @@ export async function handleApiRequest(request, ctx) {
     });
   }
 
-  async function handleWeek() {
+  async function handleWeek(includeCompleted) {
     const now = new Date();
     const wStart = startOfWeek(now).toISOString();
     const wEnd = endOfWeek(now).toISOString();
@@ -528,7 +804,7 @@ export async function handleApiRequest(request, ctx) {
       ).bind(periodKey).first(),
     ]);
     const weekTasks = tasks
-      .filter((t) => isOpenStatus(t.status))
+      .filter((t) => includeCompleted ? true : isOpenStatus(t.status))
       .filter((t) => {
         if (!t.dueAt) return false;
         const d = Date.parse(t.dueAt);
@@ -560,7 +836,35 @@ function toTaskDto(t) {
     dueAt: t.dueAt || "",
     projectId: t.projectId || "",
     notes: t.notes || "",
+    completedAt: t.completedAt || "",
   };
+}
+
+// Heuristic urgency score for triage prioritization. We don't burn an LLM
+// call here — counts of urgency keywords + "person needs to reply" signals
+// give a useful sort. The chat sidebar can do a smarter pass on demand.
+function scoreIntakeUrgency(row, payload) {
+  const text = [
+    row.summary,
+    payload.subject,
+    payload.snippet,
+    payload.body,
+  ].filter(Boolean).join(" ").toLowerCase();
+  let score = 0;
+  if (/\b(urgent|asap|today|immediately|need by|by eod|by tomorrow)\b/.test(text)) score += 3;
+  if (/\b(deadline|due|expires|expiring)\b/.test(text)) score += 2;
+  if (/\?(\s|$)/.test(text)) score += 1; // there's a question
+  if (/\b(reply|respond|let me know|get back to me|circling back|following up)\b/.test(text)) score += 2;
+  if (/\b(meeting|invite|calendar)\b/.test(text)) score += 1;
+  if (/\b(paid|payment|invoice|contract|signing|sign)\b/.test(text)) score += 1;
+  // Recency bumps urgency.
+  const created = Date.parse(row.createdAt || "");
+  if (Number.isFinite(created)) {
+    const ageHours = (Date.now() - created) / 3_600_000;
+    if (ageHours < 6) score += 2;
+    else if (ageHours < 24) score += 1;
+  }
+  return score;
 }
 
 // ── Stakeholder helpers (no propose tool exists for stakeholders) ───────────
