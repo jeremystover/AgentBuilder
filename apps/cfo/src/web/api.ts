@@ -5,6 +5,8 @@
 import type {
   ChatMessage, ChatStreamEvent, Snapshot,
   ReviewListResponse, ReviewItem, ResolveAction, BulkResolveInput,
+  Account, AccountListResponse, BankConfig, TaxYearWorkflow,
+  TransactionListResponse,
 } from "./types";
 
 async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
@@ -98,6 +100,101 @@ export async function runClassification(): Promise<ClassifyRunResult> {
 
 export async function getNextReviewItem(): Promise<ReviewItem | { empty: true; message: string }> {
   return request<ReviewItem | { empty: true; message: string }>("/review/next");
+}
+
+// ── Accounts + bank ──────────────────────────────────────────────────────
+
+export async function listAccounts(): Promise<AccountListResponse> {
+  return request<AccountListResponse>("/accounts");
+}
+
+export async function updateAccount(id: string, patch: Partial<Pick<Account, "name" | "owner_tag" | "is_active">>): Promise<{ ok: true }> {
+  return request(`/accounts/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+}
+
+export async function getBankConfig(): Promise<BankConfig> {
+  return request<BankConfig>("/bank/config");
+}
+
+export async function startBankConnect(provider: "teller" | "plaid"): Promise<BankConfig> {
+  return request<BankConfig>("/bank/connect/start", {
+    method: "POST",
+    body: JSON.stringify({ provider }),
+  });
+}
+
+export async function completeBankConnect(input: Record<string, unknown>): Promise<{ accounts_linked: number; institution?: string | null }> {
+  return request("/bank/connect/complete", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function bankSync(input: { provider: "teller" | "plaid"; account_ids?: string[] }): Promise<{
+  provider: string;
+  transactions_imported: number;
+  duplicates_skipped: number;
+  account_ids_synced?: string[];
+  accounts_synced?: number;
+}> {
+  return request("/bank/sync", { method: "POST", body: JSON.stringify(input) });
+}
+
+// ── Tax-year workflow ────────────────────────────────────────────────────
+
+export async function getTaxYearWorkflow(): Promise<TaxYearWorkflow> {
+  return request<TaxYearWorkflow>("/workflow/tax-year");
+}
+
+export async function createTaxYearWorkflow(input: { tax_year: number }): Promise<TaxYearWorkflow> {
+  return request<TaxYearWorkflow>("/workflow/tax-year", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+// ── Transactions ─────────────────────────────────────────────────────────
+
+export interface ListTransactionsParams {
+  limit?: number;
+  offset?: number;
+  account_id?: string;
+  category_tax?: string;
+  entity?: string;
+  q?: string;            // search merchant/description
+  start?: string;        // YYYY-MM-DD
+  end?: string;
+}
+
+export async function listTransactions(params: ListTransactionsParams = {}): Promise<TransactionListResponse> {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v != null && v !== "") qs.set(k, String(v));
+  }
+  return request<TransactionListResponse>(`/transactions?${qs.toString()}`);
+}
+
+export async function getTransaction(id: string): Promise<Record<string, unknown>> {
+  return request(`/transactions/${encodeURIComponent(id)}`);
+}
+
+export async function classifyTransaction(id: string, input: { entity?: string; category_tax?: string; category_budget?: string }): Promise<{ ok: true }> {
+  return request(`/transactions/${encodeURIComponent(id)}/classify`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function splitTransaction(id: string, input: {
+  splits: Array<{ amount: number; entity: string; category_tax?: string; category_budget?: string; description?: string }>;
+}): Promise<{ ok: true }> {
+  return request(`/transactions/${encodeURIComponent(id)}/split`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
 }
 
 // ── Chat (SSE) ────────────────────────────────────────────────────────────

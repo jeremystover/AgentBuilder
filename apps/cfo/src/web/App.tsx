@@ -3,6 +3,8 @@ import { SnapshotPanel } from "./components/SnapshotPanel";
 import { ReviewQueueRail } from "./components/ReviewQueueRail";
 import { TopNav } from "./components/TopNav";
 import { ReviewQueueView } from "./components/drilldowns/ReviewQueueView";
+import { AccountsView } from "./components/drilldowns/AccountsView";
+import { TransactionsView } from "./components/drilldowns/TransactionsView";
 import { useChat } from "./hooks/useChat";
 import { useSnapshot } from "./hooks/useSnapshot";
 import { useRoute } from "./router";
@@ -13,10 +15,14 @@ export function App() {
   return (
     <div className="h-screen flex flex-col bg-bg-primary text-text-primary overflow-hidden">
       <TopNav />
-      <div className="flex-1 min-h-0">
+      <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin">
         {route === "chat" && <ChatLayout />}
         {route === "review" && <ReviewQueueView />}
-        {route !== "chat" && route !== "review" && <ComingSoon route={route} />}
+        {route === "accounts" && <AccountsView />}
+        {route === "transactions" && <TransactionsView />}
+        {route !== "chat" && route !== "review" && route !== "accounts" && route !== "transactions" && (
+          <ComingSoon route={route} />
+        )}
       </div>
     </div>
   );
