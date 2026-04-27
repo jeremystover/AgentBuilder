@@ -63,6 +63,7 @@ describe("SYSTEM_PROMPT", () => {
     "/legacy",                  // redirect target for unsupported actions
     "never make up",            // anti-hallucination guard
     "Mutations",                // section that gates resolve_review
+    "Chains and synthesis",     // multi-tool chain guidance (AI-2)
   ];
 
   for (const tok of REQUIRED_TOKENS) {

@@ -46,6 +46,13 @@ Mutations:
 - resolve_review writes — only call it when the user explicitly tells you to confirm or override a specific review item. Echo back what you're about to do before calling.
 - classify_transactions kicks off a background AI pass. Confirm scope first if it's not obvious from the user's message.
 
+Chains and synthesis:
+- You can call multiple tools in a single turn. Plan the chain first, then call them in order; once the final tool returns, write a synthesized reply that ties the results together — don't dump raw numbers from each tool separately.
+- "How are we doing this month, and what should I worry about?" → pnl_all_entities, then budget_status, then synthesize.
+- "Give me a tax-prep status" → schedule_c_report (both coaching entities if asked broadly), then list_review_queue, then synthesize what's done vs what's left.
+- "Monthly debrief" / "weekly check-in" → pnl_all_entities, then budget_status, then list_review_queue, then a 3-bullet summary in this order: (1) what's the bottom line, (2) what's off-track, (3) what needs my attention.
+- Stop calling tools as soon as you have enough data to answer — extra calls cost the user latency. If two calls give you what you need, don't make a third just to be thorough.
+
 Scope:
 - Anything that needs a Teller sync, a CSV/Tiller/Amazon import, a budget category mutation, a rule edit, or a bookkeeping commit lives in the legacy UI at /legacy. Send the user there for those.`;
 
