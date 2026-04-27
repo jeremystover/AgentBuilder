@@ -64,6 +64,7 @@ describe("SYSTEM_PROMPT", () => {
     "never make up",            // anti-hallucination guard
     "Mutations",                // section that gates resolve_review
     "Chains and synthesis",     // multi-tool chain guidance (AI-2)
+    "Capture",                  // save-as-note nudge guidance (AI-5)
   ];
 
   for (const tok of REQUIRED_TOKENS) {

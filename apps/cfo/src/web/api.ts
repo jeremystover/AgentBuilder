@@ -5,6 +5,7 @@
 import type {
   ChatMessage, ChatStreamEvent, Snapshot,
   ReviewListResponse, ReviewItem, ResolveAction, BulkResolveInput,
+  Note, CreateNoteInput, UpdateNoteInput, NoteKind, NoteStatus,
 } from "./types";
 
 async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
@@ -98,6 +99,36 @@ export async function runClassification(): Promise<ClassifyRunResult> {
 
 export async function getNextReviewItem(): Promise<ReviewItem | { empty: true; message: string }> {
   return request<ReviewItem | { empty: true; message: string }>("/review/next");
+}
+
+// ── Notes + tasks (AI-5) ─────────────────────────────────────────────────
+
+export interface ListNotesParams {
+  kind?: NoteKind;
+  status?: NoteStatus;
+}
+
+export async function listNotes(params: ListNotesParams = {}): Promise<{ notes: Note[] }> {
+  const qs = new URLSearchParams();
+  if (params.kind)   qs.set("kind", params.kind);
+  if (params.status) qs.set("status", params.status);
+  const query = qs.toString();
+  return request<{ notes: Note[] }>(`/api/web/notes${query ? `?${query}` : ""}`);
+}
+
+export async function createNote(input: CreateNoteInput): Promise<{ note: Note }> {
+  return request("/api/web/notes", { method: "POST", body: JSON.stringify(input) });
+}
+
+export async function updateNote(id: string, input: UpdateNoteInput): Promise<{ note: Note }> {
+  return request(`/api/web/notes/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function deleteNote(id: string): Promise<{ ok: true }> {
+  return request(`/api/web/notes/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
 // ── Chat (SSE) ────────────────────────────────────────────────────────────

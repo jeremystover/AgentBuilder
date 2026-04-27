@@ -97,3 +97,36 @@ export interface BulkResolveInput {
   category_tax?: string;
   category_budget?: string;
 }
+
+// ── Notes + tasks (AI-5) ─────────────────────────────────────────────────
+
+export type NoteKind = "note" | "task";
+export type NoteStatus = "open" | "done";
+
+export interface Note {
+  id: string;
+  user_id: string;
+  kind: NoteKind;
+  title: string;
+  body: string;
+  status: NoteStatus;
+  tax_year: number | null;
+  source_chat_message_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateNoteInput {
+  kind: NoteKind;
+  title: string;
+  body?: string;
+  tax_year?: number;
+  source_chat_message_id?: string;
+}
+
+export interface UpdateNoteInput {
+  title?: string;
+  body?: string;
+  status?: NoteStatus;
+  tax_year?: number | null;
+}

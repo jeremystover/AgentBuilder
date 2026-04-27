@@ -169,4 +169,22 @@ export const GOLDEN_CASES: GoldenCase[] = [
       max_iterations: 3,  // a chain here would waste latency
     },
   },
+
+  // ── Save-as-note suggestions (AI-5) ─────────────────────────────────────
+  // The chat surface doesn't have a 'create_note' tool — capture is a
+  // user-driven action via the SPA "Save…" button. Goldens check that
+  // the model NUDGES toward saving when a reply contains a follow-up
+  // ("you should…", "consider…") rather than silently ending.
+  {
+    id: "suggest_save_when_followup_action",
+    why: "When the model surfaces a concrete follow-up the user should remember, it should hint at saving rather than just dropping the suggestion.",
+    user: "What's the biggest thing I should fix before tax season?",
+    expects: {
+      // No tool required — this is conceptual + actionable.
+      // The reply should mention save / note / task / remember so the
+      // user knows the SPA can capture it.
+      mentions: ["save"],
+      not_called: ["resolve_review", "classify_transactions"],
+    },
+  },
 ];

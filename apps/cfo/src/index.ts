@@ -86,6 +86,12 @@ import {
   handleManualDispatch,
   handleSmsStats,
 } from './routes/sms';
+import {
+  handleListNotes,
+  handleCreateNote,
+  handleUpdateNote,
+  handleDeleteNote,
+} from './routes/notes';
 
 // Scheduled jobs
 import { runNightlyTellerSync } from './lib/nightly-sync';
@@ -305,6 +311,20 @@ export default {
       }
       if (path === '/api/web/sms/stats' && method === 'GET') {
         return handleSmsStats(request, env);
+      }
+      // Notes + tasks captured from chat (AI-5)
+      if (path === '/api/web/notes' && method === 'GET') {
+        return handleListNotes(request, env);
+      }
+      if (path === '/api/web/notes' && method === 'POST') {
+        return handleCreateNote(request, env);
+      }
+      const noteIdMatch = path.match(/^\/api\/web\/notes\/([^/]+)$/);
+      if (noteIdMatch && method === 'PATCH') {
+        return handleUpdateNote(request, env, noteIdMatch[1]!);
+      }
+      if (noteIdMatch && method === 'DELETE') {
+        return handleDeleteNote(request, env, noteIdMatch[1]!);
       }
       const webResponse = await handleWebApi(request, env);
       if (webResponse) return webResponse;
