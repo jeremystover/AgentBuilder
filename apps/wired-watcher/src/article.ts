@@ -1,13 +1,18 @@
 /**
- * Fetch a Medium article URL while replaying the subscriber's cookie, then
+ * Fetch a Wired article URL while replaying the subscriber's cookie, then
  * delegate body extraction to @agentbuilder/extract-article.
  *
  * Cookie source: credential vault scoped by
- *   (agentId='medium-watcher', accountId='default', provider='medium', kind='cookie').
+ *   (agentId='wired-watcher', accountId='default', provider='wired', kind='cookie').
  *
- * Medium serves a different HTML body to logged-in members vs anonymous
- * visitors — without the cookie the request returns the metered-paywall
- * preview. We detect that with a body-length floor (`MIN_BODY_CHARS`).
+ * Condé Nast paywall is server-side cookie-based. The relevant cookies
+ * (`wp_user_token`, `CN_SubID`, etc.) come from a logged-in session at
+ * wired.com and should be pasted into the vault as a single Cookie:-header
+ * value.
+ *
+ * Bot-detection caveat: Wired occasionally returns a JS challenge HTML
+ * instead of the article. The body-length floor catches those alongside
+ * stale-cookie cases and tells the operator the credential needs a refresh.
  */
 
 import { D1CredentialVault } from "@agentbuilder/credential-vault";
@@ -22,11 +27,11 @@ const ARTICLE_HEADERS_BASE: Record<string, string> = {
   "Cache-Control":   "no-cache",
 };
 
-const MIN_BODY_CHARS = 800;
+const MIN_BODY_CHARS = 1200;
 const FETCH_TIMEOUT_MS = 20_000;
 
 export interface ExtractedArticle extends ExtractedBase {
-  /** True when the body was so short we suspect the cookie didn't authenticate. */
+  /** True when the body was so short we suspect cookie / bot-challenge issues. */
   looksPaywalled: boolean;
 }
 
@@ -47,9 +52,9 @@ export async function loadCookie(env: Env): Promise<string | null> {
   const key = await vaultKey(env);
   const vault = new D1CredentialVault({ db: env.VAULT_DB, encryptionKey: key });
   const cred = await vault.get({
-    agentId:   "medium-watcher",
+    agentId:   "wired-watcher",
     accountId: "default",
-    provider:  "medium",
+    provider:  "wired",
     kind:      "cookie",
   });
   return cred?.value ?? null;

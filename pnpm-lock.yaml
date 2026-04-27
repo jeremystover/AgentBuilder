@@ -205,6 +205,9 @@ importers:
       '@agentbuilder/crypto':
         specifier: workspace:*
         version: link:../../packages/crypto
+      '@agentbuilder/extract-article':
+        specifier: workspace:*
+        version: link:../../packages/extract-article
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250410.0
@@ -317,6 +320,28 @@ importers:
         specifier: ^3.90.0
         version: 3.114.17(@cloudflare/workers-types@4.20260413.1)
 
+  apps/wired-watcher:
+    dependencies:
+      '@agentbuilder/credential-vault':
+        specifier: workspace:*
+        version: link:../../packages/credential-vault
+      '@agentbuilder/crypto':
+        specifier: workspace:*
+        version: link:../../packages/crypto
+      '@agentbuilder/extract-article':
+        specifier: workspace:*
+        version: link:../../packages/extract-article
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20250410.0
+        version: 4.20260413.1
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      wrangler:
+        specifier: ^4.83.0
+        version: 4.83.0(@cloudflare/workers-types@4.20260413.1)
+
   packages/auth-github:
     dependencies:
       '@agentbuilder/core':
@@ -369,6 +394,15 @@ importers:
         version: 5.9.3
 
   packages/crypto:
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20250410.0
+        version: 4.20260413.1
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/extract-article:
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250410.0

@@ -1,6 +1,6 @@
 {
   "$schemaVersion": 1,
-  "updatedAt": "2026-04-26T23:00:00.000Z",
+  "updatedAt": "2026-04-27T00:00:00.000Z",
   "agents": [
     {
       "id": "agent-builder",
@@ -428,6 +428,67 @@
           "Posting to Medium",
           "Fetching member-only content for someone else's account",
           "Discovering Medium feeds (you supply the URL)",
+          "Building or modifying other agents (that's Agent Builder)"
+        ]
+      },
+      "version": "0.0.1"
+    },
+    {
+      "id": "wired-watcher",
+      "name": "Wired Watcher",
+      "purpose": "Polls Wired RSS feeds (sections, tags) daily, fetches each new article with the subscriber's cookie so paywalled bodies come through, and forwards extracted content into Research Agent. Background feeder worker — not user-facing.",
+      "owner": "jeremystover",
+      "status": "draft",
+      "kind": "headless",
+      "skills": [
+        "wired-feed-poll",
+        "cookie-replay-fetch",
+        "article-extraction",
+        "watchlist-management",
+        "research-agent-handoff"
+      ],
+      "tools": [
+        "add-watched-feed",
+        "remove-watched-feed",
+        "list-watched-feeds",
+        "manage-credentials",
+        "manual-run"
+      ],
+      "mcpServers": [],
+      "sharedPackages": [
+        "@agentbuilder/credential-vault",
+        "@agentbuilder/crypto",
+        "@agentbuilder/extract-article"
+      ],
+      "oauthScopes": [],
+      "cloudflare": {
+        "workerName": "wired-watcher",
+        "durableObjects": [],
+        "d1": ["wired-watcher-vault"],
+        "kv": ["wired-watcher-state"],
+        "r2": [],
+        "queues": [],
+        "hasAssets": false
+      },
+      "routing": {
+        "triggerPhrases": [
+          "watch wired",
+          "add wired feed",
+          "stop watching wired",
+          "poll wired now",
+          "update my wired cookie"
+        ],
+        "examples": [
+          "Watch https://www.wired.com/feed/category/business/rss",
+          "List the Wired feeds I'm watching",
+          "Stop watching category-business",
+          "Refresh my Wired cookie"
+        ],
+        "nonGoals": [
+          "Searching or synthesizing content (that's Research Agent)",
+          "Bypassing other Condé Nast paywalls (use a separate watcher per property)",
+          "Fetching paywalled content for someone else's account",
+          "Discovering Wired feeds (you supply the URL)",
           "Building or modifying other agents (that's Agent Builder)"
         ]
       },
