@@ -118,8 +118,15 @@ function Turn({ turn }: { turn: RenderTurn }) {
                       ? "bg-accent-danger/10 text-accent-danger"
                       : "bg-accent-success/10 text-accent-success")
                 }
+                title={p.summary ?? p.name}
               >
-                {p.name}
+                <span className="font-mono">{p.name}</span>
+                {p.summary && (
+                  <>
+                    <span className="opacity-50">·</span>
+                    <span className="opacity-90">{p.summary}</span>
+                  </>
+                )}
               </span>
             ))}
           </div>
