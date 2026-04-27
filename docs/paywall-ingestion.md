@@ -1,4 +1,4 @@
-# Paywall ingestion plan
+# Paywall ingestion
 
 How Research Agent pulls in content from sites where you have a paid
 subscription: Wired, Charter, Medium. None of these expose a clean OAuth
@@ -7,21 +7,21 @@ replaying it on fetch.
 
 ## TL;DR per source
 
-| Source  | Discovery | Auth method | Path |
+| Source | Discovery | Auth | Path |
 |---|---|---|---|
-| **Charter**  | Newsletter email arrives in your inbox | None for the email path; cookies for archive replay | **Email ingestion** (built) → `email/handler.ts` newsletter mode. Optional cookie replay against `charterworks.com` for back-issues. |
-| **Medium**   | Member RSS at `https://medium.com/feed/@<handle>` lists URLs | `sid` cookie from a logged-in session | New `medium-watcher` worker. Fetch RSS → for each URL, refetch with cookie to get the full member-only body. |
-| **Wired**    | Section RSS or sitemap | Condé Nast session cookie | New `wired-watcher` worker. Same shape as `medium-watcher`. |
+| **Charter** | Newsletter email arrives in your inbox | None for the email path | Email-mode ingestion in `research-agent/email/handler.ts` (newsletter senders configured via `NEWSLETTER_SENDERS`). |
+| **Medium**  | Member / publication / tag RSS | `sid` cookie from a logged-in session | `apps/medium-watcher` — daily cron polls each feed, refetches each new URL with the cookie, extracts the article, forwards to research-agent. |
+| **Wired**   | Section / tag RSS | Condé Nast session cookie (`wp_user_token`, `CN_SubID`, …) | `apps/wired-watcher` — same shape as medium-watcher, with a higher paywall heuristic to absorb Wired's longer truncated previews + bot-challenge HTML. |
 
-All three end up at `research-agent/ingest` with pre-fetched content, the
+All three end at `research-agent/ingest` with pre-fetched content, the
 same way `linkedin-watcher` already operates.
 
-## Building blocks (shipped in this branch)
+## Shared building blocks
 
 ### `@agentbuilder/crypto`
 Generic AES-256-GCM helpers (`encrypt`, `decrypt`, `importKey`,
-`generateKey`, `exportKey`) extracted from `@agentbuilder/auth-google` so
-multiple packages can share them without one depending on the other.
+`generateKey`, `exportKey`). `auth-google` re-exports the same primitives
+as `encryptToken`/`decryptToken` for backward compatibility.
 
 ### `@agentbuilder/credential-vault`
 Encrypted, agent-scoped storage for opaque credentials — cookies, session
@@ -30,175 +30,195 @@ JWTs, API keys, basic-auth blobs.
 ```ts
 import { D1CredentialVault } from '@agentbuilder/credential-vault';
 
-const vault = new D1CredentialVault({ db: env.CREDS_DB, encryptionKey: kek });
+const vault = new D1CredentialVault({ db: env.VAULT_DB, encryptionKey: kek });
 
 await vault.put({
   agentId:   'wired-watcher',
-  accountId: 'jeremy@example.com',
+  accountId: 'default',
   provider:  'wired',
   kind:      'cookie',
   value:     'wp_user_token=...; CN_SubID=...',
-  metadata:  { domain: '.wired.com', uaHint: 'Mozilla/5.0 ...' },
+  metadata:  { domain: '.wired.com' },
   expiresAt: Date.now() + 30 * 24 * 3600 * 1000,
   createdAt: Date.now(),
   updatedAt: Date.now(),
 });
-
-const cred = await vault.get({
-  agentId: 'wired-watcher', accountId: 'jeremy@example.com',
-  provider: 'wired',         kind: 'cookie',
-});
 ```
 
-Schema in `packages/credential-vault/src/schema.ts`. The composite primary
-key `(agent_id, account_id, provider, kind)` plus the vault class's
-agent-scoped reads make a cross-agent leak require bypassing the class
-entirely — visible in code review.
+Schema in `packages/credential-vault/src/schema.ts`. Reads are scoped by
+`agentId`; the composite primary key `(agent_id, account_id, provider,
+kind)` plus the vault class's agent gate make a cross-agent leak require
+bypassing the class entirely (visible in code review).
 
-### Research Agent newsletter ingestion
-`apps/research-agent/src/email/handler.ts` now routes inbound emails two
-ways:
+The package also exports `mountCredentialsApi` — a drop-in REST surface
+(`GET / PUT / DELETE /:account/:provider/:kind`, plus `GET /` to list)
+that any worker can mount on its vault. Both medium-watcher and
+wired-watcher mount it under `/credentials`.
+
+### `@agentbuilder/extract-article`
+Pure HTML → `ExtractedArticle` (title / author / publishedAt / fullText /
+canonicalUrl) using HTMLRewriter, JSON-LD, og: meta, and a `<article>`
+body walk. Used by both watchers after they've replayed the cookie.
+
+### `tools/credentials.ts` (`pnpm cred`)
+Thin client over `mountCredentialsApi`. Per-agent endpoints + bearer
+tokens live in `~/.agentbuilder/credentials.json`:
+
+```json
+{
+  "medium-watcher": { "url": "https://medium-watcher.you.workers.dev", "apiKey": "..." },
+  "wired-watcher":  { "url": "https://wired-watcher.you.workers.dev",  "apiKey": "..." }
+}
+```
+
+Commands:
+
+```
+pnpm cred genkey                                                    # 32-byte AES-256-GCM KEK
+pnpm cred list   <agent> [--provider X] [--account Y]
+pnpm cred get    <agent> <account> <provider> <kind>
+pnpm cred put    <agent> <account> <provider> <kind>                # value via stdin
+pnpm cred delete <agent> <account> <provider> <kind>
+```
+
+Values are read from stdin so cookies don't land in shell history.
+
+## Per-source
+
+### Charter — email mode
+
+Charter sends the full newsletter to subscribers. You're paying for the
+email, not the website, so forwarding into research-agent is robust,
+ToS-clean, and survives any future redesign.
+
+**How it works.** `research-agent/src/email/handler.ts` routes inbound
+emails two ways:
 
 1. **Newsletter mode** — when `message.from` matches a key in
-   `env.NEWSLETTER_SENDERS`, the email body is ingested as the article
-   (using the existing pre-fetched-content path of `ingestUrl`). No URL
-   fetch, so paywalled URLs don't return teasers.
+   `env.NEWSLETTER_SENDERS`, a minimal MIME parser pulls the
+   `text/plain` (or stripped `text/html`) body and ingests it as the
+   article. No URL fetch, so paywalled "View in browser" links don't
+   matter. The "View in browser" link, when present, becomes the
+   canonical URL for dedup.
 2. **URL-extraction mode** (default, unchanged) — for forwarded emails
    that aren't newsletters, harvest URLs and ingest each.
 
-Configure with a Wrangler secret:
+**Setup.**
 
 ```bash
 wrangler secret put NEWSLETTER_SENDERS --name research-agent
-# Value (paste this JSON):
+# JSON value:
 # {
 #   "newsletter@charterworks.com": { "provider": "charter" },
 #   "hello@stratechery.com":       { "provider": "stratechery" }
 # }
 ```
 
-Then point your subscription to the email-routing address you've already
-wired up to research-agent (or set up a Cloudflare Email Worker route to
-forward there). For newsletters that don't deliver to the inbound address
-directly, set up a forwarding rule in Gmail/Fastmail.
+Then forward Charter emails to research-agent's inbound address
+(Cloudflare Email Worker route, or a Gmail/Fastmail filter). Verify the
+exact From: from a recent issue before configuring.
 
-## Per-source designs
+**Cookie-replay alternative (later, if you want archives).** Charter is
+Ghost-hosted; logged-in subscribers can hit `https://charterworks.com/<post-slug>/`
+directly with a `ghost-members-ssr` cookie. To bulk-ingest back issues,
+clone `medium-watcher` → `charter-watcher`, point it at
+`https://charterworks.com/sitemap.xml` for URL discovery, and use
+`provider='charter'` in the vault.
 
-### Charter — built today via email; cookie path optional later
+### Medium — `apps/medium-watcher`
 
-**Why email first.** Charter sends the full newsletter to subscribers.
-You're paying for the email, not the website. Forwarding it to
-research-agent is robust, ToS-clean, and survives any future redesign.
+**Pipeline.** Daily cron at 14:00 UTC:
+1. Load the cookie from the vault (one read per run).
+2. For each watched feed (`https://medium.com/feed/@<handle>` etc.),
+   fetch the RSS unauthenticated.
+3. Diff against `seen:{slug}` KV.
+4. For each new item, GET the article URL with `Cookie: <vault value>`
+   and a Safari UA, run `extractArticle(html)`, and POST `{ url, content,
+   title, author, published_at, source_id }` to `research-agent/ingest`
+   with `INTERNAL_SECRET`.
+5. Body < 800 chars → `looksPaywalled = true`. Mark seen so we don't
+   loop; operator refreshes the cookie and re-runs to pick up missed
+   items.
 
-**Setup checklist:**
-1. Add `"newsletter@charterworks.com"` to `NEWSLETTER_SENDERS` (verify the
-   exact From: address from a recent issue).
-2. In your inbox, set up a filter that auto-forwards Charter emails to
-   research-agent's inbound address.
-3. Done. The body becomes the article body; subject becomes the title;
-   the "View in browser" link in the body becomes the canonical URL.
+**Cookie acquisition.** DevTools → Application → Cookies on
+`medium.com` → copy `sid` (and `uid`) as `name1=value1; name2=value2`.
+Then `pnpm cred put medium-watcher default medium cookie` and paste via
+stdin. `sid` rotates roughly every 30 days; set `--expires-at` so future
+tooling can warn before expiry.
 
-**Cookie-replay alternative (later, if you want archives):** Charter is a
-Ghost-hosted site. Logged-in subscribers can hit
-`https://charterworks.com/<post-slug>/` directly; their auth is a
-`ghost-members-ssr` cookie. If you want to bulk-ingest the back catalog,
-add a `charter-watcher` worker that:
-- Fetches `https://charterworks.com/sitemap.xml` for the URL list
-- Fetches each URL with the cookie from the credential vault
-- Forwards extracted content to research-agent
+### Wired — `apps/wired-watcher`
 
-### Medium — cookie replay against member RSS
+Same shape as medium-watcher with three differences:
+- Watchlist holds Wired RSS URLs (`https://www.wired.com/feed/rss`,
+  `…/feed/category/business/rss`, `…/feed/tag/<tag>/rss`).
+- Cron offset to `30 14 * * *` so it doesn't run concurrently with
+  medium-watcher.
+- Paywall heuristic at 1200 chars (vs 800) to catch Wired's longer
+  truncated previews and the ~600-char Cloudflare/Akamai bot-challenge
+  HTML the site occasionally serves.
 
-Medium gives logged-in members a personal RSS feed at
-`https://medium.com/feed/@<handle>` and a feed for their following list.
-The RSS items are short — full member-only bodies require the `sid`
-cookie from a logged-in session.
+**Cookie acquisition.** DevTools → Application → Cookies on
+`wired.com` → copy the relevant Condé cookies (`wp_user_token`,
+`CN_SubID`, plus any others) as a single header value. Then `pnpm cred
+put wired-watcher default wired cookie`.
 
-**Worker layout (`apps/medium-watcher`):**
-- KV `MEDIUM_STATE` — watchlist (followed handles, list URLs) + dedup
-  keyed by Medium's stable post id
-- Cron daily (e.g. `0 13 * * *`)
-- For each watched feed:
-  1. Fetch the member RSS (no auth needed for the feed itself)
-  2. For each `<item>`, fetch the article URL with the `sid` cookie from
-     `credential-vault` (`agentId='medium-watcher'`, `provider='medium'`,
-     `kind='cookie'`)
-  3. Run the existing `extractContent` pipeline (HTMLRewriter is fine on
-     Medium's markup) to get clean body text
-  4. POST to `research-agent/ingest` with pre-fetched `content` and the
-     `INTERNAL_SECRET` bearer
-
-**Cookie acquisition:**
-1. Log into medium.com in your browser.
-2. DevTools → Application → Cookies → copy `sid` (and `uid`) values.
-3. Save with a one-shot CLI: `pnpm tools cred put medium <account> --kind cookie`
-   (we'll add this; reuses the vault).
-
-`sid` rotates roughly every 30 days. The vault stores `expiresAt` so the
-worker can warn before the cookie dies. There is no automated refresh —
-you re-paste when it expires.
-
-### Wired — same shape as Medium
-
-Condé Nast paywall is server-side cookie-based. Section RSS feeds (e.g.
-`https://www.wired.com/feed/category/business/rss`,
-`https://www.wired.com/feed/tag/<tag>/rss`) are public and contain full
-URLs but truncated bodies for paywalled pieces.
-
-**Worker layout (`apps/wired-watcher`):** identical to `medium-watcher`.
-The watchlist is RSS feed URLs instead of handles. The cookie blob comes
-from the same vault under `provider='wired'`.
-
-**Caveat:** Condé occasionally rotates session IDs and adds bot-detection
-challenges. If a fetch returns a challenge HTML instead of the article,
-the worker should mark the credential as needing refresh (set
-`metadata.needsRefresh=true` in the vault) and skip rather than poison
-the knowledge base with junk.
+**Bot-challenge caveat.** When `paywalled` counts climb in cron logs and
+your cookie is fresh, Wired probably served a JS challenge. The
+heuristic catches it the same way as a stale cookie — re-paste the
+cookie after a clean browser fetch and re-run.
 
 ## Cookie acquisition UX
 
-Three options, in order of effort:
+Three options, in order of effort. Today's tooling implements (1).
 
-1. **Manual paste (v1).** Add a `tools/credentials.ts` CLI:
-   ```
-   pnpm tools cred put wired jeremy@example.com --kind cookie
-   # prompts for the cookie string, stores encrypted
-   ```
-   Cheapest path to working.
-
-2. **Browser extension (v2).** A tiny extension with permissions for
+1. **Manual paste (shipped).** `pnpm cred put …` reads from stdin and
+   posts to the watcher's `/credentials` endpoint. Cheapest path to
+   working.
+2. **Browser extension (future).** A tiny extension with permissions for
    `wired.com`, `medium.com`, `charterworks.com` that reads the relevant
-   cookies and POSTs to a `research-agent` endpoint. The endpoint
-   forwards into the vault. Reduces error rate on copy-paste.
-
-3. **Headless login (v3).** Run a Browserless or Cloudflare Browser
-   Rendering session that logs in with stored username/password and
-   harvests the cookie. Brittle for sites with MFA / captcha; defer
-   until 1 and 2 prove insufficient.
+   cookies and POSTs into the same `/credentials` endpoint. Reduces
+   copy-paste error rate.
+3. **Headless login (further future).** Cloudflare Browser Rendering
+   session that logs in with stored credentials and harvests the cookie.
+   Brittle against MFA / captcha — defer until (1) and (2) prove
+   insufficient.
 
 ## Risk and ToS
 
-- **Personal scope only.** All three paths replay your own paid session,
-  with the content stored in your private knowledge base. Don't share
-  research-agent output externally without re-checking each source's
-  republication terms.
+- **Personal scope only.** All three paths replay your own paid session
+  into your own private knowledge base. Don't share Research Agent
+  output externally without re-checking each source's republication
+  terms.
 - **Wired / Condé Nast** ToS prohibits automated scraping. Personal
-  archival is grey but enforceable; keep the watchlist small and the
-  poll cadence daily, not minutely.
+  archival is grey but enforceable. Keep the watchlist small and the
+  poll cadence daily.
 - **Medium** ToS allows reading via your account; automated fetching of
-  member-only content from a logged-in account is in the same grey area.
+  member-only content from a logged-in account sits in the same grey
+  area.
 - **Charter** is the cleanest of the three because the email path uses
   content they actively delivered to you.
-- **No fanout.** Don't repost extracted content to public surfaces. The
-  research agent's `/lab` UI is single-user gated by `WEB_UI_PASSWORD`.
+- **No fanout.** Don't repost extracted content to public surfaces.
+  Research Agent's `/lab` UI is single-user gated by `WEB_UI_PASSWORD`.
 
-## Build order recommendation
+## Verification checklist
 
-1. **Done in this branch:** crypto split, credential vault, newsletter
-   email ingestion. Wire up the Charter email forward and verify a real
-   issue lands as an article in research-agent.
-2. **Next:** small `tools/credentials.ts` CLI to put/get/delete vault
-   entries from the dev machine.
-3. **Then:** `medium-watcher` worker (cleanest cookie-replay target;
-   member RSS gives a clean URL list).
-4. **Finally:** `wired-watcher`, after Medium proves the pattern.
+For each watcher, after running the SKILL.md setup commands:
+
+1. `curl /health` returns `{ ok: true, watching: 0 }`.
+2. `pnpm cred put <agent> default <provider> cookie` round-trips through
+   `pnpm cred get` (returns the same value).
+3. `POST /watch` adds a feed; `GET /watch` lists it.
+4. `POST /run` returns a result with `processed > 0` and
+   `cookieMissing: false`. Tail wrangler logs:
+   ```
+   wrangler tail medium-watcher --format=pretty
+   wrangler tail wired-watcher  --format=pretty
+   ```
+5. Search Research Agent for one of the article titles — it should come
+   back as an indexed article with the right author + publish date.
+6. If `paywalled > 0`, check the URL manually in your browser to confirm
+   you actually have access; if you do, refresh the cookie and re-run.
+
+For Charter, the equivalent is: forward a single newsletter to
+research-agent's inbound address, then search Research Agent for a
+phrase from that issue.
