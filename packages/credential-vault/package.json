@@ -1,5 +1,5 @@
 {
-  "name": "@agentbuilder/auth-google",
+  "name": "@agentbuilder/credential-vault",
   "version": "0.0.1",
   "private": true,
   "type": "module",

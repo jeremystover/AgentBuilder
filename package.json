@@ -15,7 +15,8 @@
     "lint": "biome lint .",
     "format": "biome format --write .",
     "check": "biome check --write .",
-    "create-agent": "tsx tools/create-agent.ts"
+    "create-agent": "tsx tools/create-agent.ts",
+    "cred": "tsx tools/credentials.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",

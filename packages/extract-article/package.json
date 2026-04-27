@@ -1,5 +1,5 @@
 {
-  "name": "@agentbuilder/auth-google",
+  "name": "@agentbuilder/extract-article",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -10,10 +10,6 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "@agentbuilder/core": "workspace:*",
-    "@agentbuilder/crypto": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250410.0",
