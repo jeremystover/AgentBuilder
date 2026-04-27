@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Send, Square, Trash2, Wallet } from "lucide-react";
+import { Send, Square, Trash2, Wallet, BookmarkPlus } from "lucide-react";
 import type { RenderTurn } from "../hooks/useChat";
+import { SaveAsNoteModal, deriveTitleFromReply } from "./SaveAsNoteModal";
 
 interface Props {
   turns: RenderTurn[];
@@ -13,6 +14,10 @@ interface Props {
 export function ChatPanel({ turns, loading, onSend, onCancel, onClear }: Props) {
   const [draft, setDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // "Save as note/task" modal state. The button on each assistant turn
+  // sets this; the modal closes itself on save or cancel.
+  const [savingFor, setSavingFor] = useState<{ id: string; content: string } | null>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
@@ -34,7 +39,7 @@ export function ChatPanel({ turns, loading, onSend, onCancel, onClear }: Props) 
         ) : (
           <div className="max-w-3xl mx-auto flex flex-col gap-5">
             {turns.map((t) => (
-              <Turn key={t.id} turn={t} />
+              <Turn key={t.id} turn={t} onSave={(content) => setSavingFor({ id: t.id, content })} />
             ))}
           </div>
         )}
@@ -87,11 +92,20 @@ export function ChatPanel({ turns, loading, onSend, onCancel, onClear }: Props) 
           )}
         </div>
       </form>
+
+      {savingFor && (
+        <SaveAsNoteModal
+          initialTitle={deriveTitleFromReply(savingFor.content)}
+          initialBody={savingFor.content}
+          sourceMessageId={savingFor.id}
+          onClose={() => setSavingFor(null)}
+        />
+      )}
     </div>
   );
 }
 
-function Turn({ turn }: { turn: RenderTurn }) {
+function Turn({ turn, onSave }: { turn: RenderTurn; onSave?(content: string): void }) {
   if (turn.role === "user") {
     return (
       <div className="flex justify-end">
@@ -101,10 +115,22 @@ function Turn({ turn }: { turn: RenderTurn }) {
       </div>
     );
   }
+  // Save-as-note button only shows once the assistant has a real reply
+  // and isn't actively streaming (avoids capturing partial text).
+  const canSave = !turn.streaming && turn.content.trim().length > 0;
   return (
-    <div className="flex justify-start">
-      <div className="max-w-[80%] rounded-2xl bg-bg-surface border border-border px-4 py-3 text-sm text-text-primary whitespace-pre-wrap">
+    <div className="flex justify-start group">
+      <div className="max-w-[80%] rounded-2xl bg-bg-surface border border-border px-4 py-3 text-sm text-text-primary whitespace-pre-wrap relative">
         {turn.content || (turn.streaming ? <span className="text-text-subtle italic">Thinking…</span> : null)}
+        {canSave && onSave && (
+          <button
+            onClick={() => onSave(turn.content)}
+            className="absolute -top-2 right-2 rounded-full border border-border bg-bg-surface px-2 py-0.5 text-[11px] text-text-muted opacity-0 group-hover:opacity-100 hover:text-accent-primary hover:border-accent-primary transition"
+            title="Save as note or task"
+          >
+            <BookmarkPlus className="w-3 h-3 inline -mt-0.5 mr-0.5" /> Save
+          </button>
+        )}
         {turn.pills.length > 0 && (
           <div className="mt-2 flex flex-wrap gap-1.5">
             {turn.pills.map((p) => (

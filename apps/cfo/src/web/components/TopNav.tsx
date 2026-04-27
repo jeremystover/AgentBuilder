@@ -1,4 +1,4 @@
-import { Wallet, MessageSquare, Inbox, Building2, Receipt, FileText, Upload, Filter, PiggyBank } from "lucide-react";
+import { Wallet, MessageSquare, Inbox, Building2, Receipt, FileText, Upload, Filter, PiggyBank, StickyNote } from "lucide-react";
 import { useRoute, type RouteId } from "../router";
 
 interface Tab {
@@ -10,6 +10,7 @@ interface Tab {
 const TABS: Tab[] = [
   { id: "chat",         label: "Chat",         icon: MessageSquare },
   { id: "review",       label: "Review",       icon: Inbox },
+  { id: "notes",        label: "Notes",        icon: StickyNote },
   { id: "accounts",     label: "Accounts",     icon: Building2 },
   { id: "transactions", label: "Transactions", icon: Receipt },
   { id: "reports",      label: "Reports",      icon: FileText },
