@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { sendChatStream } from "../api";
+import { summarizeToolResult } from "../lib/tool-summarize";
 import type { ChatMessage, ChatStreamEvent } from "../types";
 
 export type ToolPillStatus = "running" | "ok" | "error";
@@ -8,6 +9,8 @@ export interface ToolPill {
   id: string;
   name: string;
   status: ToolPillStatus;
+  /** One-line summary of the tool result, populated when tool_result arrives. */
+  summary?: string;
 }
 
 export type RenderTurn =
@@ -71,7 +74,13 @@ export function useChat(): UseChatResult {
             case "tool_result":
               updateAssistant((t) => {
                 const pill = t.pills.find((p) => p.id === event.toolUseId);
-                if (pill) pill.status = event.isError ? "error" : "ok";
+                if (!pill) return;
+                pill.status = event.isError ? "error" : "ok";
+                // Surface a one-line summary inline so the user sees a
+                // tool result the moment it lands, not after the model's
+                // reply finishes streaming.
+                const summary = summarizeToolResult(pill.name, event.content);
+                if (summary) pill.summary = summary;
               });
               break;
             case "history":
