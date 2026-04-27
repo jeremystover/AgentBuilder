@@ -127,4 +127,46 @@ export const GOLDEN_CASES: GoldenCase[] = [
       not_called: ["resolve_review"],
     },
   },
+
+  // ── Multi-tool chains (AI-2) ────────────────────────────────────────────
+  {
+    id: "chain_monthly_debrief",
+    why: "A monthly debrief asks for P&L + budget + queue in one breath; the model should chain all three before replying.",
+    user: "Give me a quick monthly debrief — how are we doing and what's off-track?",
+    expects: {
+      called: ["pnl_all_entities", "budget_status"],
+      called_any_of: ["list_review_queue"],
+      not_called: ["resolve_review", "classify_transactions"],
+      max_iterations: 6,
+    },
+  },
+  {
+    id: "chain_pnl_plus_anomalies",
+    why: "P&L + 'what should I worry about' should pull both pnl_all_entities AND list_review_queue, then synthesize.",
+    user: "How are we doing this month, and what should I worry about?",
+    expects: {
+      called: ["pnl_all_entities"],
+      called_any_of: ["list_review_queue", "budget_status"],
+      max_iterations: 5,
+    },
+  },
+  {
+    id: "chain_tax_prep_status",
+    why: "Tax-prep status pulls schedule_c_report + the review queue.",
+    user: "Where are we on tax prep — what's done and what's left?",
+    expects: {
+      called: ["schedule_c_report"],
+      called_any_of: ["list_review_queue"],
+      max_iterations: 6,
+    },
+  },
+  {
+    id: "no_extra_tools_when_one_answers",
+    why: "Don't call extra tools when one already gives the answer — single-question = single-tool.",
+    user: "How much did we spend on travel in March?",
+    expects: {
+      called_any_of: ["budget_status", "transactions_summary"],
+      max_iterations: 3,  // a chain here would waste latency
+    },
+  },
 ];
