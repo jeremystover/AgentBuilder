@@ -29,6 +29,7 @@ export function createCalendar(ufetch) {
     orderBy = "startTime",
     pageToken,
     q,
+    showDeleted = false,
   } = {}) {
     const params = new URLSearchParams({
       maxResults: String(maxResults),
@@ -39,6 +40,7 @@ export function createCalendar(ufetch) {
     if (timeMax) params.set("timeMax", timeMax);
     if (pageToken) params.set("pageToken", pageToken);
     if (q) params.set("q", q);
+    if (showDeleted) params.set("showDeleted", "true");
 
     const res = await ufetch(
       `${CAL_BASE}/calendars/${encodeURIComponent(calendarId)}/events?${params}`
@@ -135,8 +137,11 @@ export function createCalendar(ufetch) {
       recurrence: evt.recurrence || [],
       rawJson: JSON.stringify({
         id: evt.id,
+        status: evt.status || "",
+        iCalUID: evt.iCalUID || "",
         conferenceData: evt.conferenceData,
         extendedProperties: evt.extendedProperties,
+        htmlLink: evt.htmlLink || "",
       }),
     };
   }

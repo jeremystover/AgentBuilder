@@ -135,16 +135,33 @@ function meetingLinks(r) {
 
 function projectMeeting(r) {
   const links = meetingLinks(r);
+  let raw = {};
+  try { raw = r.rawJson ? JSON.parse(r.rawJson) : {}; } catch { raw = {}; }
+  const status = String(raw?.status || "").toLowerCase();
+  const iCalUID = String(raw?.iCalUID || "");
+  const attendees = safeParseJsonArray(r.attendeesJson);
+  const selfAttendee = attendees.find((a) => a && a.self);
+  const selfStatus = String(selfAttendee?.status || "").toLowerCase();
+  const declinedAttendees = attendees
+    .filter((a) => a && !a.self && String(a.status || "").toLowerCase() === "declined")
+    .map((a) => a.name || a.email)
+    .filter(Boolean);
   return {
     meetingId: r.meetingId,
     eventId: r.eventId,
+    iCalUID,
     title: r.title,
     startTime: r.startTime,
     endTime: r.endTime,
     description: r.description,
     location: r.location,
     organizer: r.organizer,
-    attendees: safeParseJsonArray(r.attendeesJson),
+    attendees,
+    sourceType: r.sourceType || "",
+    status,
+    selfStatus,
+    declinedAttendees,
+    anyDeclined: declinedAttendees.length > 0,
     htmlLink: links.htmlLink,
     zoomUrl: links.zoomUrl,
     meetUrl: links.meetUrl,
@@ -152,17 +169,59 @@ function projectMeeting(r) {
   };
 }
 
+// Score a projected meeting so dedupe can keep the richest source row.
+// Personal-calendar rows usually have htmlLink + zoom + full attendees;
+// work-cal rows are often free/busy-only and lighter.
+function meetingRichnessScore(m) {
+  return (m.attendees?.length || 0)
+    + (m.htmlLink ? 5 : 0)
+    + (m.zoomUrl || m.meetUrl ? 3 : 0)
+    + (m.description ? 1 : 0)
+    + (m.sourceType === "calendar" ? 2 : 0);
+}
+
+// Filter out cancelled meetings and meetings the user declined, then dedupe
+// the same logical event arriving from multiple calendar sources (personal +
+// work) where the eventIds differ but iCalUID / start+end+title match.
+function dedupAndFilterMeetings(meetings) {
+  const live = meetings.filter((m) => m.status !== "cancelled" && m.selfStatus !== "declined");
+  const byKey = new Map();
+  for (const m of live) {
+    const key = m.iCalUID
+      || `${m.startTime}|${m.endTime}|${String(m.title || "").trim().toLowerCase()}`;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, m);
+      continue;
+    }
+    if (meetingRichnessScore(m) > meetingRichnessScore(existing)) {
+      // Carry forward any decline signal from the dropped row so a work-cal
+      // row that knows about a decline isn't lost when the personal row wins.
+      const merged = {
+        ...m,
+        anyDeclined: m.anyDeclined || existing.anyDeclined,
+        declinedAttendees: [...new Set([...(m.declinedAttendees || []), ...(existing.declinedAttendees || [])])],
+      };
+      byKey.set(key, merged);
+    } else {
+      existing.anyDeclined = existing.anyDeclined || m.anyDeclined;
+      existing.declinedAttendees = [...new Set([...(existing.declinedAttendees || []), ...(m.declinedAttendees || [])])];
+    }
+  }
+  return [...byKey.values()].sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime));
+}
+
 async function listMeetings(sheets, fromIso, toIso) {
   const rows = await readAll(sheets, "Meetings");
-  return rows
+  const projected = rows
     .filter((r) => {
       if (!r.startTime) return false;
       const t = Date.parse(r.startTime);
       if (!Number.isFinite(t)) return false;
       return t >= Date.parse(fromIso) && t <= Date.parse(toIso);
     })
-    .map(projectMeeting)
-    .sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime));
+    .map(projectMeeting);
+  return dedupAndFilterMeetings(projected);
 }
 
 // ── Prep notes for a meeting attendee ───────────────────────────────────────
@@ -377,7 +436,7 @@ export async function handleApiRequest(request, ctx) {
         .filter(Boolean));
       const nowMs = Date.now();
       const projectId = m[1];
-      const projectMeetings = allMeetings
+      const projectMeetings = dedupAndFilterMeetings(allMeetings
         .filter((m2) => {
           if (!m2.startTime) return false;
           // Explicit links — set by POST /api/meetings/:id/link-project.
@@ -389,7 +448,7 @@ export async function handleApiRequest(request, ctx) {
           for (const e of stakeholderEmails) if (attendeesText.includes(e)) return true;
           return false;
         })
-        .map(projectMeeting);
+        .map(projectMeeting));
       const upcomingMeetings = projectMeetings
         .filter((m2) => Date.parse(m2.startTime) >= nowMs)
         .sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime))
@@ -465,16 +524,14 @@ export async function handleApiRequest(request, ctx) {
       if (email) {
         const allMeetings = await readAll(sheets, "Meetings");
         const nowMs = Date.now();
-        const matching = allMeetings
-          .filter((mm) => mm.startTime && String(mm.attendeesJson || "").toLowerCase().includes(email));
+        const matching = dedupAndFilterMeetings(allMeetings
+          .filter((mm) => mm.startTime && String(mm.attendeesJson || "").toLowerCase().includes(email))
+          .map(projectMeeting));
         upcomingMeetings = matching
           .filter((mm) => Date.parse(mm.startTime) >= nowMs)
-          .map(projectMeeting)
-          .sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime))
           .slice(0, 10);
         recentMeetings = matching
           .filter((mm) => Date.parse(mm.startTime) < nowMs)
-          .map(projectMeeting)
           .sort((a, b) => Date.parse(b.startTime) - Date.parse(a.startTime))
           .slice(0, 10);
       }
