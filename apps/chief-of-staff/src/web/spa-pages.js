@@ -14,7 +14,7 @@ export const SPA_PAGES_JS = `
 
 // ── Task row (used on Today, This Week, Projects, People) ──────────────────
 function taskRow(task, opts = {}) {
-  const { showProject = true, projectsById = {}, onChanged } = opts;
+  const { showProject = true, projectsById = {}, onChanged, showTodayToggle = true } = opts;
   const pri = (task.priority || "").toLowerCase();
   const priColor = pri === "high" ? "bg-rose-100 text-rose-700"
                  : pri === "medium" ? "bg-amber-100 text-amber-800"
@@ -24,6 +24,7 @@ function taskRow(task, opts = {}) {
   const overdue = isOverdue(task.dueAt);
   const projName = task.projectId && projectsById[task.projectId]
     ? projectsById[task.projectId].name : "";
+  const isToday = !!task.today;
 
   const checkbox = el("button", {
     class: "shrink-0 w-5 h-5 rounded-full border-2 border-slate-300 hover:border-emerald-500 transition flex items-center justify-center",
@@ -37,6 +38,28 @@ function taskRow(task, opts = {}) {
       } catch (err) { toast(err.message, "err"); }
     },
   });
+
+  // Today toggle — pin a task to "do this today". Persists for the
+  // calendar day and surfaces it at the top of /today and in Quick Wins.
+  const todayBtn = showTodayToggle ? el("button", {
+    class: \`shrink-0 w-6 h-6 rounded-full text-sm leading-none transition flex items-center justify-center \${isToday
+      ? "bg-amber-100 text-amber-600 ring-1 ring-amber-300 hover:bg-amber-200"
+      : "text-slate-300 hover:text-amber-500 hover:bg-amber-50"}\`,
+    title: isToday ? "Today task — click to remove" : "Mark as today task",
+    onclick: async (e) => {
+      e.stopPropagation();
+      try {
+        if (isToday) {
+          await api(\`/api/today-tasks/\${encodeURIComponent(task.taskKey)}\`, { method: "DELETE", body: {} });
+          toast("Removed from today", "ok");
+        } else {
+          await api("/api/today-tasks", { method: "POST", body: { taskKey: task.taskKey } });
+          toast("Marked for today", "ok");
+        }
+        onChanged?.();
+      } catch (err) { toast(err.message, "err"); }
+    },
+  }, "★") : null;
 
   // Inline priority dropdown — click to change without opening the editor.
   const priSel = el("select", {
@@ -59,11 +82,15 @@ function taskRow(task, opts = {}) {
     priSel.appendChild(o);
   }
 
+  const rowClass = isToday
+    ? "group flex items-center gap-3 py-2.5 px-3 -mx-3 rounded-lg bg-amber-50/60 hover:bg-amber-50 cursor-pointer"
+    : "group flex items-center gap-3 py-2.5 px-3 -mx-3 rounded-lg hover:bg-slate-50 cursor-pointer";
   const row = el("div", {
-    class: "group flex items-center gap-3 py-2.5 px-3 -mx-3 rounded-lg hover:bg-slate-50 cursor-pointer",
+    class: rowClass,
     onclick: () => openTaskEditor(task, { onChanged }),
   },
     checkbox,
+    todayBtn,
     el("div", { class: "flex-1 min-w-0" },
       el("div", { class: "text-sm text-ink truncate" }, task.title),
       el("div", { class: "flex items-center gap-2 mt-0.5" },
@@ -183,6 +210,12 @@ function briefEditor({ kind, periodKey, brief, range }) {
             method: "PUT", body: { goalsMd: ta.value },
           });
         }
+        // Day plan may have pinned today tasks — re-route so the Today
+        // section reflects the new picks.
+        if (kind === "day" && data?.todayTaskKeys?.length) {
+          toast(\`Marked \${data.todayTaskKeys.length} task(s) for today\`, "ok");
+          window.__cos.route();
+        }
       } catch (err) { toast(err.message, "err"); }
       finally {
         genBtn.disabled = false; genBtn.textContent = "✨ Generate";
@@ -247,6 +280,9 @@ function openPlanReviewModal({ kind, action, periodKey, brief, onDone }) {
         });
         out.textContent = data.output || "(no output)";
         out.classList.remove("hidden");
+        if (action === "day-plan" && data?.todayTaskKeys?.length) {
+          toast(\`Marked \${data.todayTaskKeys.length} task(s) for today\`, "ok");
+        }
         onDone?.();
       } catch (err) {
         out.textContent = "Error: " + err.message;
@@ -741,12 +777,35 @@ async function pageToday(main) {
   ]));
   root.appendChild(planReviewButtons({ kind: "day", periodKey: data.date, brief: data.brief, onDone: () => window.__cos.route() }));
 
-  if (data.tasks?.length) {
+  // Split tasks into Today picks vs. just-due-today so the user's
+  // explicit picks are visually separated from the "stuff due today"
+  // list. Both sections still use taskRow (so the Today toggle works
+  // in both directions).
+  const todayPicks = (data.tasks || []).filter((t) => t.today);
+  const dueToday = (data.tasks || []).filter((t) => !t.today);
+
+  if (todayPicks.length) {
     const sec = el("section", { class: "space-y-1" });
-    sec.appendChild(el("h2", { class: "text-lg font-semibold mb-2" }, "Tasks"));
-    for (const t of data.tasks) sec.appendChild(taskRow(t, { projectsById, onChanged: () => window.__cos.route() }));
+    sec.appendChild(el("h2", { class: "text-lg font-semibold mb-2" }, "Today's tasks"));
+    sec.appendChild(el("div", { class: "text-xs text-slate-500 mb-1" },
+      "Tasks you've picked for today. They stay here until completed, removed, or the day ends."));
+    for (const t of todayPicks) sec.appendChild(taskRow(t, { projectsById, onChanged: () => window.__cos.route() }));
     root.appendChild(sec);
-  } else {
+  }
+
+  if (dueToday.length) {
+    const sec = el("section", { class: "space-y-1" });
+    sec.appendChild(el("h2", { class: "text-lg font-semibold mb-2" },
+      todayPicks.length ? "Also due today" : "Tasks"));
+    if (!todayPicks.length) {
+      sec.appendChild(el("div", { class: "text-xs text-slate-500 mb-1" },
+        "Tap the ★ to pick a task for today."));
+    }
+    for (const t of dueToday) sec.appendChild(taskRow(t, { projectsById, onChanged: () => window.__cos.route() }));
+    root.appendChild(sec);
+  }
+
+  if (!todayPicks.length && !dueToday.length) {
     root.appendChild(el("section", { class: "text-sm text-slate-500" }, "No tasks due today."));
   }
 

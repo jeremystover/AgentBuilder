@@ -264,6 +264,30 @@ export async function handleApiRequest(request, ctx) {
     }
   }
 
+  // ── Today tasks (user-curated "do this today" list) ──────────────────────
+  // Designation auto-expires when the calendar day rolls over (queries are
+  // filtered by today's dayKey). Completing a task drops it from the view
+  // via the open-status filter; the user can also explicitly unmark.
+  if (method === "GET" && path === "/api/today-tasks") {
+    const keys = await readTodayTaskKeys();
+    return jsonResponse({ taskKeys: Array.from(keys) });
+  }
+  if (method === "POST" && path === "/api/today-tasks") {
+    const body = await readJson();
+    if (!body.taskKey) return jsonResponse({ error: "taskKey required" }, 400);
+    await addTodayTask(body.taskKey);
+    return jsonResponse({ ok: true });
+  }
+  {
+    const m = path.match(/^\/api\/today-tasks\/([^/]+)$/);
+    if (m && method === "DELETE") {
+      await env.DB.prepare(
+        `DELETE FROM TodayTasks WHERE taskKey=? AND dayKey=?`
+      ).bind(m[1], dayKey(new Date())).run();
+      return jsonResponse({ ok: true });
+    }
+  }
+
   // ── Meeting transcript / summary ─────────────────────────────────────────
   {
     const m = path.match(/^\/api\/meetings\/([^/]+)\/transcript$/);
@@ -855,10 +879,15 @@ export async function handleApiRequest(request, ctx) {
     ).all();
     const rows = res.results || [];
     if (!rows.length) return [];
-    const tasks = await readAll(sheets, "Tasks");
+    const [tasks, todayKeys] = await Promise.all([
+      readAll(sheets, "Tasks"),
+      readTodayTaskKeys(),
+    ]);
     const byKey = Object.fromEntries(tasks.map((t) => [t.taskKey, t]));
     return rows
-      .map((r) => byKey[r.taskKey] ? { ...toTaskDto(byKey[r.taskKey]), addedAt: r.addedAt } : null)
+      .map((r) => byKey[r.taskKey]
+        ? { ...toTaskDto(byKey[r.taskKey]), addedAt: r.addedAt, today: todayKeys.has(r.taskKey) }
+        : null)
       .filter(Boolean);
   }
 
@@ -873,6 +902,21 @@ export async function handleApiRequest(request, ctx) {
     await env.DB.prepare(
       `INSERT INTO FocusNow (taskKey, position, addedAt) VALUES (?, ?, ?)`
     ).bind(taskKey, next?.p || 1, nowIso()).run();
+  }
+
+  async function readTodayTaskKeys() {
+    const today = dayKey(new Date());
+    const res = await env.DB.prepare(
+      `SELECT taskKey FROM TodayTasks WHERE dayKey=?`
+    ).bind(today).all();
+    return new Set((res.results || []).map((r) => r.taskKey));
+  }
+
+  async function addTodayTask(taskKey) {
+    const today = dayKey(new Date());
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO TodayTasks (taskKey, dayKey, addedAt) VALUES (?, ?, ?)`
+    ).bind(taskKey, today, nowIso()).run();
   }
 
   async function handleNow() {
@@ -930,10 +974,13 @@ export async function handleApiRequest(request, ctx) {
 
     // Quick wins: small, prioritized, due-soon open tasks. The user wants a
     // *short* list of things they can knock out right now, so we cap at 5
-    // and exclude anything already in the focus list.
+    // and exclude anything already in the focus list. User-marked "today"
+    // tasks always make the list (and sort to the top) — they're the user's
+    // explicit "do this today" picks, so we don't want a heuristic to drop them.
     const focusKeys = new Set(((await env.DB.prepare(
       `SELECT taskKey FROM FocusNow`
     ).all()).results || []).map((r) => r.taskKey));
+    const todayKeys = await readTodayTaskKeys();
     const quickWins = tasks
       .filter((t) => isOpenStatus(t.status))
       .filter((t) => !focusKeys.has(t.taskKey))
@@ -942,13 +989,14 @@ export async function handleApiRequest(request, ctx) {
         const overdue = Number.isFinite(due) && due < nowMs;
         const dueToday = Number.isFinite(due) && due <= nowMs + 24 * 3_600_000;
         const pri = priorityRank(t.priority);
-        const score = (overdue ? 5 : 0) + (dueToday ? 2 : 0) + pri;
-        return { task: t, score };
+        const today = todayKeys.has(t.taskKey);
+        const score = (today ? 100 : 0) + (overdue ? 5 : 0) + (dueToday ? 2 : 0) + pri;
+        return { task: t, score, today };
       })
-      .filter((x) => x.score >= 2)
+      .filter((x) => x.today || x.score >= 2)
       .sort((a, b) => b.score - a.score)
       .slice(0, 5)
-      .map((x) => toTaskDto(x.task));
+      .map((x) => ({ ...toTaskDto(x.task), today: x.today }));
 
     const focusTasks = await readFocusList();
 
@@ -965,7 +1013,7 @@ export async function handleApiRequest(request, ctx) {
     const now = new Date();
     const dStart = startOfDay(now).toISOString();
     const dEnd = endOfDay(now).toISOString();
-    const [tasks, meetings, stakeholders, projects, commitments, brief] = await Promise.all([
+    const [tasks, meetings, stakeholders, projects, commitments, brief, todayKeys] = await Promise.all([
       readAll(sheets, "Tasks"),
       listMeetings(sheets, dStart, dEnd),
       readAll(sheets, "Stakeholders"),
@@ -975,16 +1023,24 @@ export async function handleApiRequest(request, ctx) {
         `SELECT briefId, kind, periodKey, goalsMd, generatedMd, reviewMd, updatedAt
            FROM Briefs WHERE kind='day' AND periodKey=?`
       ).bind(dayKey(now)).first(),
+      readTodayTaskKeys(),
     ]);
+    // Show a task on Today if either (a) it's due on/before today, or
+    // (b) the user marked it as a today task. Today-marked tasks always
+    // sort to the top regardless of due date.
     const todayTasks = tasks
       .filter((t) => includeCompleted ? true : isOpenStatus(t.status))
       .filter((t) => {
+        if (todayKeys.has(t.taskKey)) return true;
         if (!t.dueAt) return false;
         const d = Date.parse(t.dueAt);
         return Number.isFinite(d) && d <= Date.parse(dEnd);
       })
-      .map(toTaskDto)
-      .sort(compareDueAt);
+      .map((t) => ({ ...toTaskDto(t), today: todayKeys.has(t.taskKey) }))
+      .sort((a, b) => {
+        if (a.today !== b.today) return a.today ? -1 : 1;
+        return compareDueAt(a, b);
+      });
     const meetingsWithPrep = meetings.map((m) => ({
       ...m,
       prep: prepNotesForMeeting(m, { stakeholders, projects, tasks, commitments }),
