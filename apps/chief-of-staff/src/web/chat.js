@@ -20,13 +20,20 @@ Operating rules:
 const DAY_PLAN_SYSTEM = `${SYSTEM_PROMPT_BASE}
 
 You are running the user's DAY PLAN. The user has just typed or dictated free-form notes about their day. Your job:
-1. Hydrate planning context.
+1. Hydrate planning context (this returns openTasks with their taskKey values — use them).
 2. Read the user's notes carefully.
 3. Mark any tasks they say are done (propose_complete_task → commit).
 4. Add any new tasks they mention (propose_create_task → commit) with priority + dueAt set.
 5. Adjust priorities on existing tasks where the notes imply urgency (propose_update_task → commit).
-6. Output a 4-8 line plan for the day: top priorities, what to skip, key meetings.
-Return ONLY the plan text after all tool calls are done. No preamble.`;
+6. Output the plan with these sections:
+   - 2-4 lines on the day's themes / top priorities.
+   - "## Tasks for today" — a bulleted list of 3-7 specific existing tasks the user should focus on today, each as "- Task title (taskKey)". Pick from openTasks; favor overdue, due-today, high priority, and anything the user's notes flagged.
+   - "## Meetings" — 1-3 lines on key meetings, if any.
+   - "## Skip" — 1-2 lines on what to defer.
+7. End your reply with EXACTLY one fenced block on its own line listing the taskKeys you chose for today, comma-separated, like:
+   <today-tasks>task_abc, task_xyz</today-tasks>
+   This block is parsed by the server to pin those tasks as today's tasks. Use only taskKey values that exist in openTasks. If you have no picks, emit an empty block: <today-tasks></today-tasks>.
+Return ONLY the plan text + the trailing block. No preamble.`;
 
 const DAY_REVIEW_SYSTEM = `${SYSTEM_PROMPT_BASE}
 
@@ -117,6 +124,20 @@ export async function handlePlanReviewRequest(request, ctx, kind) {
       maxIterations: 12,
     });
 
+    // Day plan: parse the trailing <today-tasks>…</today-tasks> block and
+    // pin those taskKeys for today, then strip the block from the visible
+    // output. Other plan/review kinds don't emit this marker.
+    let display = result.reply;
+    let todayTaskKeys = [];
+    if (kind === "day-plan") {
+      const parsed = extractTodayTasks(result.reply);
+      display = parsed.text;
+      todayTaskKeys = parsed.keys;
+      if (todayTaskKeys.length) {
+        await persistTodayTasks(env, todayTaskKeys);
+      }
+    }
+
     const briefKind = kind.startsWith("day") ? "day" : "week";
     const reviewMode = kind.endsWith("review");
     await env.DB.prepare(
@@ -130,16 +151,17 @@ export async function handlePlanReviewRequest(request, ctx, kind) {
       `brief_${briefKind}_${periodKey}_${Date.now().toString(36)}`,
       briefKind,
       periodKey,
-      reviewMode ? "" : result.reply,
-      reviewMode ? result.reply : "",
+      reviewMode ? "" : display,
+      reviewMode ? display : "",
       new Date().toISOString(),
       reviewMode ? 1 : 0,
       reviewMode ? 1 : 0,
     ).run();
 
     return new Response(JSON.stringify({
-      output: result.reply,
+      output: display,
       periodKey, kind,
+      todayTaskKeys,
       iterations: result.iterations,
       usage: result.usage,
     }), { status: 200, headers: { "content-type": "application/json; charset=utf-8" } });
@@ -159,6 +181,35 @@ function pickSystem(kind) {
     case "week-plan":    return WEEK_PLAN_SYSTEM;
     case "week-review":  return WEEK_REVIEW_SYSTEM;
     default:             return SYSTEM_PROMPT_BASE;
+  }
+}
+
+// Extract the trailing <today-tasks>…</today-tasks> marker the day-plan
+// model emits so the server can pin those tasks for today. Returns the
+// reply text with the marker stripped, plus the parsed taskKey list.
+function extractTodayTasks(reply) {
+  const text = String(reply || "");
+  const m = text.match(/<today-tasks>([\s\S]*?)<\/today-tasks>/i);
+  if (!m) return { text, keys: [] };
+  const keys = m[1]
+    .split(/[,\s]+/)
+    .map((s) => s.trim())
+    .filter((s) => /^[A-Za-z0-9_\-]+$/.test(s));
+  const cleaned = text.replace(m[0], "").replace(/\n{3,}/g, "\n\n").trim();
+  return { text: cleaned, keys };
+}
+
+// Pin the model's picks as today tasks. We clear the day's existing
+// picks first so re-running ✨ Generate replaces (not appends to) the
+// list — the user can then trim/extend with the ★ toggle in the UI.
+async function persistTodayTasks(env, taskKeys) {
+  const today = new Date().toISOString().slice(0, 10);
+  await env.DB.prepare(`DELETE FROM TodayTasks WHERE dayKey=?`).bind(today).run();
+  const addedAt = new Date().toISOString();
+  for (const key of taskKeys) {
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO TodayTasks (taskKey, dayKey, addedAt) VALUES (?, ?, ?)`
+    ).bind(key, today, addedAt).run();
   }
 }
 
