@@ -10,9 +10,10 @@
  * (Source Serif), sans body (Inter). Indigo accent for actions, amber for
  * warnings, emerald for success, rose for errors.
  *
- * Per-agent customization is intentionally limited to {title} and the brand
- * mark in the nav (rendered by the SPA, not here). Resist the urge to expose
- * a theming API — visual consistency across the fleet is the whole point.
+ * Per-agent customization is intentionally limited to {title}, an opt-in
+ * {head} string for favicons / web-app manifests, and the brand mark in the
+ * nav (rendered by the SPA, not here). Resist the urge to expose a theming
+ * API — visual consistency across the fleet is the whole point.
  */
 
 const FONTS_HREF =
@@ -61,8 +62,9 @@ export function loginHtml(opts = {}) {
   // worker actually serves. Without this override the form silently
   // POSTs to /app/login on every agent and 404s with JSON.
   const action = opts.action || "/app/login";
+  const head = opts.head || "";
   return `<!doctype html>
-<html><head>${HEAD_COMMON}<title>${escapeHtml(title)}</title></head>
+<html><head>${HEAD_COMMON}<title>${escapeHtml(title)}</title>${head}</head>
 <body class="min-h-screen flex items-center justify-center px-4">
   <div class="relative z-10 w-full max-w-sm">
     <div class="text-center mb-8">
@@ -89,8 +91,9 @@ export function loginHtml(opts = {}) {
 
 export function appHtml(opts = {}) {
   const title = opts.title || "Workspace";
+  const head = opts.head || "";
   return `<!doctype html>
-<html><head>${HEAD_COMMON}<title>${escapeHtml(title)}</title></head>
+<html><head>${HEAD_COMMON}<title>${escapeHtml(title)}</title>${head}</head>
 <body class="min-h-screen">
   <div id="app" class="relative z-10"></div>
   <script src="/app/app.js"></script>
