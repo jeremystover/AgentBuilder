@@ -14,7 +14,7 @@ export const SPA_PAGES2_JS = `
 const $$ = window.__cos;
 
 // ── Create-task modal (referenced by Today/Week + chat callbacks) ──────────
-async function openCreateTaskModal({ projectsById = {}, onChanged } = {}) {
+async function openCreateTaskModal({ projectsById = {}, onChanged, onCreated } = {}) {
   const titleI = el("input", {
     type: "text", placeholder: "Task title…", autofocus: true,
     class: "w-full text-lg font-medium rounded-lg ring-1 ring-slate-200 px-3 py-2 focus:ring-indigo-400 focus:outline-none",
@@ -45,13 +45,32 @@ async function openCreateTaskModal({ projectsById = {}, onChanged } = {}) {
         onclick: async () => {
           if (!titleI.value.trim()) { toast("Title required", "err"); return; }
           try {
-            await api("/api/tasks", { method: "POST", body: {
+            const res = await api("/api/tasks", { method: "POST", body: {
               title: titleI.value.trim(),
               dueAt: dueI.value ? new Date(dueI.value).toISOString() : "",
               priority: priI.value, projectId: projI.value,
               notes: notesI.value, origin: "manual",
             }});
-            modal.close(); toast("Created", "ok"); onChanged?.();
+            modal.close(); toast("Created", "ok");
+            if (onCreated) {
+              // Pull the newly assigned taskKey out of the propose/commit
+              // result so the caller can append a row in place rather than
+              // forcing a full page re-render.
+              const created = (res?.result?.results || []).find((r) => r.action === "created_task");
+              const newTask = {
+                taskKey: created?.taskKey || \`tmp_\${Date.now()}\`,
+                title: titleI.value.trim(),
+                dueAt: dueI.value ? new Date(dueI.value).toISOString() : "",
+                priority: priI.value || "",
+                projectId: projI.value || "",
+                notes: notesI.value || "",
+                status: "open",
+                today: false,
+              };
+              onCreated(newTask);
+            } else {
+              onChanged?.();
+            }
           } catch (err) { toast(err.message, "err"); }
         },
       }, "Create"),
@@ -178,25 +197,41 @@ async function pageProjectDetail(main, projectId) {
   // Tasks (with show-completed toggle scoped to this project)
   const tasksSec = el("section", { class: "space-y-1" });
   const showDone = window.showCompletedFlag("project:" + projectId);
+  const projectProjectsById = { [projectId]: { projectId, name: data.name } };
+  let openTasksList;
+  let emptyOpenTasksEl = null;
+  function appendCreatedProjectTask(newTask) {
+    if (!openTasksList) return;
+    if (emptyOpenTasksEl && emptyOpenTasksEl.parentNode) {
+      emptyOpenTasksEl.remove();
+      emptyOpenTasksEl = null;
+    }
+    openTasksList.appendChild(window.taskRow(newTask, { showProject: false, projectsById: projectProjectsById }));
+  }
   tasksSec.appendChild(el("div", { class: "flex items-baseline justify-between mb-2 gap-3" },
     el("h2", { class: "text-lg font-semibold" }, "Open tasks"),
     el("div", { class: "flex items-center gap-2" },
       window.showCompletedToggle("project:" + projectId, () => $$.route()),
       el("button", { class: "text-xs text-slate-500 hover:text-ink",
-        onclick: () => openCreateTaskModal({ projectsById: { [projectId]: { projectId, name: data.name } }, onChanged: () => $$.route() }) },
+        onclick: () => openCreateTaskModal({ projectsById: projectProjectsById, onCreated: appendCreatedProjectTask }) },
         "+ Add task"),
     ),
   ));
-  if (!data.openTasks?.length) tasksSec.appendChild(el("div", { class: "text-sm text-slate-500" }, "No open tasks."));
+  openTasksList = el("div", { class: "contents" });
+  tasksSec.appendChild(openTasksList);
+  if (!data.openTasks?.length) {
+    emptyOpenTasksEl = el("div", { class: "text-sm text-slate-500" }, "No open tasks.");
+    openTasksList.appendChild(emptyOpenTasksEl);
+  }
   for (const t of data.openTasks || []) {
-    tasksSec.appendChild(window.taskRow(t, { showProject: false, onChanged: () => $$.route() }));
+    openTasksList.appendChild(window.taskRow(t, { showProject: false, projectsById: projectProjectsById }));
   }
   if (showDone) {
     try {
       const done = await api("/api/tasks/completed?scope=all&projectId=" + encodeURIComponent(projectId));
       if (done.tasks?.length) {
         tasksSec.appendChild(el("h3", { class: "text-xs uppercase tracking-wide text-slate-400 mt-4" }, "Completed"));
-        for (const t of done.tasks) tasksSec.appendChild(window.taskRow(t, { showProject: false, onChanged: () => $$.route() }));
+        for (const t of done.tasks) tasksSec.appendChild(window.taskRow(t, { showProject: false, projectsById: projectProjectsById }));
       }
     } catch (err) { /* surfaced elsewhere */ }
   }
@@ -446,7 +481,7 @@ async function pagePersonDetail(main, personId) {
   if (data.openTasks?.length) {
     const sec = el("section", { class: "space-y-1" });
     sec.appendChild(el("h2", { class: "text-lg font-semibold mb-2" }, "Open tasks"));
-    for (const t of data.openTasks) sec.appendChild(window.taskRow(t, { onChanged: () => $$.route() }));
+    for (const t of data.openTasks) sec.appendChild(window.taskRow(t));
     root.appendChild(sec);
   }
 
