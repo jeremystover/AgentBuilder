@@ -461,7 +461,6 @@ async function renderProjectsTaskView(root, refresh) {
       title: "Delete task",
       onclick: async (e) => {
         e.stopPropagation();
-        if (!confirm("Delete this task?")) return;
         tr.style.transition = "opacity 200ms ease";
         tr.style.opacity = "0.4";
         tr.style.pointerEvents = "none";

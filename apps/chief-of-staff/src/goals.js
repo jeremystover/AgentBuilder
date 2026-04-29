@@ -410,7 +410,13 @@ export function createGoalsTools({ spreadsheetId, sheets, storeChangeset }) {
       if (!goal) return formatContent({ error: `Goal not found: ${args.goalId}` });
 
       const goalId = String(goal.goalId || "");
-      const childProjects = projects.filter((p) => String(p.goalId || "") === goalId);
+      // Hide deleted/dropped projects from the 360 view — same rule as
+      // list_projects' default filter and the web UI.
+      const childProjects = projects.filter((p) => {
+        if (String(p.goalId || "") !== goalId) return false;
+        const s = String(p.status || "").toLowerCase();
+        return s !== "deleted" && s !== "dropped";
+      });
       const childProjectIds = new Set(childProjects.map((p) => String(p.projectId || "")));
 
       const openTasks = tasks
