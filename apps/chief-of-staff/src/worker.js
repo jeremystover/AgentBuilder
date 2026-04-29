@@ -55,6 +55,18 @@ import { loginHtml, appHtml } from "./web/spa-html.js";
 import { SPA_PAGES_JS } from "./web/spa-pages.js";
 import { SPA_PAGES2_JS } from "./web/spa-pages2.js";
 import { SPA_CORE_JS } from "@agentbuilder/web-ui-kit";
+import {
+  FAVICON_ICO_B64,
+  FAVICON_16_PNG_B64,
+  FAVICON_32_PNG_B64,
+  APPLE_TOUCH_ICON_B64,
+  ICON_192_PNG_B64,
+  ICON_512_PNG_B64,
+  ICON_512_MASKABLE_B64,
+  FAVICON_SVG,
+  MANIFEST_JSON,
+  bytesFromB64,
+} from "./web/icons.js";
 
 // ── Data store resolution ────────────────────────────────────────────────────
 // When env.DB (Cloudflare D1) is bound, use it as the primary data store.
@@ -539,6 +551,52 @@ export default {
     // Health check
     if (request.method === "GET" && urlObj.pathname === "/health") {
       return jsonResponse({ ok: true });
+    }
+
+    // ── Branded icons ────────────────────────────────────────────────────
+    // Public assets — served before any auth gate so the browser tab and
+    // MacOS Chrome "Install as App" can fetch them on the login page.
+    // Bytes live in src/web/icons.js (regenerate via scripts/gen-icons.py).
+    if (request.method === "GET") {
+      const iconRoutes = {
+        "/favicon.ico":             { b64: FAVICON_ICO_B64,       type: "image/x-icon" },
+        "/favicon-16.png":          { b64: FAVICON_16_PNG_B64,    type: "image/png" },
+        "/favicon-32.png":          { b64: FAVICON_32_PNG_B64,    type: "image/png" },
+        "/apple-touch-icon.png":    { b64: APPLE_TOUCH_ICON_B64,  type: "image/png" },
+        // iOS sometimes asks for the precomposed variant — serve the same bytes.
+        "/apple-touch-icon-precomposed.png": { b64: APPLE_TOUCH_ICON_B64, type: "image/png" },
+        "/icon-192.png":            { b64: ICON_192_PNG_B64,      type: "image/png" },
+        "/icon-512.png":            { b64: ICON_512_PNG_B64,      type: "image/png" },
+        "/icon-512-maskable.png":   { b64: ICON_512_MASKABLE_B64, type: "image/png" },
+      };
+      const iconHit = iconRoutes[urlObj.pathname];
+      if (iconHit) {
+        return new Response(bytesFromB64(iconHit.b64), {
+          status: 200,
+          headers: {
+            "content-type": iconHit.type,
+            "cache-control": "public, max-age=86400",
+          },
+        });
+      }
+      if (urlObj.pathname === "/favicon.svg") {
+        return new Response(FAVICON_SVG, {
+          status: 200,
+          headers: {
+            "content-type": "image/svg+xml; charset=utf-8",
+            "cache-control": "public, max-age=86400",
+          },
+        });
+      }
+      if (urlObj.pathname === "/manifest.webmanifest") {
+        return new Response(MANIFEST_JSON, {
+          status: 200,
+          headers: {
+            "content-type": "application/manifest+json; charset=utf-8",
+            "cache-control": "public, max-age=86400",
+          },
+        });
+      }
     }
 
     // Dashboard — read-only HTML view of Goals → Projects → Tasks.
