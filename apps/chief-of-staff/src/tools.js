@@ -1180,7 +1180,7 @@ export function createTools({ spreadsheetId, sheets }) {
             }
 
           } else if (cs.kind === "projects") {
-            const { commitProjectAdds, commitProjectUpdates } = await import("./goals.js");
+            const { commitProjectAdds, commitProjectUpdates, commitProjectDeletes } = await import("./goals.js");
             for (const add of cs.adds || []) {
               await commitProjectAdds({ sheets, projects: [add] });
               results.push({ action: "created_project", projectId: add.projectId });
@@ -1188,6 +1188,10 @@ export function createTools({ spreadsheetId, sheets }) {
             for (const upd of cs.updates || []) {
               await commitProjectUpdates({ sheets, updates: [upd] });
               results.push({ action: "updated_project", projectId: upd.projectId });
+            }
+            for (const del of cs.deletes || []) {
+              await commitProjectDeletes({ sheets, deletes: [del] });
+              results.push({ action: "deleted_project", projectId: del.projectId });
             }
 
           } else if (cs.kind === "intake") {

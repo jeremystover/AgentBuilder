@@ -610,6 +610,25 @@ export async function handleApiRequest(request, ctx) {
   }
 
   // ── Tasks ────────────────────────────────────────────────────────────────
+  if (method === "GET" && path === "/api/tasks") {
+    // Cross-project task list (used by Projects → Task View). Returns open
+    // tasks by default; pass ?includeCompleted=1 to include done. We resolve
+    // projectName here so the table can sort by it without a second fetch.
+    const includeCompleted = url.searchParams.get("includeCompleted") === "1";
+    const [tasks, projects] = await Promise.all([
+      readAll(sheets, "Tasks"),
+      readAll(sheets, "Projects"),
+    ]);
+    const projById = Object.fromEntries(projects.map((p) => [p.projectId, p]));
+    const out = tasks
+      .filter((t) => includeCompleted ? true : isOpenStatus(t.status))
+      .map((t) => {
+        const dto = toTaskDto(t);
+        const proj = dto.projectId ? projById[dto.projectId] : null;
+        return { ...dto, projectName: proj ? (proj.name || "") : "" };
+      });
+    return jsonResponse({ tasks: out });
+  }
   if (method === "POST" && path === "/api/tasks") {
     const body = await readJson();
     const result = await proposeAndCommit(tools, "propose_create_task", {
@@ -796,10 +815,83 @@ export async function handleApiRequest(request, ctx) {
     }
   }
 
-  // ── Goals (read-only for now, used by Projects → "linked goal" picker) ───
+  // ── Goals ────────────────────────────────────────────────────────────────
+  // Full CRUD surface for the /goals page. Reads the Goals sheet directly so
+  // the UI can show closed/achieved/dropped goals alongside active ones (the
+  // list_goals tool is intentionally narrowed to active for the agent).
   if (method === "GET" && path === "/api/goals") {
-    const data = await callTool(tools, "list_goals", { includeClosed: false });
-    return jsonResponse(data);
+    // Reads the Goals sheet directly so the Goals page can show closed
+    // (achieved/missed/dropped) goals alongside active ones. Callers that
+    // want active-only can filter client-side or pass ?status=active.
+    const rows = await readAll(sheets, "Goals");
+    const statusFilter = (url.searchParams.get("status") || "").toLowerCase();
+    const includeClosed = url.searchParams.get("includeClosed") === "1";
+    const goals = rows
+      .filter((g) => {
+        if (statusFilter) return String(g.status || "").toLowerCase() === statusFilter;
+        if (includeClosed) return true;
+        // No filter, no includeClosed → preserve the legacy active-only default.
+        const s = String(g.status || "").toLowerCase();
+        return !s || s === "active";
+      })
+      .map((g) => ({
+        goalId: g.goalId,
+        title: g.title,
+        description: g.description,
+        quarter: g.quarter,
+        status: g.status,
+        priority: g.priority,
+        targetDate: g.targetDate,
+        successCriteria: g.successCriteria,
+        notes: g.notes,
+        stakeholderIds: safeParseJsonArray(g.stakeholdersJson),
+        createdAt: g.createdAt,
+        updatedAt: g.updatedAt,
+      }));
+    return jsonResponse({ count: goals.length, goals });
+  }
+  if (method === "POST" && path === "/api/goals") {
+    const body = await readJson();
+    if (!body?.title) return jsonResponse({ error: "title is required" }, 400);
+    const result = await proposeAndCommit(tools, "propose_create_goal", {
+      title: body.title,
+      description: body.description,
+      quarter: body.quarter,
+      status: body.status || "active",
+      priority: body.priority,
+      targetDate: body.targetDate,
+      successCriteria: body.successCriteria,
+      notes: body.notes,
+      stakeholderIds: body.stakeholderIds || [],
+    });
+    return jsonResponse({ ok: true, result });
+  }
+  {
+    const m = path.match(/^\/api\/goals\/([^/]+)(\/complete)?$/);
+    if (m && method === "PATCH") {
+      const body = await readJson();
+      const result = await proposeAndCommit(tools, "propose_update_goal", {
+        goalId: m[1],
+        patch: body.patch || {},
+        stakeholderIds: body.stakeholderIds,
+        reason: body.reason || "edited via web UI",
+      });
+      return jsonResponse({ ok: true, result });
+    }
+    if (m && m[2] === "/complete" && method === "POST") {
+      const result = await proposeAndCommit(tools, "propose_update_goal", {
+        goalId: m[1],
+        patch: { status: "achieved" },
+        reason: "marked complete via web UI",
+      });
+      return jsonResponse({ ok: true, result });
+    }
+    if (m && method === "DELETE") {
+      const found = await sheets.findRowByKey("Goals", "goalId", m[1]);
+      if (!found) return jsonResponse({ error: "Goal not found" }, 404);
+      await sheets.deleteRow("Goals", found.rowNum);
+      return jsonResponse({ ok: true });
+    }
   }
 
   // ── Notes (free-form text linked to a person/project/task) ───────────────

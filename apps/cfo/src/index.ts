@@ -101,6 +101,39 @@ function kitEnv(env: Env): Record<string, unknown> {
   };
 }
 
+// Public favicon / web-app manifest paths. The Vite build copies the
+// matching files from public/ into dist/ verbatim. Listed explicitly
+// (rather than a prefix match) so we never accidentally bypass the auth
+// gate for hashed asset paths or HTML routes.
+const PUBLIC_ICON_PATHS = new Set<string>([
+  '/favicon.ico',
+  '/favicon.svg',
+  '/favicon-16.png',
+  '/favicon-32.png',
+  '/apple-touch-icon.png',
+  '/apple-touch-icon-precomposed.png',
+  '/icon-192.png',
+  '/icon-512.png',
+  '/icon-512-maskable.png',
+  '/manifest.webmanifest',
+]);
+
+// Icon link tags injected into the kit's loginHtml so the login page
+// (and any tab opened pre-auth) picks up the branded mark.
+const ICON_HEAD = [
+  '<link rel="icon" type="image/svg+xml" href="/favicon.svg"/>',
+  '<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png"/>',
+  '<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png"/>',
+  '<link rel="alternate icon" type="image/x-icon" href="/favicon.ico"/>',
+  '<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"/>',
+  '<link rel="manifest" href="/manifest.webmanifest"/>',
+  '<meta name="theme-color" content="#0F172A"/>',
+  '<meta name="apple-mobile-web-app-title" content="CFO"/>',
+  '<meta name="application-name" content="CFO"/>',
+  '<meta name="apple-mobile-web-app-capable" content="yes"/>',
+  '<meta name="mobile-web-app-capable" content="yes"/>',
+].join('\n');
+
 // ── Simple regex router ───────────────────────────────────────────────────────
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Handler = (req: Request, env: Env, ...params: any[]) => Promise<Response>;
@@ -232,25 +265,35 @@ export default {
     const path = url.pathname;
     const method = request.method;
 
+    // ── Public favicon / web-app manifest passthrough ─────────────────────
+    // Browsers fetch these BEFORE the user logs in (the login page itself
+    // links to them, and MacOS Chrome's "Install as App" needs the icons
+    // to resolve unauthenticated). The Vite build copies public/*.{ico,
+    // svg,png,webmanifest} into dist/ verbatim — see apps/cfo/scripts/
+    // gen-icons.py for how they're generated.
+    if (method === 'GET' && PUBLIC_ICON_PATHS.has(path)) {
+      return env.ASSETS.fetch(request);
+    }
+
     // ── Web UI auth (kit cookie session) ──────────────────────────────────
     // Pattern mirrors research-agent's /lab/* surface so the same tooling
     // (loginHtml, requireWebSession, requireApiAuth) is shared.
     if (path === '/login' && method === 'GET') {
-      return new Response(loginHtml({ title: 'CFO', action: '/login' }), {
+      return new Response(loginHtml({ title: 'CFO', action: '/login', head: ICON_HEAD }), {
         status: 200,
         headers: { 'content-type': 'text/html; charset=utf-8' },
       });
     }
     if (path === '/login' && method === 'POST') {
       if (!env.WEB_UI_PASSWORD) {
-        return new Response(loginHtml({ title: 'CFO', action: '/login', error: 'WEB_UI_PASSWORD is not configured.' }), {
+        return new Response(loginHtml({ title: 'CFO', action: '/login', head: ICON_HEAD, error: 'WEB_UI_PASSWORD is not configured.' }), {
           status: 500, headers: { 'content-type': 'text/html; charset=utf-8' },
         });
       }
       const form = await request.formData().catch(() => null);
       const password = form?.get?.('password') || '';
       if (!verifyPassword(kitEnv(env), password)) {
-        return new Response(loginHtml({ title: 'CFO', action: '/login', error: 'Wrong password.' }), {
+        return new Response(loginHtml({ title: 'CFO', action: '/login', head: ICON_HEAD, error: 'Wrong password.' }), {
           status: 401, headers: { 'content-type': 'text/html; charset=utf-8' },
         });
       }
