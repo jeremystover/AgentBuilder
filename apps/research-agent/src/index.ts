@@ -47,6 +47,39 @@ function kitEnv(env: Env): Record<string, unknown> {
   };
 }
 
+// Public favicon / web-app manifest paths under /lab/. The Vite build
+// copies the matching files from src/lab/public/ into dist/ verbatim.
+// Listed explicitly (rather than a prefix match) so we never bypass the
+// auth gate for the SPA shell or any other /lab/* route.
+const PUBLIC_LAB_ICON_PATHS = new Set<string>([
+  "/lab/favicon.ico",
+  "/lab/favicon.svg",
+  "/lab/favicon-16.png",
+  "/lab/favicon-32.png",
+  "/lab/apple-touch-icon.png",
+  "/lab/apple-touch-icon-precomposed.png",
+  "/lab/icon-192.png",
+  "/lab/icon-512.png",
+  "/lab/icon-512-maskable.png",
+  "/lab/manifest.webmanifest",
+]);
+
+// Icon link tags injected into the kit's loginHtml so the /lab/login
+// page (and any tab opened pre-auth) shows the branded mark.
+const LAB_ICON_HEAD = [
+  '<link rel="icon" type="image/svg+xml" href="/lab/favicon.svg"/>',
+  '<link rel="icon" type="image/png" sizes="32x32" href="/lab/favicon-32.png"/>',
+  '<link rel="icon" type="image/png" sizes="16x16" href="/lab/favicon-16.png"/>',
+  '<link rel="alternate icon" type="image/x-icon" href="/lab/favicon.ico"/>',
+  '<link rel="apple-touch-icon" sizes="180x180" href="/lab/apple-touch-icon.png"/>',
+  '<link rel="manifest" href="/lab/manifest.webmanifest"/>',
+  '<meta name="theme-color" content="#0F1117"/>',
+  '<meta name="apple-mobile-web-app-title" content="The Lab"/>',
+  '<meta name="application-name" content="The Lab"/>',
+  '<meta name="apple-mobile-web-app-capable" content="yes"/>',
+  '<meta name="mobile-web-app-capable" content="yes"/>',
+].join("\n");
+
 // Open CORS for the MCP endpoint — MCP clients (Claude, Cowork, etc.)
 // connect from various origins and need unrestricted access.
 // Auth is enforced via bearer token, not origin.
@@ -214,22 +247,34 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
   //
   // /api/lab/*          JSON API for the SPA + external apps
   //                     (cookie session OR EXTERNAL_API_KEY bearer)
+  // Public favicon / web-app manifest passthrough — must run before any
+  // /lab/* auth gate so the login page and MacOS Chrome's "Install as
+  // App" can fetch icons unauthenticated. Strip the /lab prefix before
+  // calling ASSETS, mirroring the /lab/assets/* handler below (Vite
+  // emits files at dist root, not under /lab/).
+  if (method === "GET" && PUBLIC_LAB_ICON_PATHS.has(url.pathname)) {
+    if (!env.ASSETS) return new Response("ASSETS not configured", { status: 503 });
+    const stripped = new URL(request.url);
+    stripped.pathname = stripped.pathname.replace(/^\/lab\/?/, "/");
+    return env.ASSETS.fetch(new Request(stripped.toString(), request));
+  }
+
   if (url.pathname === "/lab/login" && method === "GET") {
-    return new Response(loginHtml({ title: "The Lab", action: "/lab/login" }), {
+    return new Response(loginHtml({ title: "The Lab", action: "/lab/login", head: LAB_ICON_HEAD }), {
       status: 200,
       headers: { "content-type": "text/html; charset=utf-8" },
     });
   }
   if (url.pathname === "/lab/login" && method === "POST") {
     if (!env.WEB_UI_PASSWORD) {
-      return new Response(loginHtml({ title: "The Lab", action: "/lab/login", error: "WEB_UI_PASSWORD is not configured." }), {
+      return new Response(loginHtml({ title: "The Lab", action: "/lab/login", head: LAB_ICON_HEAD, error: "WEB_UI_PASSWORD is not configured." }), {
         status: 500, headers: { "content-type": "text/html; charset=utf-8" },
       });
     }
     const form = await request.formData().catch(() => null);
     const password = form?.get?.("password") || "";
     if (!verifyPassword(kitEnv(env), password)) {
-      return new Response(loginHtml({ title: "The Lab", action: "/lab/login", error: "Wrong password." }), {
+      return new Response(loginHtml({ title: "The Lab", action: "/lab/login", head: LAB_ICON_HEAD, error: "Wrong password." }), {
         status: 401, headers: { "content-type": "text/html; charset=utf-8" },
       });
     }

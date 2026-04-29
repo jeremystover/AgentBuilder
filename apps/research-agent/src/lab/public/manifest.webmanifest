@@ -1,0 +1,28 @@
+{
+  "name": "The Lab",
+  "short_name": "The Lab",
+  "description": "Research agent \u2014 The Lab.",
+  "start_url": "/lab/",
+  "scope": "/lab/",
+  "display": "standalone",
+  "background_color": "#0F1117",
+  "theme_color": "#0F1117",
+  "icons": [
+    {
+      "src": "/lab/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/lab/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/lab/icon-512-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
