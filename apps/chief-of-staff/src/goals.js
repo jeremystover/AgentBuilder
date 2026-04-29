@@ -258,7 +258,7 @@ export function createGoalsTools({ spreadsheetId, sheets, storeChangeset }) {
       const filtered = goals.filter((g) => {
         if (quarter && String(g.quarter) !== quarter) return false;
         if (status && String(g.status || "").toLowerCase() !== status) return false;
-        if (!status && !isOpen(g.status)) return false; // default = active only
+        if (!status && !args.includeClosed && !isOpen(g.status)) return false; // default = active only
         return true;
       });
       return formatContent({
@@ -562,6 +562,7 @@ export function createGoalsTools({ spreadsheetId, sheets, storeChangeset }) {
         properties: {
           quarter: { type: "string" },
           status: { type: "string" },
+          includeClosed: { type: "boolean" },
         },
         additionalProperties: false,
       },

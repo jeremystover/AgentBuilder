@@ -817,7 +817,8 @@ export async function handleApiRequest(request, ctx) {
 
   // ── Goals (read-only for now, used by Projects → "linked goal" picker) ───
   if (method === "GET" && path === "/api/goals") {
-    const data = await callTool(tools, "list_goals", { includeClosed: false });
+    const includeClosed = url.searchParams.get("includeClosed") === "1";
+    const data = await callTool(tools, "list_goals", { includeClosed });
     return jsonResponse(data);
   }
 

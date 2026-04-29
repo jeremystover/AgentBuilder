@@ -123,36 +123,81 @@ async function pageProjects(main) {
   main.appendChild(root);
 }
 
+function projectCard(p) {
+  const health = (p.healthStatus || "").toLowerCase();
+  const dot = health === "off_track" ? "bg-rose-500"
+            : health === "at_risk"   ? "bg-amber-500"
+            : health === "on_track"  ? "bg-emerald-500"
+            : "bg-slate-300";
+  return el("a", {
+    href: "#/projects/" + encodeURIComponent(p.projectId),
+    class: "block bg-white rounded-xl ring-1 ring-slate-200 hover:ring-indigo-300 p-4 transition",
+  },
+    el("div", { class: "flex items-center gap-3" },
+      el("span", { class: "w-2 h-2 rounded-full " + dot }),
+      el("div", { class: "flex-1 text-base font-medium text-ink" }, p.name || "(untitled)"),
+      el("span", { class: "text-xs text-slate-400" }, p.status || ""),
+    ),
+    p.nextMilestoneAt ? el("div", { class: "text-xs text-slate-500 mt-1" }, "Next milestone " + fmtDate(p.nextMilestoneAt)) : null,
+  );
+}
+
 async function renderProjectsProjectView(root) {
-  const data = await api("/api/projects");
+  // includeClosed=1 so a project assigned to a since-closed goal still
+  // renders under its goal title rather than silently sliding into "No goal".
+  const [projData, goalsData] = await Promise.all([
+    api("/api/projects"),
+    api("/api/goals?includeClosed=1").catch(() => ({ goals: [] })),
+  ]);
   if (window.chatPromptBubbles) root.appendChild(window.chatPromptBubbles([
     "Which projects need attention this week?",
     "Summarize the status of each project",
     "What projects are blocked and why?",
   ]));
-  const grid = el("div", { class: "grid gap-3" });
-  if (!data.projects?.length) {
-    grid.appendChild(el("div", { class: "text-sm text-slate-500" }, "No projects yet."));
+
+  const projects = projData.projects || [];
+  if (!projects.length) {
+    root.appendChild(el("div", { class: "text-sm text-slate-500" }, "No projects yet."));
+    return;
   }
-  for (const p of data.projects || []) {
-    const health = (p.healthStatus || "").toLowerCase();
-    const dot = health === "off_track" ? "bg-rose-500"
-              : health === "at_risk"   ? "bg-amber-500"
-              : health === "on_track"  ? "bg-emerald-500"
-              : "bg-slate-300";
-    grid.appendChild(el("a", {
-      href: "#/projects/" + encodeURIComponent(p.projectId),
-      class: "block bg-white rounded-xl ring-1 ring-slate-200 hover:ring-indigo-300 p-4 transition",
-    },
-      el("div", { class: "flex items-center gap-3" },
-        el("span", { class: "w-2 h-2 rounded-full " + dot }),
-        el("div", { class: "flex-1 text-base font-medium text-ink" }, p.name || "(untitled)"),
-        el("span", { class: "text-xs text-slate-400" }, p.status || ""),
-      ),
-      p.nextMilestoneAt ? el("div", { class: "text-xs text-slate-500 mt-1" }, "Next milestone " + fmtDate(p.nextMilestoneAt)) : null,
+
+  // Group projects by goalId. Goals render in the order returned by the API
+  // (the tool already sorts by quarter/priority); orphans go in a "No goal"
+  // bucket at the bottom.
+  const goals = goalsData.goals || [];
+  const goalOrder = goals.map((g) => g.goalId);
+  const goalById = Object.fromEntries(goals.map((g) => [g.goalId, g]));
+  const buckets = new Map();
+  for (const id of goalOrder) buckets.set(id, []);
+  buckets.set("", []); // No-goal bucket — always last
+  for (const p of projects) {
+    const key = p.goalId && buckets.has(p.goalId) ? p.goalId
+              : p.goalId ? p.goalId // unknown/closed goal id we didn't index
+              : "";
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(p);
+  }
+
+  for (const [goalId, ps] of buckets) {
+    if (!ps.length) continue;
+    const goal = goalById[goalId];
+    const headerText = goal ? (goal.title || "(untitled goal)")
+                     : goalId ? "Unknown goal"
+                     : "No goal";
+    const subText = goal
+      ? [goal.quarter, goal.priority].filter(Boolean).join(" · ")
+      : "";
+    const section = el("section", { class: "space-y-2" });
+    section.appendChild(el("div", { class: "flex items-baseline gap-3 mt-2" },
+      el("h2", { class: "text-sm uppercase tracking-wide text-slate-500 font-medium" }, headerText),
+      subText ? el("span", { class: "text-xs text-slate-400" }, subText) : null,
+      el("span", { class: "text-xs text-slate-400" }, ps.length + " project" + (ps.length === 1 ? "" : "s")),
     ));
+    const grid = el("div", { class: "grid gap-3" });
+    for (const p of ps) grid.appendChild(projectCard(p));
+    section.appendChild(grid);
+    root.appendChild(section);
   }
-  root.appendChild(grid);
 }
 
 // ── Task View (cross-project sortable table) ───────────────────────────────
