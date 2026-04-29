@@ -300,11 +300,12 @@ function briefEditor({ kind, periodKey, brief, range }) {
             method: "PUT", body: { goalsMd: ta.value },
           });
         }
-        // Day plan may have pinned today tasks — re-route so the Today
-        // section reflects the new picks.
+        // Day plan may have pinned today tasks. The toast tells the user;
+        // the Today section will pick them up next time it refreshes (the
+        // show-completed toggle / plan review will refetch, otherwise the
+        // pins surface on next navigation).
         if (kind === "day" && data?.todayTaskKeys?.length) {
           toast(\`Marked \${data.todayTaskKeys.length} task(s) for today\`, "ok");
-          window.__cos.route();
         }
       } catch (err) { toast(err.message, "err"); }
       finally {
@@ -412,9 +413,6 @@ function isoToLocalInput(iso) {
 
 function meetingCard(m, opts = {}) {
   const { onChanged } = opts;
-  // Highlight when one or more invitees have declined — that's a signal to
-  // reschedule rather than show up. Personal-decline meetings are filtered
-  // out server-side, so any anyDeclined here is for *other* attendees.
   const declinedNames = Array.isArray(m.declinedAttendees) ? m.declinedAttendees : [];
   const ringClass = m.anyDeclined
     ? "ring-2 ring-rose-300 hover:ring-rose-400"
@@ -422,18 +420,26 @@ function meetingCard(m, opts = {}) {
   const card = el("div", {
     class: \`bg-white rounded-xl \${ringClass} p-4 space-y-2 cursor-pointer transition\`,
     onclick: (e) => {
-      // Don't open editor when the user clicks a real link inside the card.
       if (e.target.closest("a")) return;
-      openMeetingEditor(m, { onChanged: onChanged || (() => window.__cos.route()) });
+      openMeetingEditor(m, {
+        onSaved: applyMeetingSaved,
+        onChanged,
+      });
     },
   });
-  // Header: title + day/date/time
-  card.appendChild(el("div", { class: "flex items-baseline justify-between gap-3" },
-    el("div", { class: "text-sm font-medium text-ink truncate" }, m.title || "(untitled)"),
-    el("div", { class: "text-xs text-slate-500 shrink-0" },
-      [fmtDayDate(m.startTime), fmtTime(m.startTime) + " – " + fmtTime(m.endTime)]
-        .filter(Boolean).join(" · ")),
-  ));
+  // Header: title + day/date/time — kept as refs so we can update in place.
+  const titleEl = el("div", { class: "text-sm font-medium text-ink truncate" }, m.title || "(untitled)");
+  const timeEl = el("div", { class: "text-xs text-slate-500 shrink-0" },
+    [fmtDayDate(m.startTime), fmtTime(m.startTime) + " – " + fmtTime(m.endTime)]
+      .filter(Boolean).join(" · "));
+  card.appendChild(el("div", { class: "flex items-baseline justify-between gap-3" }, titleEl, timeEl));
+
+  function applyMeetingSaved(patch) {
+    Object.assign(m, patch);
+    titleEl.textContent = m.title || "(untitled)";
+    timeEl.textContent = [fmtDayDate(m.startTime), fmtTime(m.startTime) + " – " + fmtTime(m.endTime)]
+      .filter(Boolean).join(" · ");
+  }
   if (m.anyDeclined) {
     const who = declinedNames.length
       ? declinedNames.slice(0, 3).join(", ") + (declinedNames.length > 3 ? \` +\${declinedNames.length - 3}\` : "")
@@ -485,7 +491,7 @@ function meetingCard(m, opts = {}) {
   return card;
 }
 
-function openMeetingEditor(m, { onChanged } = {}) {
+function openMeetingEditor(m, { onChanged, onSaved } = {}) {
   if (!m.eventId) {
     toast("Missing eventId — can't edit this meeting", "err");
     return;
@@ -551,7 +557,8 @@ function openMeetingEditor(m, { onChanged } = {}) {
               location: locI.value,
             };
             await api(\`/api/calendar/\${encodeURIComponent(m.eventId)}\`, { method: "PATCH", body });
-            modal.close(); toast("Saved", "ok"); onChanged?.();
+            modal.close(); toast("Saved", "ok");
+            if (onSaved) onSaved(body); else onChanged?.();
           } catch (err) { toast(err.message, "err"); }
         },
       }, "Save"),
@@ -684,7 +691,8 @@ async function pageNow(main) {
   }
 
   // ── Focus now tray ──
-  root.appendChild(focusNowSection(data.focusTasks || [], data.quickWins || [], projectsById));
+  const focusSec = focusNowSection(data.focusTasks || [], data.quickWins || [], projectsById);
+  root.appendChild(focusSec);
 
   // ── Quick wins ──
   if (data.quickWins?.length) {
@@ -693,19 +701,27 @@ async function pageNow(main) {
     sec.appendChild(el("div", { class: "text-xs text-slate-500 mb-1" },
       "Small, prioritized things you could knock out right now."));
     for (const t of data.quickWins) {
+      const focusBtn = el("button", {
+        class: "shrink-0 px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200 hover:bg-indigo-100 text-xs",
+        title: "Add to focus list",
+        onclick: async () => {
+          if (focusSec._inFocus(t.taskKey)) { toast("Already in focus", "info"); return; }
+          focusBtn.disabled = true;
+          try {
+            await api("/api/focus-now", { method: "POST", body: { taskKey: t.taskKey } });
+            toast("Added to focus", "ok");
+            focusSec._addToFocus(t);
+            focusBtn.textContent = "✓ In focus";
+          } catch (err) {
+            focusBtn.disabled = false;
+            toast(err.message, "err");
+          }
+        },
+      }, focusSec._inFocus(t.taskKey) ? "✓ In focus" : "+ Focus");
+      if (focusSec._inFocus(t.taskKey)) focusBtn.disabled = true;
       const row = el("div", { class: "flex items-center gap-3 py-2" },
-        el("button", {
-          class: "shrink-0 px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200 hover:bg-indigo-100 text-xs",
-          title: "Add to focus list",
-          onclick: async () => {
-            try {
-              await api("/api/focus-now", { method: "POST", body: { taskKey: t.taskKey } });
-              toast("Added to focus", "ok"); window.__cos.route();
-            } catch (err) { toast(err.message, "err"); }
-          },
-        }, "+ Focus"),
-        el("div", { class: "flex-1" },
-          window.taskRow(t, { projectsById })),
+        focusBtn,
+        el("div", { class: "flex-1" }, window.taskRow(t, { projectsById })),
       );
       sec.appendChild(row);
     }
@@ -796,94 +812,179 @@ function recentMeetingCard(m) {
 
 function focusNowSection(focusTasks, quickWins, projectsById) {
   const sec = el("section", { class: "bg-amber-50 rounded-2xl ring-1 ring-amber-200 p-5 space-y-3" });
-  sec.appendChild(el("div", { class: "flex items-baseline justify-between gap-3" },
-    el("h2", { class: "text-lg font-semibold" }, "Focus now"),
-    focusTasks.length ? el("button", {
-      class: "text-xs px-3 py-1 rounded-full bg-white ring-1 ring-amber-300 text-amber-800 hover:bg-amber-100",
+  // Pool of taskKeys currently in focus (for the picker to skip), and a
+  // shared list-row container so we can append/remove without re-rendering.
+  const focusKeys = new Set(focusTasks.map((t) => t.taskKey));
+  const headerRow = el("div", { class: "flex items-baseline justify-between gap-3" });
+  const releaseBtn = el("button", {
+    class: "text-xs px-3 py-1 rounded-full bg-white ring-1 ring-amber-300 text-amber-800 hover:bg-amber-100",
+    onclick: async () => {
+      if (!confirm("Release the focus list?")) return;
+      try {
+        await api("/api/focus-now", { method: "DELETE", body: {} });
+        toast("Released", "ok");
+        focusKeys.clear();
+        listEl.innerHTML = "";
+        emptyMsg.style.display = "";
+        releaseBtn.style.display = "none";
+        rebuildPicker();
+      } catch (err) { toast(err.message, "err"); }
+    },
+  }, "Release");
+  if (!focusTasks.length) releaseBtn.style.display = "none";
+  headerRow.append(el("h2", { class: "text-lg font-semibold" }, "Focus now"), releaseBtn);
+  sec.appendChild(headerRow);
+
+  const emptyMsg = el("div", { class: "text-sm text-slate-600" },
+    "Pick a few tasks to focus on right now. Use the + Focus buttons below, or pick from the menu.");
+  if (focusTasks.length) emptyMsg.style.display = "none";
+  sec.appendChild(emptyMsg);
+
+  const listEl = el("div", { class: "space-y-2" });
+  sec.appendChild(listEl);
+
+  function makeFocusRow(t) {
+    const rowWrap = el("div", { class: "flex items-center gap-2 bg-white rounded-lg ring-1 ring-amber-200 px-2" });
+    rowWrap.dataset.taskKey = t.taskKey;
+    rowWrap.appendChild(el("div", { class: "flex-1" }, window.taskRow(t, { projectsById })));
+    rowWrap.appendChild(el("button", {
+      class: "text-xs text-slate-500 hover:text-rose-600 px-2",
+      title: "Remove from focus",
       onclick: async () => {
-        if (!confirm("Release the focus list?")) return;
         try {
-          await api("/api/focus-now", { method: "DELETE", body: {} });
-          toast("Released", "ok"); window.__cos.route();
+          await api("/api/focus-now/" + encodeURIComponent(t.taskKey), { method: "DELETE", body: {} });
+          rowWrap.remove();
+          focusKeys.delete(t.taskKey);
+          if (!focusKeys.size) {
+            emptyMsg.style.display = "";
+            releaseBtn.style.display = "none";
+          }
+          rebuildPicker();
         } catch (err) { toast(err.message, "err"); }
       },
-    }, "Release") : null,
-  ));
-  if (!focusTasks.length) {
-    sec.appendChild(el("div", { class: "text-sm text-slate-600" },
-      "Pick a few tasks to focus on right now. Use the + Focus buttons below, or pick from the menu."));
-    sec.appendChild(focusPicker(quickWins, projectsById));
-  } else {
-    for (const t of focusTasks) {
-      const row = el("div", { class: "flex items-center gap-2 bg-white rounded-lg ring-1 ring-amber-200 px-2" },
-        el("div", { class: "flex-1" },
-          window.taskRow(t, { projectsById })),
-        el("button", {
-          class: "text-xs text-slate-500 hover:text-rose-600 px-2",
-          title: "Remove from focus",
-          onclick: async () => {
-            try {
-              await api("/api/focus-now/" + encodeURIComponent(t.taskKey), { method: "DELETE", body: {} });
-              window.__cos.route();
-            } catch (err) { toast(err.message, "err"); }
-          },
-        }, "✕"),
-      );
-      sec.appendChild(row);
-    }
-    sec.appendChild(focusPicker(quickWins, projectsById));
+    }, "✕"));
+    return rowWrap;
   }
+
+  for (const t of focusTasks) listEl.appendChild(makeFocusRow(t));
+
+  // Picker — built/rebuilt to reflect what's already in focus.
+  const pickerWrap = el("div", { class: "pt-2" });
+  sec.appendChild(pickerWrap);
+  const quickWinsByKey = new Map((quickWins || []).map((t) => [t.taskKey, t]));
+
+  function rebuildPicker() {
+    pickerWrap.innerHTML = "";
+    const sel = el("select", { class: "w-full rounded-lg ring-1 ring-amber-200 bg-white px-3 py-2 text-sm" });
+    sel.appendChild(el("option", { value: "" }, "+ Add a task to focus on…"));
+    let pickable = 0;
+    for (const t of quickWins || []) {
+      if (focusKeys.has(t.taskKey)) continue;
+      sel.appendChild(el("option", { value: t.taskKey }, t.title));
+      pickable++;
+    }
+    if (!pickable) sel.disabled = true;
+    sel.addEventListener("change", async () => {
+      if (!sel.value) return;
+      const taskKey = sel.value;
+      const task = quickWinsByKey.get(taskKey);
+      try {
+        await api("/api/focus-now", { method: "POST", body: { taskKey } });
+        toast("Added", "ok");
+        if (task) addToFocus(task);
+      } catch (err) { toast(err.message, "err"); }
+    });
+    pickerWrap.appendChild(sel);
+  }
+  rebuildPicker();
+
+  function addToFocus(task) {
+    if (focusKeys.has(task.taskKey)) return;
+    focusKeys.add(task.taskKey);
+    emptyMsg.style.display = "none";
+    releaseBtn.style.display = "";
+    listEl.appendChild(makeFocusRow(task));
+    rebuildPicker();
+  }
+
+  // Expose so the Quick wins "+ Focus" buttons can promote without routing.
+  sec._addToFocus = addToFocus;
+  sec._inFocus = (taskKey) => focusKeys.has(taskKey);
   return sec;
 }
 
-function focusPicker(quickWins, projectsById) {
-  const wrap = el("div", { class: "pt-2" });
-  const sel = el("select", { class: "w-full rounded-lg ring-1 ring-amber-200 bg-white px-3 py-2 text-sm" });
-  sel.appendChild(el("option", { value: "" }, "+ Add a task to focus on…"));
-  for (const t of quickWins || []) {
-    sel.appendChild(el("option", { value: t.taskKey }, t.title));
-  }
-  sel.addEventListener("change", async () => {
-    if (!sel.value) return;
-    try {
-      await api("/api/focus-now", { method: "POST", body: { taskKey: sel.value } });
-      toast("Added", "ok"); window.__cos.route();
-    } catch (err) { toast(err.message, "err"); }
-  });
-  wrap.appendChild(sel);
-  return wrap;
-}
+function focusPicker() { /* deprecated — now built into focusNowSection */ return el("span"); }
 
 // ── Page: Today ────────────────────────────────────────────────────────────
 async function pageToday(main) {
-  const includeCompleted = showCompletedFlag("today");
-  const data = await api("/api/today" + (includeCompleted ? "?includeCompleted=1" : ""));
+  const initialIncludeCompleted = showCompletedFlag("today");
+  const data = await api("/api/today" + (initialIncludeCompleted ? "?includeCompleted=1" : ""));
   const projects = (await api("/api/projects")).projects || [];
   const projectsById = Object.fromEntries(projects.map((p) => [p.projectId, p]));
   main.innerHTML = "";
   const root = el("div", { class: "max-w-3xl mx-auto px-10 py-10 space-y-8" });
 
   // Section refs used by onCreated below to drop newly-created task rows
-  // into the page without a full re-render. Created lazily — the section
-  // is only attached to root once a task is added.
+  // into the page without a full re-render.
   const justAddedSec = el("section", { class: "space-y-1" });
+  // Holds whichever task list the server returned + an emptyState placeholder.
+  // Re-rendered in place when the show-completed toggle flips so the rest of
+  // the page (brief, plan/review modals, meetings) keeps its DOM.
+  const tasksHost = el("div", { class: "space-y-8" });
+
   function appendCreatedTask(newTask) {
     if (!justAddedSec.parentNode) {
       justAddedSec.appendChild(el("h2", { class: "text-lg font-semibold mb-2" }, "Just added"));
       justAddedSec.appendChild(el("div", { class: "text-xs text-slate-500 mb-1" },
         "Created in this view. Refresh to see them merged with the rest of today's list."));
-      // Insert near the top, just above whatever task sections came from the server.
-      root.appendChild(justAddedSec);
+      tasksHost.parentNode.insertBefore(justAddedSec, tasksHost);
     }
     justAddedSec.appendChild(taskRow(newTask, { projectsById }));
-    // Wipe the empty-state placeholder if it was rendered earlier.
-    if (emptyStateEl && emptyStateEl.parentNode) emptyStateEl.remove();
+    const emptyEl = tasksHost.querySelector("[data-empty-state]");
+    if (emptyEl) emptyEl.remove();
+  }
+
+  function renderTasks(payload) {
+    tasksHost.innerHTML = "";
+    const todayPicks = (payload.tasks || []).filter((t) => t.today);
+    const dueToday = (payload.tasks || []).filter((t) => !t.today);
+    if (todayPicks.length) {
+      const sec = el("section", { class: "space-y-1" });
+      sec.appendChild(el("h2", { class: "text-lg font-semibold mb-2" }, "Today's tasks"));
+      sec.appendChild(el("div", { class: "text-xs text-slate-500 mb-1" },
+        "Tasks you've picked for today. They stay here until completed, removed, or the day ends."));
+      for (const t of todayPicks) sec.appendChild(taskRow(t, { projectsById }));
+      tasksHost.appendChild(sec);
+    }
+    if (dueToday.length) {
+      const sec = el("section", { class: "space-y-1" });
+      sec.appendChild(el("h2", { class: "text-lg font-semibold mb-2" },
+        todayPicks.length ? "Also due today" : "Tasks"));
+      if (!todayPicks.length) {
+        sec.appendChild(el("div", { class: "text-xs text-slate-500 mb-1" },
+          "Tap the ★ to pick a task for today."));
+      }
+      for (const t of dueToday) sec.appendChild(taskRow(t, { projectsById }));
+      tasksHost.appendChild(sec);
+    }
+    if (!todayPicks.length && !dueToday.length) {
+      tasksHost.appendChild(el("section", { class: "text-sm text-slate-500", "data-empty-state": "1" },
+        "No tasks due today."));
+    }
+  }
+
+  async function refreshTasks() {
+    const includeCompleted = showCompletedFlag("today");
+    try {
+      const fresh = await api("/api/today" + (includeCompleted ? "?includeCompleted=1" : ""));
+      renderTasks(fresh);
+    } catch (err) { toast(err.message, "err"); }
   }
 
   root.appendChild(el("header", { class: "flex items-baseline justify-between gap-3" },
     el("h1", { class: "text-3xl font-semibold" }, new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })),
     el("div", { class: "flex items-center gap-3" },
-      showCompletedToggle("today", () => window.__cos.route()),
+      showCompletedToggle("today", refreshTasks),
       el("button", {
         class: "text-sm text-slate-500 hover:text-ink",
         onclick: () => openCreateTaskModal({ projectsById, onCreated: appendCreatedTask }),
@@ -897,41 +998,10 @@ async function pageToday(main) {
     "Reschedule anything I'll miss",
     "Draft my standup update",
   ]));
-  root.appendChild(planReviewButtons({ kind: "day", periodKey: data.date, brief: data.brief, onDone: () => window.__cos.route() }));
+  root.appendChild(planReviewButtons({ kind: "day", periodKey: data.date, brief: data.brief, onDone: refreshTasks }));
 
-  // Split tasks into Today picks vs. just-due-today so the user's
-  // explicit picks are visually separated from the "stuff due today"
-  // list. Both sections still use taskRow (so the Today toggle works
-  // in both directions).
-  const todayPicks = (data.tasks || []).filter((t) => t.today);
-  const dueToday = (data.tasks || []).filter((t) => !t.today);
-
-  if (todayPicks.length) {
-    const sec = el("section", { class: "space-y-1" });
-    sec.appendChild(el("h2", { class: "text-lg font-semibold mb-2" }, "Today's tasks"));
-    sec.appendChild(el("div", { class: "text-xs text-slate-500 mb-1" },
-      "Tasks you've picked for today. They stay here until completed, removed, or the day ends."));
-    for (const t of todayPicks) sec.appendChild(taskRow(t, { projectsById }));
-    root.appendChild(sec);
-  }
-
-  if (dueToday.length) {
-    const sec = el("section", { class: "space-y-1" });
-    sec.appendChild(el("h2", { class: "text-lg font-semibold mb-2" },
-      todayPicks.length ? "Also due today" : "Tasks"));
-    if (!todayPicks.length) {
-      sec.appendChild(el("div", { class: "text-xs text-slate-500 mb-1" },
-        "Tap the ★ to pick a task for today."));
-    }
-    for (const t of dueToday) sec.appendChild(taskRow(t, { projectsById }));
-    root.appendChild(sec);
-  }
-
-  let emptyStateEl = null;
-  if (!todayPicks.length && !dueToday.length) {
-    emptyStateEl = el("section", { class: "text-sm text-slate-500" }, "No tasks due today.");
-    root.appendChild(emptyStateEl);
-  }
+  root.appendChild(tasksHost);
+  renderTasks(data);
 
   if (data.meetings?.length) {
     const sec = el("section", { class: "space-y-3" });
@@ -945,17 +1015,36 @@ async function pageToday(main) {
 
 // ── Page: This Week ────────────────────────────────────────────────────────
 async function pageWeek(main) {
-  const includeCompleted = showCompletedFlag("week");
-  const data = await api("/api/week" + (includeCompleted ? "?includeCompleted=1" : ""));
+  const initialIncludeCompleted = showCompletedFlag("week");
+  const data = await api("/api/week" + (initialIncludeCompleted ? "?includeCompleted=1" : ""));
   const projects = (await api("/api/projects")).projects || [];
   const projectsById = Object.fromEntries(projects.map((p) => [p.projectId, p]));
   main.innerHTML = "";
   const root = el("div", { class: "max-w-3xl mx-auto px-10 py-10 space-y-8" });
   const weekRange = data.from && data.to ? \`\${fmtDate(data.from)} – \${fmtDate(data.to)}\` : data.periodKey;
+
+  const tasksHost = el("div", { class: "space-y-8" });
+  function renderWeekTasks(payload) {
+    tasksHost.innerHTML = "";
+    if (payload.tasks?.length) {
+      const sec = el("section", { class: "space-y-1" });
+      sec.appendChild(el("h2", { class: "text-lg font-semibold mb-2" }, "Tasks"));
+      for (const t of payload.tasks) sec.appendChild(taskRow(t, { projectsById }));
+      tasksHost.appendChild(sec);
+    }
+  }
+  async function refreshWeekTasks() {
+    const includeCompleted = showCompletedFlag("week");
+    try {
+      const fresh = await api("/api/week" + (includeCompleted ? "?includeCompleted=1" : ""));
+      renderWeekTasks(fresh);
+    } catch (err) { toast(err.message, "err"); }
+  }
+
   root.appendChild(el("header", { class: "flex items-baseline justify-between gap-3" },
     el("h1", { class: "text-3xl font-semibold" }, "This Week"),
     el("div", { class: "flex items-center gap-3" },
-      showCompletedToggle("week", () => window.__cos.route()),
+      showCompletedToggle("week", refreshWeekTasks),
       el("span", { class: "text-sm text-slate-500" }, weekRange),
     ),
   ));
@@ -965,14 +1054,10 @@ async function pageWeek(main) {
     "Which projects are at risk?",
     "Who do I need to follow up with?",
   ]));
-  root.appendChild(planReviewButtons({ kind: "week", periodKey: data.periodKey, brief: data.brief, onDone: () => window.__cos.route() }));
+  root.appendChild(planReviewButtons({ kind: "week", periodKey: data.periodKey, brief: data.brief, onDone: refreshWeekTasks }));
 
-  if (data.tasks?.length) {
-    const sec = el("section", { class: "space-y-1" });
-    sec.appendChild(el("h2", { class: "text-lg font-semibold mb-2" }, "Tasks"));
-    for (const t of data.tasks) sec.appendChild(taskRow(t, { projectsById }));
-    root.appendChild(sec);
-  }
+  root.appendChild(tasksHost);
+  renderWeekTasks(data);
 
   if (data.meetings?.length) {
     const sec = el("section", { class: "space-y-3" });
