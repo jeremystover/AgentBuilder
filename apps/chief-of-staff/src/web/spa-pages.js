@@ -15,18 +15,20 @@ export const SPA_PAGES_JS = `
 // ── Task row (used on Today, This Week, Projects, People) ──────────────────
 function taskRow(task, opts = {}) {
   const { showProject = true, projectsById = {}, onChanged, showTodayToggle = true } = opts;
-  const pri = (task.priority || "").toLowerCase();
-  const priColor = pri === "high" ? "bg-rose-100 text-rose-700"
-                 : pri === "medium" ? "bg-amber-100 text-amber-800"
-                 : pri ? "bg-slate-100 text-slate-600"
-                 : "bg-slate-50 text-slate-400";
-  const due = task.dueAt ? fmtDate(task.dueAt) : "";
-  const overdue = isOverdue(task.dueAt);
+
+  const priClassFor = (p) => {
+    const pp = (p || "").toLowerCase();
+    return pp === "high" ? "bg-rose-100 text-rose-700"
+         : pp === "medium" ? "bg-amber-100 text-amber-800"
+         : pp ? "bg-slate-100 text-slate-600"
+         : "bg-slate-50 text-slate-400";
+  };
+  const PRI_BASE = "text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border-0 cursor-pointer appearance-none focus:outline-none focus:ring-2 focus:ring-indigo-300";
   const projName = task.projectId && projectsById[task.projectId]
     ? projectsById[task.projectId].name : "";
 
   // Mutable state captured by closures so we can update the row in place
-  // after a complete/star toggle without re-rendering the whole page.
+  // after a complete/star/save without re-rendering the whole page.
   // The server returns fresh state on the next route(); these in-DOM
   // updates only need to last until the user navigates away.
   let row;
@@ -36,34 +38,40 @@ function taskRow(task, opts = {}) {
   const TODAY_BTN_OFF = "shrink-0 w-6 h-6 rounded-full text-sm leading-none transition flex items-center justify-center text-slate-300 hover:text-amber-500 hover:bg-amber-50";
   const ROW_ON  = "group flex items-center gap-3 py-2.5 px-3 -mx-3 rounded-lg bg-amber-50/60 hover:bg-amber-50 cursor-pointer";
   const ROW_OFF = "group flex items-center gap-3 py-2.5 px-3 -mx-3 rounded-lg hover:bg-slate-50 cursor-pointer";
+  const DUE_BASE = "text-xs shrink-0";
+
+  function animateRemove() {
+    if (!row) return;
+    row.style.transition = "opacity 200ms ease, max-height 250ms ease, margin 250ms ease, padding 250ms ease";
+    row.style.pointerEvents = "none";
+    row.style.maxHeight = row.offsetHeight + "px";
+    requestAnimationFrame(() => {
+      row.style.maxHeight = "0";
+      row.style.marginTop = "0";
+      row.style.marginBottom = "0";
+      row.style.paddingTop = "0";
+      row.style.paddingBottom = "0";
+      row.style.opacity = "0";
+    });
+    setTimeout(() => row.remove(), 260);
+  }
 
   const checkbox = el("button", {
     class: "shrink-0 w-5 h-5 rounded-full border-2 border-slate-300 hover:border-emerald-500 transition flex items-center justify-center",
     title: "Mark complete",
     onclick: async (e) => {
       e.stopPropagation();
-      // Optimistically fade the row out — fire the API in the background
+      // Optimistically dim the row — fire the API in the background
       // and restore on failure rather than triggering a full re-route.
       if (row) {
-        row.style.transition = "opacity 200ms ease, max-height 250ms ease, margin 250ms ease, padding 250ms ease";
+        row.style.transition = "opacity 200ms ease";
         row.style.pointerEvents = "none";
         row.style.opacity = "0.4";
       }
       try {
         await api(\`/api/tasks/\${encodeURIComponent(task.taskKey)}/complete\`, { method: "POST", body: {} });
         toast("Completed", "ok");
-        if (row) {
-          row.style.maxHeight = row.offsetHeight + "px";
-          requestAnimationFrame(() => {
-            row.style.maxHeight = "0";
-            row.style.marginTop = "0";
-            row.style.marginBottom = "0";
-            row.style.paddingTop = "0";
-            row.style.paddingBottom = "0";
-            row.style.opacity = "0";
-          });
-          setTimeout(() => row.remove(), 260);
-        }
+        animateRemove();
       } catch (err) {
         if (row) {
           row.style.opacity = "";
@@ -82,7 +90,6 @@ function taskRow(task, opts = {}) {
     onclick: async (e) => {
       e.stopPropagation();
       const next = !todayState;
-      // Optimistic UI update — flip styles immediately, revert on failure.
       todayState = next;
       task.today = next;
       todayBtn.className = next ? TODAY_BTN_ON : TODAY_BTN_OFF;
@@ -109,17 +116,25 @@ function taskRow(task, opts = {}) {
 
   // Inline priority dropdown — click to change without opening the editor.
   const priSel = el("select", {
-    class: \`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border-0 cursor-pointer appearance-none focus:outline-none focus:ring-2 focus:ring-indigo-300 \${priColor}\`,
+    class: PRI_BASE + " " + priClassFor(task.priority),
     onclick: (e) => e.stopPropagation(),
     onchange: async (e) => {
       e.stopPropagation();
+      const newPri = e.target.value;
+      const prevPri = task.priority || "";
+      task.priority = newPri;
+      priSel.className = PRI_BASE + " " + priClassFor(newPri);
       try {
         await api(\`/api/tasks/\${encodeURIComponent(task.taskKey)}\`, {
-          method: "PATCH", body: { patch: { priority: e.target.value } },
+          method: "PATCH", body: { patch: { priority: newPri } },
         });
         toast("Priority updated", "ok");
-        onChanged?.();
-      } catch (err) { toast(err.message, "err"); }
+      } catch (err) {
+        task.priority = prevPri;
+        priSel.value = prevPri;
+        priSel.className = PRI_BASE + " " + priClassFor(prevPri);
+        toast(err.message, "err");
+      }
     },
   });
   for (const [v, l] of [["", "— pri"], ["high", "HIGH"], ["medium", "MED"], ["low", "LOW"]]) {
@@ -128,27 +143,55 @@ function taskRow(task, opts = {}) {
     priSel.appendChild(o);
   }
 
+  const titleEl = el("div", { class: "text-sm text-ink truncate" }, task.title || "");
+  const projEl = el("span", { class: "text-xs text-slate-500 truncate" }, projName);
+  if (!(showProject && projName)) projEl.style.display = "none";
+  const dueEl = el("span", { class: DUE_BASE }, "");
+  function renderDue() {
+    if (!task.dueAt) { dueEl.style.display = "none"; dueEl.textContent = ""; return; }
+    dueEl.style.display = "";
+    dueEl.textContent = fmtDate(task.dueAt);
+    const overdue = isOverdue(task.dueAt);
+    dueEl.className = DUE_BASE + (overdue ? " text-rose-600 font-medium" : " text-slate-500");
+  }
+  renderDue();
+
+  // Editor callbacks — applied after a successful save/complete from the
+  // edit modal so the row updates in place without a full re-render.
+  function applySaved(updated) {
+    Object.assign(task, updated);
+    titleEl.textContent = task.title || "";
+    priSel.value = task.priority || "";
+    priSel.className = PRI_BASE + " " + priClassFor(task.priority);
+    renderDue();
+    if (showProject) {
+      const name = task.projectId && projectsById[task.projectId]
+        ? projectsById[task.projectId].name : "";
+      projEl.textContent = name;
+      projEl.style.display = name ? "" : "none";
+    }
+  }
+
   row = el("div", {
     class: todayState ? ROW_ON : ROW_OFF,
-    onclick: () => openTaskEditor(task, { onChanged }),
+    onclick: () => openTaskEditor(task, {
+      onSaved: applySaved,
+      onCompleted: animateRemove,
+      onChanged,
+    }),
   },
     checkbox,
     todayBtn,
     el("div", { class: "flex-1 min-w-0" },
-      el("div", { class: "text-sm text-ink truncate" }, task.title),
-      el("div", { class: "flex items-center gap-2 mt-0.5" },
-        priSel,
-        showProject && projName ? el("span", { class: "text-xs text-slate-500 truncate" }, projName) : null,
-      ),
+      titleEl,
+      el("div", { class: "flex items-center gap-2 mt-0.5" }, priSel, projEl),
     ),
-    due ? el("span", {
-      class: \`text-xs \${overdue ? "text-rose-600 font-medium" : "text-slate-500"} shrink-0\`,
-    }, due) : null,
+    dueEl,
   );
   return row;
 }
 
-function openTaskEditor(task, { onChanged } = {}) {
+function openTaskEditor(task, { onChanged, onSaved, onCompleted } = {}) {
   const titleI = el("input", {
     type: "text", value: task.title || "",
     class: "w-full text-lg font-medium rounded-lg ring-1 ring-slate-200 px-3 py-2 focus:ring-indigo-400 focus:outline-none",
@@ -187,7 +230,10 @@ function openTaskEditor(task, { onChanged } = {}) {
           if (!confirm("Mark task as done?")) return;
           try {
             await api(\`/api/tasks/\${encodeURIComponent(task.taskKey)}/complete\`, { method: "POST", body: {} });
-            modal.close(); toast("Completed", "ok"); onChanged?.();
+            modal.close(); toast("Completed", "ok");
+            // Prefer in-place row updates over a full re-render. Fall back
+            // to onChanged for callers that don't supply onCompleted.
+            if (onCompleted) onCompleted(); else onChanged?.();
           } catch (err) { toast(err.message, "err"); }
         },
       }, "Mark complete"),
@@ -202,7 +248,8 @@ function openTaskEditor(task, { onChanged } = {}) {
           };
           try {
             await api(\`/api/tasks/\${encodeURIComponent(task.taskKey)}\`, { method: "PATCH", body: { patch } });
-            modal.close(); toast("Saved", "ok"); onChanged?.();
+            modal.close(); toast("Saved", "ok");
+            if (onSaved) onSaved(patch); else onChanged?.();
           } catch (err) { toast(err.message, "err"); }
         },
       }, "Save"),
@@ -658,7 +705,7 @@ async function pageNow(main) {
           },
         }, "+ Focus"),
         el("div", { class: "flex-1" },
-          window.taskRow(t, { projectsById, onChanged: () => window.__cos.route() })),
+          window.taskRow(t, { projectsById })),
       );
       sec.appendChild(row);
     }
@@ -770,7 +817,7 @@ function focusNowSection(focusTasks, quickWins, projectsById) {
     for (const t of focusTasks) {
       const row = el("div", { class: "flex items-center gap-2 bg-white rounded-lg ring-1 ring-amber-200 px-2" },
         el("div", { class: "flex-1" },
-          window.taskRow(t, { projectsById, onChanged: () => window.__cos.route() })),
+          window.taskRow(t, { projectsById })),
         el("button", {
           class: "text-xs text-slate-500 hover:text-rose-600 px-2",
           title: "Remove from focus",
@@ -815,13 +862,31 @@ async function pageToday(main) {
   const projectsById = Object.fromEntries(projects.map((p) => [p.projectId, p]));
   main.innerHTML = "";
   const root = el("div", { class: "max-w-3xl mx-auto px-10 py-10 space-y-8" });
+
+  // Section refs used by onCreated below to drop newly-created task rows
+  // into the page without a full re-render. Created lazily — the section
+  // is only attached to root once a task is added.
+  const justAddedSec = el("section", { class: "space-y-1" });
+  function appendCreatedTask(newTask) {
+    if (!justAddedSec.parentNode) {
+      justAddedSec.appendChild(el("h2", { class: "text-lg font-semibold mb-2" }, "Just added"));
+      justAddedSec.appendChild(el("div", { class: "text-xs text-slate-500 mb-1" },
+        "Created in this view. Refresh to see them merged with the rest of today's list."));
+      // Insert near the top, just above whatever task sections came from the server.
+      root.appendChild(justAddedSec);
+    }
+    justAddedSec.appendChild(taskRow(newTask, { projectsById }));
+    // Wipe the empty-state placeholder if it was rendered earlier.
+    if (emptyStateEl && emptyStateEl.parentNode) emptyStateEl.remove();
+  }
+
   root.appendChild(el("header", { class: "flex items-baseline justify-between gap-3" },
     el("h1", { class: "text-3xl font-semibold" }, new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })),
     el("div", { class: "flex items-center gap-3" },
       showCompletedToggle("today", () => window.__cos.route()),
       el("button", {
         class: "text-sm text-slate-500 hover:text-ink",
-        onclick: () => openCreateTaskModal({ projectsById, onChanged: () => window.__cos.route() }),
+        onclick: () => openCreateTaskModal({ projectsById, onCreated: appendCreatedTask }),
       }, "+ New task"),
     ),
   ));
@@ -846,7 +911,7 @@ async function pageToday(main) {
     sec.appendChild(el("h2", { class: "text-lg font-semibold mb-2" }, "Today's tasks"));
     sec.appendChild(el("div", { class: "text-xs text-slate-500 mb-1" },
       "Tasks you've picked for today. They stay here until completed, removed, or the day ends."));
-    for (const t of todayPicks) sec.appendChild(taskRow(t, { projectsById, onChanged: () => window.__cos.route() }));
+    for (const t of todayPicks) sec.appendChild(taskRow(t, { projectsById }));
     root.appendChild(sec);
   }
 
@@ -858,12 +923,14 @@ async function pageToday(main) {
       sec.appendChild(el("div", { class: "text-xs text-slate-500 mb-1" },
         "Tap the ★ to pick a task for today."));
     }
-    for (const t of dueToday) sec.appendChild(taskRow(t, { projectsById, onChanged: () => window.__cos.route() }));
+    for (const t of dueToday) sec.appendChild(taskRow(t, { projectsById }));
     root.appendChild(sec);
   }
 
+  let emptyStateEl = null;
   if (!todayPicks.length && !dueToday.length) {
-    root.appendChild(el("section", { class: "text-sm text-slate-500" }, "No tasks due today."));
+    emptyStateEl = el("section", { class: "text-sm text-slate-500" }, "No tasks due today.");
+    root.appendChild(emptyStateEl);
   }
 
   if (data.meetings?.length) {
@@ -903,7 +970,7 @@ async function pageWeek(main) {
   if (data.tasks?.length) {
     const sec = el("section", { class: "space-y-1" });
     sec.appendChild(el("h2", { class: "text-lg font-semibold mb-2" }, "Tasks"));
-    for (const t of data.tasks) sec.appendChild(taskRow(t, { projectsById, onChanged: () => window.__cos.route() }));
+    for (const t of data.tasks) sec.appendChild(taskRow(t, { projectsById }));
     root.appendChild(sec);
   }
 
