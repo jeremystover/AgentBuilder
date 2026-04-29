@@ -80,46 +80,274 @@ async function openCreateTaskModal({ projectsById = {}, onChanged, onCreated } =
 }
 
 // ── Page: Projects (list) ──────────────────────────────────────────────────
+// Tabbed shell: "Project View" (the original list) and "Task View" (a
+// cross-project sortable task table). Tab choice is sticky in localStorage so
+// route() re-renders land back on the same tab.
+function projectsTabFlag() {
+  try {
+    const v = localStorage.getItem("cos:projectsTab");
+    return v === "tasks" ? "tasks" : "projects";
+  } catch { return "projects"; }
+}
+function setProjectsTabFlag(v) {
+  try { localStorage.setItem("cos:projectsTab", v); } catch {}
+}
+
+function projectsTabBar(active, onChange) {
+  const wrap = el("div", { class: "border-b border-slate-200 flex gap-6" });
+  const make = (id, label) => {
+    const isOn = active === id;
+    return el("button", {
+      class: isOn
+        ? "py-2 -mb-px border-b-2 border-ink text-ink font-medium text-sm"
+        : "py-2 -mb-px border-b-2 border-transparent text-slate-500 hover:text-ink text-sm",
+      onclick: () => { setProjectsTabFlag(id); onChange(id); },
+    }, label);
+  };
+  wrap.appendChild(make("projects", "Project View"));
+  wrap.appendChild(make("tasks", "Task View"));
+  return wrap;
+}
+
 async function pageProjects(main) {
-  const data = await api("/api/projects");
+  const tab = projectsTabFlag();
   main.innerHTML = "";
-  const root = el("div", { class: "max-w-3xl mx-auto px-10 py-10 space-y-6" });
+  const root = el("div", { class: "max-w-5xl mx-auto px-10 py-10 space-y-6" });
+
+  const headerRight = tab === "projects"
+    ? el("button", {
+        class: "text-sm text-slate-500 hover:text-ink",
+        onclick: () => openCreateProjectModal({ onChanged: () => $$.route() }),
+      }, "+ New project")
+    : el("button", {
+        class: "text-sm text-slate-500 hover:text-ink",
+        onclick: async () => {
+          const projects = (await api("/api/projects")).projects || [];
+          const projectsById = Object.fromEntries(projects.map((p) => [p.projectId, p]));
+          openCreateTaskModal({ projectsById, onChanged: () => $$.route() });
+        },
+      }, "+ New task");
+
   root.appendChild(el("header", { class: "flex items-baseline justify-between" },
     el("h1", { class: "text-3xl font-semibold" }, "Projects"),
-    el("button", {
-      class: "text-sm text-slate-500 hover:text-ink",
-      onclick: () => openCreateProjectModal({ onChanged: () => $$.route() }),
-    }, "+ New project"),
+    headerRight,
   ));
+  root.appendChild(projectsTabBar(tab, () => $$.route()));
+
+  if (tab === "tasks") {
+    await renderProjectsTaskView(root);
+  } else {
+    await renderProjectsProjectView(root);
+  }
+  main.appendChild(root);
+}
+
+function projectCard(p) {
+  const health = (p.healthStatus || "").toLowerCase();
+  const dot = health === "off_track" ? "bg-rose-500"
+            : health === "at_risk"   ? "bg-amber-500"
+            : health === "on_track"  ? "bg-emerald-500"
+            : "bg-slate-300";
+  return el("a", {
+    href: "#/projects/" + encodeURIComponent(p.projectId),
+    class: "block bg-white rounded-xl ring-1 ring-slate-200 hover:ring-indigo-300 p-4 transition",
+  },
+    el("div", { class: "flex items-center gap-3" },
+      el("span", { class: "w-2 h-2 rounded-full " + dot }),
+      el("div", { class: "flex-1 text-base font-medium text-ink" }, p.name || "(untitled)"),
+      el("span", { class: "text-xs text-slate-400" }, p.status || ""),
+    ),
+    p.nextMilestoneAt ? el("div", { class: "text-xs text-slate-500 mt-1" }, "Next milestone " + fmtDate(p.nextMilestoneAt)) : null,
+  );
+}
+
+async function renderProjectsProjectView(root) {
+  // includeClosed=1 so a project assigned to a since-closed goal still
+  // renders under its goal title rather than silently sliding into "No goal".
+  const [projData, goalsData] = await Promise.all([
+    api("/api/projects"),
+    api("/api/goals?includeClosed=1").catch(() => ({ goals: [] })),
+  ]);
   if (window.chatPromptBubbles) root.appendChild(window.chatPromptBubbles([
     "Which projects need attention this week?",
     "Summarize the status of each project",
     "What projects are blocked and why?",
   ]));
-  const grid = el("div", { class: "grid gap-3" });
-  if (!data.projects?.length) {
-    grid.appendChild(el("div", { class: "text-sm text-slate-500" }, "No projects yet."));
+
+  const projects = projData.projects || [];
+  if (!projects.length) {
+    root.appendChild(el("div", { class: "text-sm text-slate-500" }, "No projects yet."));
+    return;
   }
-  for (const p of data.projects || []) {
-    const health = (p.healthStatus || "").toLowerCase();
-    const dot = health === "off_track" ? "bg-rose-500"
-              : health === "at_risk"   ? "bg-amber-500"
-              : health === "on_track"  ? "bg-emerald-500"
-              : "bg-slate-300";
-    grid.appendChild(el("a", {
-      href: "#/projects/" + encodeURIComponent(p.projectId),
-      class: "block bg-white rounded-xl ring-1 ring-slate-200 hover:ring-indigo-300 p-4 transition",
-    },
-      el("div", { class: "flex items-center gap-3" },
-        el("span", { class: "w-2 h-2 rounded-full " + dot }),
-        el("div", { class: "flex-1 text-base font-medium text-ink" }, p.name || "(untitled)"),
-        el("span", { class: "text-xs text-slate-400" }, p.status || ""),
-      ),
-      p.nextMilestoneAt ? el("div", { class: "text-xs text-slate-500 mt-1" }, "Next milestone " + fmtDate(p.nextMilestoneAt)) : null,
+
+  // Group projects by goalId. Goals render in the order returned by the API
+  // (the tool already sorts by quarter/priority); orphans go in a "No goal"
+  // bucket at the bottom.
+  const goals = goalsData.goals || [];
+  const goalOrder = goals.map((g) => g.goalId);
+  const goalById = Object.fromEntries(goals.map((g) => [g.goalId, g]));
+  const buckets = new Map();
+  for (const id of goalOrder) buckets.set(id, []);
+  buckets.set("", []); // No-goal bucket — always last
+  for (const p of projects) {
+    const key = p.goalId && buckets.has(p.goalId) ? p.goalId
+              : p.goalId ? p.goalId // unknown/closed goal id we didn't index
+              : "";
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(p);
+  }
+
+  for (const [goalId, ps] of buckets) {
+    if (!ps.length) continue;
+    const goal = goalById[goalId];
+    const headerText = goal ? (goal.title || "(untitled goal)")
+                     : goalId ? "Unknown goal"
+                     : "No goal";
+    const subText = goal
+      ? [goal.quarter, goal.priority].filter(Boolean).join(" · ")
+      : "";
+    const section = el("section", { class: "space-y-2" });
+    section.appendChild(el("div", { class: "flex items-baseline gap-3 mt-2" },
+      el("h2", { class: "text-sm uppercase tracking-wide text-slate-500 font-medium" }, headerText),
+      subText ? el("span", { class: "text-xs text-slate-400" }, subText) : null,
+      el("span", { class: "text-xs text-slate-400" }, ps.length + " project" + (ps.length === 1 ? "" : "s")),
     ));
+    const grid = el("div", { class: "grid gap-3" });
+    for (const p of ps) grid.appendChild(projectCard(p));
+    section.appendChild(grid);
+    root.appendChild(section);
   }
-  root.appendChild(grid);
-  main.appendChild(root);
+}
+
+// ── Task View (cross-project sortable table) ───────────────────────────────
+function projectsTaskSort() {
+  try {
+    const raw = localStorage.getItem("cos:projectsTaskSort");
+    if (!raw) return { key: "dueAt", dir: "asc" };
+    const parsed = JSON.parse(raw);
+    return parsed && parsed.key ? parsed : { key: "dueAt", dir: "asc" };
+  } catch { return { key: "dueAt", dir: "asc" }; }
+}
+function setProjectsTaskSort(s) {
+  try { localStorage.setItem("cos:projectsTaskSort", JSON.stringify(s)); } catch {}
+}
+
+function priorityRank(p) {
+  const v = String(p || "").toLowerCase();
+  return v === "high" ? 3 : v === "medium" ? 2 : v === "low" ? 1 : 0;
+}
+
+function compareTasks(a, b, key) {
+  if (key === "title") {
+    return String(a.title || "").localeCompare(String(b.title || ""));
+  }
+  if (key === "projectName") {
+    return String(a.projectName || "").localeCompare(String(b.projectName || ""));
+  }
+  if (key === "priority") {
+    return priorityRank(a.priority) - priorityRank(b.priority);
+  }
+  if (key === "status") {
+    return String(a.status || "").localeCompare(String(b.status || ""));
+  }
+  // dueAt — empty due dates sort last regardless of direction.
+  const av = a.dueAt ? Date.parse(a.dueAt) : Number.POSITIVE_INFINITY;
+  const bv = b.dueAt ? Date.parse(b.dueAt) : Number.POSITIVE_INFINITY;
+  if (av === bv) return 0;
+  return av < bv ? -1 : 1;
+}
+
+async function renderProjectsTaskView(root) {
+  const includeCompleted = window.showCompletedFlag("projects-tasks");
+  const data = await api("/api/tasks" + (includeCompleted ? "?includeCompleted=1" : ""));
+  const tasks = data.tasks || [];
+
+  if (window.chatPromptBubbles) root.appendChild(window.chatPromptBubbles([
+    "What's overdue across all projects?",
+    "Which tasks are due this week?",
+    "What should I focus on next?",
+  ]));
+
+  const controls = el("div", { class: "flex items-center justify-between" },
+    el("div", { class: "text-sm text-slate-500" },
+      tasks.length + " task" + (tasks.length === 1 ? "" : "s")),
+    window.showCompletedToggle("projects-tasks", () => $$.route()),
+  );
+  root.appendChild(controls);
+
+  if (!tasks.length) {
+    root.appendChild(el("div", { class: "text-sm text-slate-500" }, "No tasks."));
+    return;
+  }
+
+  const sort = projectsTaskSort();
+  const sorted = tasks.slice().sort((a, b) => {
+    const cmp = compareTasks(a, b, sort.key);
+    return sort.dir === "desc" ? -cmp : cmp;
+  });
+
+  const headerCell = (key, label, extra = "") => {
+    const isOn = sort.key === key;
+    const arrow = isOn ? (sort.dir === "asc" ? " ↑" : " ↓") : "";
+    return el("th", {
+      class: "text-left text-xs uppercase tracking-wide text-slate-500 font-medium px-3 py-2 cursor-pointer select-none hover:text-ink " + extra,
+      onclick: () => {
+        const next = isOn ? (sort.dir === "asc" ? "desc" : "asc") : "asc";
+        setProjectsTaskSort({ key, dir: next });
+        $$.route();
+      },
+    }, label + arrow);
+  };
+
+  const table = el("table", { class: "w-full bg-white rounded-xl ring-1 ring-slate-200 overflow-hidden" });
+  const thead = el("thead", { class: "bg-slate-50 border-b border-slate-200" });
+  thead.appendChild(el("tr", {},
+    headerCell("title", "Task"),
+    headerCell("projectName", "Project"),
+    headerCell("priority", "Priority"),
+    headerCell("dueAt", "Due"),
+    headerCell("status", "Status"),
+  ));
+  table.appendChild(thead);
+
+  const tbody = el("tbody", {});
+  for (const t of sorted) {
+    const pri = (t.priority || "").toLowerCase();
+    const priClass = pri === "high" ? "bg-rose-100 text-rose-700"
+                   : pri === "medium" ? "bg-amber-100 text-amber-800"
+                   : pri === "low" ? "bg-slate-100 text-slate-600"
+                   : "text-slate-400";
+    const due = t.dueAt ? fmtDate(t.dueAt) : "";
+    const overdue = isOverdue(t.dueAt);
+    const dueClass = overdue ? "text-rose-600 font-medium" : "text-slate-600";
+    const statusLabel = String(t.status || "open");
+    const statusClass = statusLabel.toLowerCase() === "done" ? "text-emerald-600" : "text-slate-600";
+
+    const tr = el("tr", {
+      class: "border-b border-slate-100 last:border-0 hover:bg-slate-50 cursor-pointer",
+      onclick: () => window.openTaskEditor(t, { onChanged: () => $$.route() }),
+    });
+    tr.appendChild(el("td", { class: "px-3 py-2 text-sm text-ink" }, t.title || "(untitled)"));
+    tr.appendChild(el("td", { class: "px-3 py-2 text-sm" },
+      t.projectId
+        ? el("a", {
+            href: "#/projects/" + encodeURIComponent(t.projectId),
+            class: "text-slate-600 hover:text-ink hover:underline",
+            onclick: (e) => e.stopPropagation(),
+          }, t.projectName || t.projectId)
+        : el("span", { class: "text-slate-400" }, "—"),
+    ));
+    tr.appendChild(el("td", { class: "px-3 py-2" },
+      pri
+        ? el("span", { class: "text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded " + priClass }, pri)
+        : el("span", { class: "text-xs text-slate-400" }, "—"),
+    ));
+    tr.appendChild(el("td", { class: "px-3 py-2 text-sm " + dueClass }, due || "—"));
+    tr.appendChild(el("td", { class: "px-3 py-2 text-sm " + statusClass }, statusLabel));
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  root.appendChild(el("div", { class: "overflow-x-auto" }, table));
 }
 
 function openCreateProjectModal({ onChanged } = {}) {
