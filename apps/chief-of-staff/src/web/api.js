@@ -18,6 +18,14 @@ function isOpenStatus(s) {
   return !v || v === "open" || v === "in_progress" || v === "pending" || v === "todo" || v === "active";
 }
 
+// Soft-deleted ('deleted') or abandoned ('dropped') projects should be
+// treated as if they don't exist for any UI surface — list endpoints,
+// task lookups, meeting prep, etc. The row stays in Sheets for audit.
+function isVisibleProject(p) {
+  const s = String(p?.status || "").toLowerCase();
+  return s !== "deleted" && s !== "dropped";
+}
+
 function startOfDay(d) {
   const out = new Date(d);
   out.setHours(0, 0, 0, 0);
@@ -414,7 +422,7 @@ export async function handleApiRequest(request, ctx) {
 
   // ── Projects ─────────────────────────────────────────────────────────────
   if (method === "GET" && path === "/api/projects") {
-    const projects = await readAll(sheets, "Projects");
+    const projects = (await readAll(sheets, "Projects")).filter(isVisibleProject);
     return jsonResponse({
       projects: projects.map((p) => ({
         projectId: p.projectId,
@@ -435,6 +443,11 @@ export async function handleApiRequest(request, ctx) {
       // bare ids/objects; the UI needs name+email to render pills) and
       // upcoming + recent meetings linked via attendee email overlap.
       const data = await callTool(tools, "get_project_360", { projectId: m[1] });
+      // Treat deleted/dropped projects as nonexistent — direct URLs to
+      // them should 404 just like the Projects list hides them.
+      if (!isVisibleProject(data)) {
+        return jsonResponse({ error: "Project not found" }, 404);
+      }
       const [stakeholderRows, allMeetings] = await Promise.all([
         readAll(sheets, "Stakeholders"),
         readAll(sheets, "Meetings"),
@@ -619,12 +632,18 @@ export async function handleApiRequest(request, ctx) {
       readAll(sheets, "Tasks"),
       readAll(sheets, "Projects"),
     ]);
-    const projById = Object.fromEntries(projects.map((p) => [p.projectId, p]));
+    // Build the lookup from visible projects only — tasks pointing at a
+    // deleted/dropped project surface as unassigned ('treat as if it
+    // didn't exist').
+    const projById = Object.fromEntries(projects.filter(isVisibleProject).map((p) => [p.projectId, p]));
     const out = tasks
       .filter((t) => includeCompleted ? true : isOpenStatus(t.status))
       .map((t) => {
         const dto = toTaskDto(t);
         const proj = dto.projectId ? projById[dto.projectId] : null;
+        if (dto.projectId && !proj) {
+          return { ...dto, projectId: "", projectName: "" };
+        }
         return { ...dto, projectName: proj ? (proj.name || "") : "" };
       });
     return jsonResponse({ tasks: out });
@@ -1077,7 +1096,7 @@ export async function handleApiRequest(request, ctx) {
       readAll(sheets, "Tasks"),
       listMeetings(sheets, fromIso, toIso),
       readAll(sheets, "Stakeholders"),
-      readAll(sheets, "Projects"),
+      readAll(sheets, "Projects").then((rows) => rows.filter(isVisibleProject)),
       readAll(sheets, "Commitments"),
     ]);
     const allMeetingRows = await readAll(sheets, "Meetings");
@@ -1166,7 +1185,7 @@ export async function handleApiRequest(request, ctx) {
       readAll(sheets, "Tasks"),
       listMeetings(sheets, dStart, dEnd),
       readAll(sheets, "Stakeholders"),
-      readAll(sheets, "Projects"),
+      readAll(sheets, "Projects").then((rows) => rows.filter(isVisibleProject)),
       readAll(sheets, "Commitments"),
       env.DB.prepare(
         `SELECT briefId, kind, periodKey, goalsMd, generatedMd, reviewMd, updatedAt
@@ -1211,7 +1230,7 @@ export async function handleApiRequest(request, ctx) {
       readAll(sheets, "Tasks"),
       listMeetings(sheets, wStart, wEnd),
       readAll(sheets, "Stakeholders"),
-      readAll(sheets, "Projects"),
+      readAll(sheets, "Projects").then((rows) => rows.filter(isVisibleProject)),
       readAll(sheets, "Commitments"),
       env.DB.prepare(
         `SELECT briefId, kind, periodKey, goalsMd, generatedMd, reviewMd, updatedAt
