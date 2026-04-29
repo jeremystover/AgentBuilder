@@ -922,6 +922,270 @@ async function pickProjectInline(projects) {
   });
 }
 
+// ── Page: Goals ────────────────────────────────────────────────────────────
+// Quarterly OKR-style goals. The page lists every goal (open + closed) with
+// inline status / priority controls, opens an editor modal on click, lets
+// the user mark complete (status=achieved), and supports row delete.
+const GOAL_STATUSES = ["active", "achieved", "missed", "dropped"];
+const GOAL_PRIORITIES = ["", "high", "medium", "low"];
+
+function goalStatusBadge(status) {
+  const s = String(status || "active").toLowerCase();
+  const cls = s === "achieved" ? "bg-emerald-100 text-emerald-700"
+            : s === "missed"   ? "bg-rose-100 text-rose-700"
+            : s === "dropped"  ? "bg-slate-100 text-slate-500"
+            :                    "bg-indigo-100 text-indigo-700";
+  return el("span", {
+    class: "text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded " + cls,
+  }, s);
+}
+
+function isGoalOpen(g) {
+  const s = String(g.status || "").toLowerCase();
+  return !s || s === "active";
+}
+
+async function pageGoals(main) {
+  const data = await api("/api/goals");
+  main.innerHTML = "";
+  const root = el("div", { class: "max-w-3xl mx-auto px-10 py-10 space-y-6" });
+  root.appendChild(el("header", { class: "flex items-baseline justify-between" },
+    el("h1", { class: "text-3xl font-semibold" }, "Goals"),
+    el("button", {
+      class: "text-sm text-slate-500 hover:text-ink",
+      onclick: () => openGoalEditorModal(null, () => $$.route()),
+    }, "+ New goal"),
+  ));
+  if (window.chatPromptBubbles) root.appendChild(window.chatPromptBubbles([
+    "Which goals are at risk this quarter?",
+    "Summarize progress on my active goals",
+    "Draft success criteria for a new goal",
+  ]));
+
+  const goals = data.goals || [];
+  const open = goals.filter(isGoalOpen);
+  const closed = goals.filter((g) => !isGoalOpen(g));
+
+  function renderGoalSection(title, items, helpText) {
+    const sec = el("section", { class: "space-y-2" });
+    sec.appendChild(el("div", { class: "flex items-baseline justify-between mb-1" },
+      el("h2", { class: "text-lg font-semibold" }, title),
+      el("span", { class: "text-xs text-slate-400" }, items.length + (helpText ? " · " + helpText : "")),
+    ));
+    if (!items.length) {
+      sec.appendChild(el("div", { class: "text-sm text-slate-500" }, "Nothing here."));
+    }
+    for (const g of items) sec.appendChild(goalRow(g));
+    return sec;
+  }
+
+  if (!goals.length) {
+    root.appendChild(el("div", { class: "text-sm text-slate-500" },
+      "No goals yet. Click + New goal to set your first quarterly objective."));
+  } else {
+    root.appendChild(renderGoalSection("Active", open));
+    if (closed.length) root.appendChild(renderGoalSection("Closed", closed, "achieved · missed · dropped"));
+  }
+  main.appendChild(root);
+}
+
+function goalRow(g) {
+  let row;
+  function animateRemove() {
+    if (!row) return;
+    row.style.transition = "opacity 200ms ease, max-height 250ms ease, margin 250ms ease, padding 250ms ease";
+    row.style.pointerEvents = "none";
+    row.style.maxHeight = row.offsetHeight + "px";
+    requestAnimationFrame(() => {
+      row.style.maxHeight = "0";
+      row.style.marginTop = "0";
+      row.style.marginBottom = "0";
+      row.style.paddingTop = "0";
+      row.style.paddingBottom = "0";
+      row.style.opacity = "0";
+    });
+    setTimeout(() => row.remove(), 260);
+  }
+
+  const completeBtn = isGoalOpen(g) ? el("button", {
+    class: "shrink-0 w-5 h-5 rounded-full border-2 border-slate-300 hover:border-emerald-500 transition flex items-center justify-center",
+    title: "Mark goal achieved",
+    onclick: async (e) => {
+      e.stopPropagation();
+      if (!confirm("Mark this goal as achieved?")) return;
+      try {
+        await api("/api/goals/" + encodeURIComponent(g.goalId) + "/complete", { method: "POST", body: {} });
+        toast("Goal achieved", "ok");
+        $$.route();
+      } catch (err) { toast(err.message, "err"); }
+    },
+  }) : el("span", { class: "shrink-0 w-5 h-5 rounded-full bg-emerald-500 text-white text-xs flex items-center justify-center", title: g.status }, "✓");
+
+  const deleteBtn = el("button", {
+    class: "text-xs text-slate-400 hover:text-rose-600 px-2 shrink-0",
+    title: "Delete goal",
+    onclick: async (e) => {
+      e.stopPropagation();
+      if (!confirm("Delete \\"" + (g.title || "this goal") + "\\"? This cannot be undone.")) return;
+      try {
+        await api("/api/goals/" + encodeURIComponent(g.goalId), { method: "DELETE", body: {} });
+        toast("Deleted", "ok");
+        animateRemove();
+      } catch (err) { toast(err.message, "err"); }
+    },
+  }, "✕");
+
+  const meta = el("div", { class: "flex items-center gap-2 mt-0.5 text-xs text-slate-500" },
+    goalStatusBadge(g.status),
+    g.quarter ? el("span", {}, g.quarter) : null,
+    g.priority ? el("span", { class: "uppercase tracking-wide" }, g.priority) : null,
+    g.targetDate ? el("span", {}, "due " + fmtDate(g.targetDate)) : null,
+  );
+
+  row = el("div", {
+    class: "group flex items-center gap-3 py-2.5 px-3 -mx-3 rounded-lg bg-white ring-1 ring-slate-200 hover:ring-indigo-300 cursor-pointer transition",
+    onclick: () => openGoalEditorModal(g, () => $$.route()),
+  },
+    completeBtn,
+    el("div", { class: "flex-1 min-w-0" },
+      el("div", { class: "text-sm font-medium text-ink truncate" }, g.title || "(untitled goal)"),
+      meta,
+      g.description ? el("div", { class: "text-xs text-slate-500 mt-1 truncate" }, g.description) : null,
+    ),
+    deleteBtn,
+  );
+  return row;
+}
+
+function openGoalEditorModal(goal, onDone) {
+  const isNew = !goal;
+  const titleI = el("input", {
+    type: "text", value: goal?.title || "", placeholder: "Goal title", autofocus: true,
+    class: "w-full text-lg font-medium rounded-lg ring-1 ring-slate-200 px-3 py-2 focus:ring-indigo-400 focus:outline-none",
+  });
+  const descI = el("textarea", {
+    rows: 3, placeholder: "What's the goal? Why does it matter?",
+    class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 text-sm focus:ring-indigo-400 focus:outline-none resize-none",
+  });
+  descI.value = goal?.description || "";
+
+  const quarterI = el("input", {
+    type: "text", value: goal?.quarter || "", placeholder: "e.g. 2026Q2",
+    class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 text-sm",
+  });
+  const targetI = el("input", {
+    type: "date", value: (goal?.targetDate || "").slice(0, 10),
+    class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 text-sm",
+  });
+
+  const statusI = el("select", { class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 bg-white text-sm" });
+  for (const s of GOAL_STATUSES) {
+    const o = el("option", { value: s }, s);
+    if ((goal?.status || "active") === s) o.selected = true;
+    statusI.appendChild(o);
+  }
+  const priI = el("select", { class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 bg-white text-sm" });
+  for (const p of GOAL_PRIORITIES) {
+    const o = el("option", { value: p }, p || "—");
+    if ((goal?.priority || "") === p) o.selected = true;
+    priI.appendChild(o);
+  }
+
+  const successI = el("textarea", {
+    rows: 3, placeholder: "How will you know this is achieved?",
+    class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 text-sm focus:ring-indigo-400 focus:outline-none resize-none",
+  });
+  successI.value = goal?.successCriteria || "";
+
+  const notesI = el("textarea", {
+    rows: 3, placeholder: "Notes…",
+    class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 text-sm focus:ring-indigo-400 focus:outline-none resize-none",
+  });
+  notesI.value = goal?.notes || "";
+
+  const fieldLabel = (text, node) => el("label", { class: "block text-xs uppercase tracking-wide text-slate-500" }, text, node);
+
+  const card = el("div", { class: "space-y-4" },
+    el("h2", { class: "text-xl font-semibold" }, isNew ? "New goal" : "Edit goal"),
+    titleI,
+    fieldLabel("Description", descI),
+    el("div", { class: "grid grid-cols-2 gap-3" },
+      fieldLabel("Quarter", quarterI),
+      fieldLabel("Target date", targetI),
+    ),
+    el("div", { class: "grid grid-cols-2 gap-3" },
+      fieldLabel("Status", statusI),
+      fieldLabel("Priority", priI),
+    ),
+    fieldLabel("Success criteria", successI),
+    fieldLabel("Notes", notesI),
+    el("div", { class: "flex justify-between items-center pt-2 gap-3" },
+      isNew ? el("span", {}) : el("button", {
+        class: "text-sm text-rose-600 hover:underline",
+        onclick: async () => {
+          if (!confirm("Delete this goal? This cannot be undone.")) return;
+          try {
+            await api("/api/goals/" + encodeURIComponent(goal.goalId), { method: "DELETE", body: {} });
+            modal.close(); toast("Deleted", "ok"); onDone?.();
+          } catch (err) { toast(err.message, "err"); }
+        },
+      }, "Delete"),
+      el("div", { class: "flex gap-2" },
+        !isNew && isGoalOpen(goal) ? el("button", {
+          class: "rounded-lg ring-1 ring-emerald-300 text-emerald-700 px-4 py-2 text-sm font-medium hover:bg-emerald-50",
+          onclick: async () => {
+            try {
+              await api("/api/goals/" + encodeURIComponent(goal.goalId) + "/complete", { method: "POST", body: {} });
+              modal.close(); toast("Goal achieved", "ok"); onDone?.();
+            } catch (err) { toast(err.message, "err"); }
+          },
+        }, "Mark achieved") : null,
+        el("button", {
+          class: "rounded-lg bg-ink text-white px-4 py-2 text-sm font-medium hover:bg-slate-700",
+          onclick: async () => {
+            const title = titleI.value.trim();
+            if (!title) { toast("Title required", "err"); return; }
+            const targetDate = targetI.value ? new Date(targetI.value).toISOString() : "";
+            try {
+              if (isNew) {
+                await api("/api/goals", { method: "POST", body: {
+                  title,
+                  description: descI.value,
+                  quarter: quarterI.value,
+                  status: statusI.value,
+                  priority: priI.value,
+                  targetDate,
+                  successCriteria: successI.value,
+                  notes: notesI.value,
+                }});
+                toast("Created", "ok");
+              } else {
+                await api("/api/goals/" + encodeURIComponent(goal.goalId), {
+                  method: "PATCH", body: {
+                    patch: {
+                      title,
+                      description: descI.value,
+                      quarter: quarterI.value,
+                      status: statusI.value,
+                      priority: priI.value,
+                      targetDate,
+                      successCriteria: successI.value,
+                      notes: notesI.value,
+                    },
+                  },
+                });
+                toast("Saved", "ok");
+              }
+              modal.close(); onDone?.();
+            } catch (err) { toast(err.message, "err"); }
+          },
+        }, isNew ? "Create" : "Save"),
+      ),
+    ),
+  );
+  const modal = openModal(card);
+}
+
 // ── Wire pages + nav into the kit's router ─────────────────────────────────
 // The kit's spa-core handles shell rendering, default chat sidebar, and
 // boot. We just declare which pages exist and which hashes route to them.
@@ -931,12 +1195,14 @@ window.pageProjectDetail = pageProjectDetail;
 window.pagePeople = pagePeople;
 window.pagePersonDetail = pagePersonDetail;
 window.pageTriage = pageTriage;
+window.pageGoals = pageGoals;
 
 window.AGENT_BRAND = { mark: "✦", label: "Chief" };
 window.NAV = [
   { hash: "#/now",      label: "Now" },
   { hash: "#/today",    label: "Today" },
   { hash: "#/week",     label: "This Week" },
+  { hash: "#/goals",    label: "Goals" },
   { hash: "#/projects", label: "Projects" },
   { hash: "#/people",   label: "People" },
   { hash: "#/triage",   label: "Triage" },
@@ -954,6 +1220,7 @@ window.ROUTES = [
   { pattern: /^#\\/now$/,             handler: "pageNow" },
   { pattern: /^#\\/today$/,           handler: "pageToday" },
   { pattern: /^#\\/week$/,            handler: "pageWeek" },
+  { pattern: /^#\\/goals$/,           handler: "pageGoals" },
   { pattern: /^#\\/projects$/,        handler: "pageProjects" },
   { pattern: /^#\\/projects\\/(.+)$/,  handler: "pageProjectDetail" },
   { pattern: /^#\\/people$/,          handler: "pagePeople" },
