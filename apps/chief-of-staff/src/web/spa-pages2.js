@@ -276,8 +276,12 @@ function compareTasks(a, b, key) {
 
 async function renderProjectsTaskView(root, refresh) {
   const includeCompleted = window.showCompletedFlag("projects-tasks");
-  const data = await api("/api/tasks" + (includeCompleted ? "?includeCompleted=1" : ""));
+  const [data, projData] = await Promise.all([
+    api("/api/tasks" + (includeCompleted ? "?includeCompleted=1" : "")),
+    api("/api/projects"),
+  ]);
   const tasks = data.tasks || [];
+  const projectsById = Object.fromEntries((projData.projects || []).map((p) => [p.projectId, p]));
 
   if (window.chatPromptBubbles) root.appendChild(window.chatPromptBubbles([
     "What's overdue across all projects?",
@@ -322,11 +326,13 @@ async function renderProjectsTaskView(root, refresh) {
   const table = el("table", { class: "w-full bg-white rounded-xl ring-1 ring-slate-200 overflow-hidden" });
   const thead = el("thead", { class: "bg-slate-50 border-b border-slate-200" });
   thead.appendChild(el("tr", {},
+    el("th", { class: "px-3 py-2 w-8" }),
     headerCell("title", "Task"),
     headerCell("projectName", "Project"),
     headerCell("priority", "Priority"),
     headerCell("dueAt", "Due"),
     headerCell("status", "Status"),
+    el("th", { class: "px-3 py-2 w-8" }),
   ));
   table.appendChild(thead);
 
@@ -342,46 +348,140 @@ async function renderProjectsTaskView(root, refresh) {
     const dueClass = overdue ? "text-rose-600 font-medium" : "text-slate-600";
     const statusLabel = String(t.status || "open");
     const statusClass = statusLabel.toLowerCase() === "done" ? "text-emerald-600" : "text-slate-600";
+    const isDone = statusLabel.toLowerCase() === "done";
 
     const tr = el("tr", {
       class: "border-b border-slate-100 last:border-0 hover:bg-slate-50 cursor-pointer",
       onclick: () => window.openTaskEditor(t, {
         // Update the row in place after a save instead of re-rendering;
         // remove it on completion.
+        // Cell indices: 0=complete, 1=title, 2=project, 3=priority, 4=due, 5=status, 6=delete.
         onSaved: (patch) => {
           Object.assign(t, patch);
-          tr.cells[0].textContent = t.title || "(untitled)";
+          tr.cells[1].textContent = t.title || "(untitled)";
           const newDue = t.dueAt ? fmtDate(t.dueAt) : "—";
-          tr.cells[3].textContent = newDue;
-          tr.cells[3].className = "px-3 py-2 text-sm " + (isOverdue(t.dueAt) ? "text-rose-600 font-medium" : "text-slate-600");
+          tr.cells[4].textContent = newDue;
+          tr.cells[4].className = "px-3 py-2 text-sm " + (isOverdue(t.dueAt) ? "text-rose-600 font-medium" : "text-slate-600");
           // Priority cell: easiest to swap by recomputing.
           const np = (t.priority || "").toLowerCase();
           const npClass = np === "high" ? "bg-rose-100 text-rose-700"
                         : np === "medium" ? "bg-amber-100 text-amber-800"
                         : np === "low" ? "bg-slate-100 text-slate-600"
                         : "text-slate-400";
-          tr.cells[2].innerHTML = "";
-          tr.cells[2].appendChild(np
+          tr.cells[3].innerHTML = "";
+          tr.cells[3].appendChild(np
             ? el("span", { class: "text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded " + npClass }, np)
             : el("span", { class: "text-xs text-slate-400" }, "—"));
+          // If a future editor lets the user change project, keep the
+          // inline select in sync.
+          if (Object.prototype.hasOwnProperty.call(patch, "projectId")) {
+            const p = patch.projectId && projectsById[patch.projectId];
+            t.projectName = p ? (p.name || "") : "";
+            projSel.value = patch.projectId || "";
+          }
         },
-        onCompleted: () => {
-          tr.style.transition = "opacity 200ms ease";
-          tr.style.opacity = "0";
-          setTimeout(() => tr.remove(), 220);
-        },
+        onCompleted: animateOut,
       }),
     });
+
+    function animateOut() {
+      tr.style.transition = "opacity 200ms ease";
+      tr.style.pointerEvents = "none";
+      tr.style.opacity = "0";
+      setTimeout(() => tr.remove(), 220);
+    }
+
+    // Complete checkbox — fire-and-forget; animate row out on success.
+    const completeBtn = el("button", {
+      class: isDone
+        ? "shrink-0 w-5 h-5 rounded-full bg-emerald-500 text-white flex items-center justify-center"
+        : "shrink-0 w-5 h-5 rounded-full border-2 border-slate-300 hover:border-emerald-500 transition flex items-center justify-center",
+      title: isDone ? "Already complete" : "Mark complete",
+      onclick: async (e) => {
+        e.stopPropagation();
+        if (isDone) return;
+        tr.style.transition = "opacity 200ms ease";
+        tr.style.opacity = "0.4";
+        tr.style.pointerEvents = "none";
+        try {
+          await api(\`/api/tasks/\${encodeURIComponent(t.taskKey)}/complete\`, { method: "POST", body: {} });
+          toast("Completed", "ok");
+          animateOut();
+        } catch (err) {
+          tr.style.opacity = "";
+          tr.style.pointerEvents = "";
+          toast(err.message, "err");
+        }
+      },
+    }, isDone ? "✓" : "");
+
+    // Inline project select — change to reassign without leaving the page.
+    const projSel = el("select", {
+      class: "rounded ring-1 ring-transparent hover:ring-slate-200 bg-transparent text-sm text-slate-600 hover:text-ink px-1 py-0.5 cursor-pointer focus:ring-indigo-300 focus:outline-none max-w-[12rem]",
+      onclick: (e) => e.stopPropagation(),
+      onchange: async (e) => {
+        e.stopPropagation();
+        const newProj = e.target.value;
+        const prevProj = t.projectId || "";
+        if (newProj === prevProj) return;
+        const prevName = t.projectName || "";
+        t.projectId = newProj;
+        t.projectName = newProj && projectsById[newProj] ? (projectsById[newProj].name || "") : "";
+        try {
+          await api(\`/api/tasks/\${encodeURIComponent(t.taskKey)}\`, {
+            method: "PATCH", body: { patch: { projectId: newProj } },
+          });
+          toast(newProj ? "Moved to " + (t.projectName || "project") : "Project cleared", "ok");
+        } catch (err) {
+          t.projectId = prevProj;
+          t.projectName = prevName;
+          projSel.value = prevProj;
+          toast(err.message, "err");
+        }
+      },
+    });
+    projSel.appendChild(el("option", { value: "" }, "— No project —"));
+    for (const p of Object.values(projectsById)) {
+      const o = el("option", { value: p.projectId }, p.name || "(untitled)");
+      if ((t.projectId || "") === p.projectId) o.selected = true;
+      projSel.appendChild(o);
+    }
+    // Surface unknown project ids (e.g. closed/deleted) so the select still
+    // reflects the task's current value rather than silently snapping to "—".
+    if (t.projectId && !projectsById[t.projectId]) {
+      const o = el("option", { value: t.projectId }, t.projectName || t.projectId);
+      o.selected = true;
+      projSel.appendChild(o);
+    }
+
+    // Delete (soft-delete via status='deleted') — drops the row from the
+    // default view since 'deleted' isn't an open status.
+    const deleteBtn = el("button", {
+      class: "shrink-0 w-5 h-5 rounded text-slate-300 hover:text-rose-600 hover:bg-rose-50 transition flex items-center justify-center text-sm leading-none",
+      title: "Delete task",
+      onclick: async (e) => {
+        e.stopPropagation();
+        if (!confirm("Delete this task?")) return;
+        tr.style.transition = "opacity 200ms ease";
+        tr.style.opacity = "0.4";
+        tr.style.pointerEvents = "none";
+        try {
+          await api(\`/api/tasks/\${encodeURIComponent(t.taskKey)}\`, {
+            method: "PATCH", body: { patch: { status: "deleted" }, reason: "deleted via web UI" },
+          });
+          toast("Deleted", "ok");
+          animateOut();
+        } catch (err) {
+          tr.style.opacity = "";
+          tr.style.pointerEvents = "";
+          toast(err.message, "err");
+        }
+      },
+    }, "✕");
+
+    tr.appendChild(el("td", { class: "px-3 py-2 align-middle" }, completeBtn));
     tr.appendChild(el("td", { class: "px-3 py-2 text-sm text-ink" }, t.title || "(untitled)"));
-    tr.appendChild(el("td", { class: "px-3 py-2 text-sm" },
-      t.projectId
-        ? el("a", {
-            href: "#/projects/" + encodeURIComponent(t.projectId),
-            class: "text-slate-600 hover:text-ink hover:underline",
-            onclick: (e) => e.stopPropagation(),
-          }, t.projectName || t.projectId)
-        : el("span", { class: "text-slate-400" }, "—"),
-    ));
+    tr.appendChild(el("td", { class: "px-3 py-2 text-sm" }, projSel));
     tr.appendChild(el("td", { class: "px-3 py-2" },
       pri
         ? el("span", { class: "text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded " + priClass }, pri)
@@ -389,6 +489,7 @@ async function renderProjectsTaskView(root, refresh) {
     ));
     tr.appendChild(el("td", { class: "px-3 py-2 text-sm " + dueClass }, due || "—"));
     tr.appendChild(el("td", { class: "px-3 py-2 text-sm " + statusClass }, statusLabel));
+    tr.appendChild(el("td", { class: "px-3 py-2 align-middle text-right" }, deleteBtn));
     tbody.appendChild(tr);
   }
   table.appendChild(tbody);
