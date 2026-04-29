@@ -1169,7 +1169,7 @@ export function createTools({ spreadsheetId, sheets }) {
             // Delegate goal row I/O to goals.js so the row layout lives next
             // to the schema. Keep commit_changeset as the single apply path
             // so every write still flows through propose → commit.
-            const { commitGoalAdds, commitGoalUpdates } = await import("./goals.js");
+            const { commitGoalAdds, commitGoalUpdates, commitGoalDeletes } = await import("./goals.js");
             for (const add of cs.adds || []) {
               await commitGoalAdds({ sheets, goals: [add] });
               results.push({ action: "created_goal", goalId: add.goalId });
@@ -1177,6 +1177,10 @@ export function createTools({ spreadsheetId, sheets }) {
             for (const upd of cs.updates || []) {
               await commitGoalUpdates({ sheets, updates: [upd] });
               results.push({ action: "updated_goal", goalId: upd.goalId });
+            }
+            for (const del of cs.deletes || []) {
+              await commitGoalDeletes({ sheets, deletes: [del] });
+              results.push({ action: "deleted_goal", goalId: del.goalId });
             }
 
           } else if (cs.kind === "projects") {

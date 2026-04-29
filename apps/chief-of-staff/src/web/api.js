@@ -828,10 +828,13 @@ export async function handleApiRequest(request, ctx) {
     const includeClosed = url.searchParams.get("includeClosed") === "1";
     const goals = rows
       .filter((g) => {
-        if (statusFilter) return String(g.status || "").toLowerCase() === statusFilter;
+        const s = String(g.status || "").toLowerCase();
+        // Always hide soft-deleted rows (propose_delete_goal sets status='deleted').
+        // Callers that need them can pass ?status=deleted explicitly.
+        if (s === "deleted" && statusFilter !== "deleted") return false;
+        if (statusFilter) return s === statusFilter;
         if (includeClosed) return true;
         // No filter, no includeClosed → preserve the legacy active-only default.
-        const s = String(g.status || "").toLowerCase();
         return !s || s === "active";
       })
       .map((g) => ({
@@ -887,10 +890,11 @@ export async function handleApiRequest(request, ctx) {
       return jsonResponse({ ok: true, result });
     }
     if (m && method === "DELETE") {
-      const found = await sheets.findRowByKey("Goals", "goalId", m[1]);
-      if (!found) return jsonResponse({ error: "Goal not found" }, 404);
-      await sheets.deleteRow("Goals", found.rowNum);
-      return jsonResponse({ ok: true });
+      const result = await proposeAndCommit(tools, "propose_delete_goal", {
+        goalId: m[1],
+        reason: "deleted via web UI",
+      });
+      return jsonResponse({ ok: true, result });
     }
   }
 
