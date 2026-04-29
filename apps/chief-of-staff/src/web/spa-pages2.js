@@ -80,9 +80,10 @@ async function openCreateTaskModal({ projectsById = {}, onChanged, onCreated } =
 }
 
 // ── Page: Projects (list) ──────────────────────────────────────────────────
-// Tabbed shell: "Project View" (the original list) and "Task View" (a
-// cross-project sortable task table). Tab choice is sticky in localStorage so
-// route() re-renders land back on the same tab.
+// Tabbed shell: "Project View" (goal-grouped project list) and "Task View"
+// (cross-project sortable task table). Tab choice is sticky in localStorage.
+// Tab change re-renders only the content host so the page header + tab bar
+// keep their state — the goal is no full route() refresh on user actions.
 function projectsTabFlag() {
   try {
     const v = localStorage.getItem("cos:projectsTab");
@@ -110,35 +111,51 @@ function projectsTabBar(active, onChange) {
 }
 
 async function pageProjects(main) {
-  const tab = projectsTabFlag();
+  let tab = projectsTabFlag();
   main.innerHTML = "";
   const root = el("div", { class: "max-w-5xl mx-auto px-10 py-10 space-y-6" });
 
-  const headerRight = tab === "projects"
-    ? el("button", {
-        class: "text-sm text-slate-500 hover:text-ink",
-        onclick: () => openCreateProjectModal({ onChanged: () => $$.route() }),
-      }, "+ New project")
-    : el("button", {
-        class: "text-sm text-slate-500 hover:text-ink",
-        onclick: async () => {
-          const projects = (await api("/api/projects")).projects || [];
-          const projectsById = Object.fromEntries(projects.map((p) => [p.projectId, p]));
-          openCreateTaskModal({ projectsById, onChanged: () => $$.route() });
-        },
-      }, "+ New task");
+  const headerHost = el("header", { class: "flex items-baseline justify-between" });
+  const tabBarHost = el("div", {});
+  const contentHost = el("div", { class: "space-y-6" });
 
-  root.appendChild(el("header", { class: "flex items-baseline justify-between" },
-    el("h1", { class: "text-3xl font-semibold" }, "Projects"),
-    headerRight,
-  ));
-  root.appendChild(projectsTabBar(tab, () => $$.route()));
-
-  if (tab === "tasks") {
-    await renderProjectsTaskView(root);
-  } else {
-    await renderProjectsProjectView(root);
+  async function refreshContent() {
+    contentHost.innerHTML = "";
+    if (tab === "tasks") await renderProjectsTaskView(contentHost, refreshContent);
+    else await renderProjectsProjectView(contentHost, refreshContent);
   }
+  function renderHeader() {
+    headerHost.innerHTML = "";
+    const headerRight = tab === "projects"
+      ? el("button", {
+          class: "text-sm text-slate-500 hover:text-ink",
+          onclick: () => openCreateProjectModal({ onCreated: () => refreshContent() }),
+        }, "+ New project")
+      : el("button", {
+          class: "text-sm text-slate-500 hover:text-ink",
+          onclick: async () => {
+            const projects = (await api("/api/projects")).projects || [];
+            const projectsById = Object.fromEntries(projects.map((p) => [p.projectId, p]));
+            openCreateTaskModal({ projectsById, onCreated: () => refreshContent() });
+          },
+        }, "+ New task");
+    headerHost.appendChild(el("h1", { class: "text-3xl font-semibold" }, "Projects"));
+    headerHost.appendChild(headerRight);
+  }
+  function renderTabBar() {
+    tabBarHost.innerHTML = "";
+    tabBarHost.appendChild(projectsTabBar(tab, async (id) => {
+      tab = id;
+      renderHeader();
+      renderTabBar();
+      await refreshContent();
+    }));
+  }
+
+  renderHeader();
+  renderTabBar();
+  root.append(headerHost, tabBarHost, contentHost);
+  await refreshContent();
   main.appendChild(root);
 }
 
@@ -257,7 +274,7 @@ function compareTasks(a, b, key) {
   return av < bv ? -1 : 1;
 }
 
-async function renderProjectsTaskView(root) {
+async function renderProjectsTaskView(root, refresh) {
   const includeCompleted = window.showCompletedFlag("projects-tasks");
   const [data, projData] = await Promise.all([
     api("/api/tasks" + (includeCompleted ? "?includeCompleted=1" : "")),
@@ -272,10 +289,12 @@ async function renderProjectsTaskView(root) {
     "What should I focus on next?",
   ]));
 
+  // Toggle re-renders the table only — caller passes a refresh fn that
+  // rebuilds just the content host.
   const controls = el("div", { class: "flex items-center justify-between" },
     el("div", { class: "text-sm text-slate-500" },
       tasks.length + " task" + (tasks.length === 1 ? "" : "s")),
-    window.showCompletedToggle("projects-tasks", () => $$.route()),
+    window.showCompletedToggle("projects-tasks", () => refresh?.()),
   );
   root.appendChild(controls);
 
@@ -298,7 +317,8 @@ async function renderProjectsTaskView(root) {
       onclick: () => {
         const next = isOn ? (sort.dir === "asc" ? "desc" : "asc") : "asc";
         setProjectsTaskSort({ key, dir: next });
-        $$.route();
+        // Re-render only the Task View content rather than the whole page.
+        refresh?.();
       },
     }, label + arrow);
   };
@@ -333,8 +353,27 @@ async function renderProjectsTaskView(root) {
     const tr = el("tr", {
       class: "border-b border-slate-100 last:border-0 hover:bg-slate-50 cursor-pointer",
       onclick: () => window.openTaskEditor(t, {
+        // Update the row in place after a save instead of re-rendering;
+        // remove it on completion.
+        // Cell indices: 0=complete, 1=title, 2=project, 3=priority, 4=due, 5=status, 6=delete.
         onSaved: (patch) => {
           Object.assign(t, patch);
+          tr.cells[1].textContent = t.title || "(untitled)";
+          const newDue = t.dueAt ? fmtDate(t.dueAt) : "—";
+          tr.cells[4].textContent = newDue;
+          tr.cells[4].className = "px-3 py-2 text-sm " + (isOverdue(t.dueAt) ? "text-rose-600 font-medium" : "text-slate-600");
+          // Priority cell: easiest to swap by recomputing.
+          const np = (t.priority || "").toLowerCase();
+          const npClass = np === "high" ? "bg-rose-100 text-rose-700"
+                        : np === "medium" ? "bg-amber-100 text-amber-800"
+                        : np === "low" ? "bg-slate-100 text-slate-600"
+                        : "text-slate-400";
+          tr.cells[3].innerHTML = "";
+          tr.cells[3].appendChild(np
+            ? el("span", { class: "text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded " + npClass }, np)
+            : el("span", { class: "text-xs text-slate-400" }, "—"));
+          // If a future editor lets the user change project, keep the
+          // inline select in sync.
           if (Object.prototype.hasOwnProperty.call(patch, "projectId")) {
             const p = patch.projectId && projectsById[patch.projectId];
             t.projectName = p ? (p.name || "") : "";
@@ -342,7 +381,6 @@ async function renderProjectsTaskView(root) {
           }
         },
         onCompleted: animateOut,
-        onChanged: () => $$.route(),
       }),
     });
 
@@ -458,7 +496,7 @@ async function renderProjectsTaskView(root) {
   root.appendChild(el("div", { class: "overflow-x-auto" }, table));
 }
 
-function openCreateProjectModal({ onChanged } = {}) {
+function openCreateProjectModal({ onChanged, onCreated } = {}) {
   const nameI = el("input", { type: "text", placeholder: "Project name", autofocus: true,
     class: "w-full text-lg font-medium rounded-lg ring-1 ring-slate-200 px-3 py-2 focus:ring-indigo-400 focus:outline-none" });
   const descI = el("textarea", { rows: 3, placeholder: "Description…",
@@ -472,8 +510,19 @@ function openCreateProjectModal({ onChanged } = {}) {
         onclick: async () => {
           if (!nameI.value.trim()) { toast("Name required", "err"); return; }
           try {
-            await api("/api/projects", { method: "POST", body: { name: nameI.value.trim(), description: descI.value } });
-            modal.close(); toast("Created", "ok"); onChanged?.();
+            const r = await api("/api/projects", { method: "POST", body: { name: nameI.value.trim(), description: descI.value } });
+            modal.close(); toast("Created", "ok");
+            if (onCreated) {
+              const created = (r?.result?.results || []).find((x) => x.action === "created_project");
+              onCreated({
+                projectId: created?.projectId || \`tmp_\${Date.now()}\`,
+                name: nameI.value.trim(),
+                status: "",
+                healthStatus: "",
+              });
+            } else {
+              onChanged?.();
+            }
           } catch (err) { toast(err.message, "err"); }
         },
       }, "Create"),
@@ -502,73 +551,105 @@ async function pageProjectDetail(main, projectId) {
   ]));
 
   // Stakeholders
-  const peopleById = Object.fromEntries((peopleData.people || []).map((p) => [p.stakeholderId, p]));
   const stakeholdersSec = el("section", { class: "space-y-3" });
-  stakeholdersSec.appendChild(el("div", { class: "flex items-baseline justify-between" },
-    el("h2", { class: "text-lg font-semibold" }, "Stakeholders"),
-    el("button", { class: "text-xs text-slate-500 hover:text-ink",
-      onclick: () => openAddStakeholderToProjectModal(projectId, peopleData.people || [], () => $$.route()) },
-      "+ Add stakeholder"),
-  ));
   const stakeholderRow = el("div", { class: "flex flex-wrap gap-2" });
-  for (const sh of data.stakeholders || []) {
-    // Backend hydrates {stakeholderId, name, email, tierTag}. Fall through
-    // name → email → id so the pill always shows something a human recognizes.
+  let stakeholdersEmpty = null;
+  function stakeholderPill(sh) {
     const id = sh.stakeholderId || sh.id || sh.email || sh.name || "";
     const label = sh.name || sh.email || sh.stakeholderId || "(unnamed)";
     const sub = sh.email && sh.name ? sh.email : "";
-    stakeholderRow.appendChild(el("a", {
+    return el("a", {
       href: "#/people/" + encodeURIComponent(id),
       class: "px-3 py-1.5 bg-white rounded-full ring-1 ring-slate-200 text-sm hover:ring-indigo-300 inline-flex items-baseline gap-2",
       title: sub || label,
     },
       el("span", { class: "text-ink" }, label),
       sub ? el("span", { class: "text-xs text-slate-400" }, sub) : null,
-    ));
+    );
   }
-  if (!data.stakeholders?.length) stakeholderRow.appendChild(el("div", { class: "text-sm text-slate-500" }, "None yet."));
+  function appendStakeholder(sh) {
+    if (stakeholdersEmpty && stakeholdersEmpty.parentNode) {
+      stakeholdersEmpty.remove();
+      stakeholdersEmpty = null;
+    }
+    stakeholderRow.appendChild(stakeholderPill(sh));
+  }
+  stakeholdersSec.appendChild(el("div", { class: "flex items-baseline justify-between" },
+    el("h2", { class: "text-lg font-semibold" }, "Stakeholders"),
+    el("button", { class: "text-xs text-slate-500 hover:text-ink",
+      onclick: () => openAddStakeholderToProjectModal(projectId, peopleData.people || [], appendStakeholder) },
+      "+ Add stakeholder"),
+  ));
+  for (const sh of data.stakeholders || []) stakeholderRow.appendChild(stakeholderPill(sh));
+  if (!data.stakeholders?.length) {
+    stakeholdersEmpty = el("div", { class: "text-sm text-slate-500" }, "None yet.");
+    stakeholderRow.appendChild(stakeholdersEmpty);
+  }
   stakeholdersSec.appendChild(stakeholderRow);
   root.appendChild(stakeholdersSec);
 
   // Tasks (with show-completed toggle scoped to this project)
   const tasksSec = el("section", { class: "space-y-1" });
-  const showDone = window.showCompletedFlag("project:" + projectId);
   const projectProjectsById = { [projectId]: { projectId, name: data.name } };
-  let openTasksList;
+  const openListHost = el("div", { class: "space-y-1" });
+  const completedListHost = el("div", { class: "space-y-1" });
   let emptyOpenTasksEl = null;
+
+  function renderOpen(tasks) {
+    openListHost.innerHTML = "";
+    if (!tasks?.length) {
+      emptyOpenTasksEl = el("div", { class: "text-sm text-slate-500" }, "No open tasks.");
+      openListHost.appendChild(emptyOpenTasksEl);
+      return;
+    }
+    emptyOpenTasksEl = null;
+    for (const t of tasks) openListHost.appendChild(window.taskRow(t, { showProject: false, projectsById: projectProjectsById }));
+  }
+  function renderCompleted(tasks) {
+    completedListHost.innerHTML = "";
+    if (!tasks?.length) return;
+    completedListHost.appendChild(el("h3", { class: "text-xs uppercase tracking-wide text-slate-400 mt-4" }, "Completed"));
+    for (const t of tasks) completedListHost.appendChild(window.taskRow(t, { showProject: false, projectsById: projectProjectsById }));
+  }
   function appendCreatedProjectTask(newTask) {
-    if (!openTasksList) return;
     if (emptyOpenTasksEl && emptyOpenTasksEl.parentNode) {
       emptyOpenTasksEl.remove();
       emptyOpenTasksEl = null;
     }
-    openTasksList.appendChild(window.taskRow(newTask, { showProject: false, projectsById: projectProjectsById }));
+    openListHost.appendChild(window.taskRow(newTask, { showProject: false, projectsById: projectProjectsById }));
   }
+  async function refreshProjectTasks() {
+    try {
+      const fresh = await api("/api/projects/" + encodeURIComponent(projectId));
+      renderOpen(fresh.openTasks || []);
+      const showDoneNow = window.showCompletedFlag("project:" + projectId);
+      if (showDoneNow) {
+        try {
+          const done = await api("/api/tasks/completed?scope=all&projectId=" + encodeURIComponent(projectId));
+          renderCompleted(done.tasks || []);
+        } catch (err) { /* surface elsewhere */ }
+      } else {
+        renderCompleted([]);
+      }
+    } catch (err) { toast(err.message, "err"); }
+  }
+
   tasksSec.appendChild(el("div", { class: "flex items-baseline justify-between mb-2 gap-3" },
     el("h2", { class: "text-lg font-semibold" }, "Open tasks"),
     el("div", { class: "flex items-center gap-2" },
-      window.showCompletedToggle("project:" + projectId, () => $$.route()),
+      window.showCompletedToggle("project:" + projectId, refreshProjectTasks),
       el("button", { class: "text-xs text-slate-500 hover:text-ink",
         onclick: () => openCreateTaskModal({ projectsById: projectProjectsById, onCreated: appendCreatedProjectTask }) },
         "+ Add task"),
     ),
   ));
-  openTasksList = el("div", { class: "contents" });
-  tasksSec.appendChild(openTasksList);
-  if (!data.openTasks?.length) {
-    emptyOpenTasksEl = el("div", { class: "text-sm text-slate-500" }, "No open tasks.");
-    openTasksList.appendChild(emptyOpenTasksEl);
-  }
-  for (const t of data.openTasks || []) {
-    openTasksList.appendChild(window.taskRow(t, { showProject: false, projectsById: projectProjectsById }));
-  }
-  if (showDone) {
+  tasksSec.appendChild(openListHost);
+  tasksSec.appendChild(completedListHost);
+  renderOpen(data.openTasks || []);
+  if (window.showCompletedFlag("project:" + projectId)) {
     try {
       const done = await api("/api/tasks/completed?scope=all&projectId=" + encodeURIComponent(projectId));
-      if (done.tasks?.length) {
-        tasksSec.appendChild(el("h3", { class: "text-xs uppercase tracking-wide text-slate-400 mt-4" }, "Completed"));
-        for (const t of done.tasks) tasksSec.appendChild(window.taskRow(t, { showProject: false, projectsById: projectProjectsById }));
-      }
+      renderCompleted(done.tasks || []);
     } catch (err) { /* surfaced elsewhere */ }
   }
   root.appendChild(tasksSec);
@@ -576,16 +657,20 @@ async function pageProjectDetail(main, projectId) {
   // Meetings — upcoming, then recent. Reuses the rich meetingCard from
   // spa-pages.js so day-of-week, calendar invite, and Zoom links render
   // the same everywhere.
+  const upcomingHost = el("div", { class: "space-y-3" });
+  const recentHost = el("div", { class: "space-y-3" });
   if (data.upcomingMeetings?.length) {
     const sec = el("section", { class: "space-y-3" });
     sec.appendChild(el("h2", { class: "text-lg font-semibold mb-2" }, "Upcoming meetings"));
-    for (const m of data.upcomingMeetings) sec.appendChild(window.meetingCard(m, { onChanged: () => $$.route() }));
+    sec.appendChild(upcomingHost);
+    for (const m of data.upcomingMeetings) upcomingHost.appendChild(window.meetingCard(m));
     root.appendChild(sec);
   }
   if (data.recentMeetings?.length) {
     const sec = el("section", { class: "space-y-3" });
     sec.appendChild(el("h2", { class: "text-lg font-semibold mb-2" }, "Recent meetings"));
-    for (const m of data.recentMeetings) sec.appendChild(window.meetingCard(m, { onChanged: () => $$.route() }));
+    sec.appendChild(recentHost);
+    for (const m of data.recentMeetings) recentHost.appendChild(window.meetingCard(m));
     root.appendChild(sec);
   }
   const meetingActions = el("div", { class: "flex gap-4" },
@@ -595,7 +680,9 @@ async function pageProjectDetail(main, projectId) {
     }, "+ Schedule meeting"),
     el("button", {
       class: "text-sm text-slate-500 hover:text-ink",
-      onclick: () => openLinkMeetingModal(projectId, () => $$.route()),
+      onclick: () => openLinkMeetingModal(projectId, (linkedMeeting) => {
+        if (linkedMeeting) upcomingHost.appendChild(window.meetingCard(linkedMeeting));
+      }),
     }, "+ Link existing meeting"),
   );
   root.appendChild(meetingActions);
@@ -611,12 +698,13 @@ async function pageProjectDetail(main, projectId) {
   main.appendChild(root);
 }
 
-function openAddStakeholderToProjectModal(projectId, allPeople, onDone) {
+function openAddStakeholderToProjectModal(projectId, allPeople, onAdded) {
   const sel = el("select", { class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 bg-white" });
   sel.appendChild(el("option", { value: "" }, "— Pick existing —"));
   for (const p of allPeople) sel.appendChild(el("option", { value: p.stakeholderId }, p.name || p.email));
   const newName = el("input", { type: "text", placeholder: "Or new name", class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2" });
   const newEmail = el("input", { type: "email", placeholder: "New email", class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2" });
+  const peopleById = Object.fromEntries(allPeople.map((p) => [p.stakeholderId, p]));
   const card = el("div", { class: "space-y-4" },
     el("h2", { class: "text-xl font-semibold" }, "Add stakeholder"),
     sel,
@@ -628,18 +716,20 @@ function openAddStakeholderToProjectModal(projectId, allPeople, onDone) {
         onclick: async () => {
           try {
             let id = sel.value;
+            let added = id ? peopleById[id] : null;
             if (!id && (newName.value || newEmail.value)) {
               const r = await api("/api/people", { method: "POST", body: { name: newName.value, email: newEmail.value } });
               id = r.stakeholderId;
+              added = { stakeholderId: id, name: newName.value, email: newEmail.value };
             }
             if (!id) { toast("Pick or create a person", "err"); return; }
-            // Append to project's stakeholderIds
             const cur = await api("/api/projects/" + encodeURIComponent(projectId));
             const ids = new Set([...(cur.stakeholders || []).map((s) => s.stakeholderId), id].filter(Boolean));
             await api("/api/projects/" + encodeURIComponent(projectId), {
               method: "PATCH", body: { patch: {}, stakeholderIds: [...ids] }
             });
-            modal.close(); toast("Added", "ok"); onDone?.();
+            modal.close(); toast("Added", "ok");
+            if (added) onAdded?.(added);
           } catch (err) { toast(err.message, "err"); }
         },
       }, "Add"),
@@ -719,7 +809,9 @@ async function openLinkMeetingModal(projectId, onDone) {
             await api(\`/api/meetings/\${encodeURIComponent(sel.value)}/link-project\`, {
               method: "POST", body: { projectId },
             });
-            modal.close(); toast("Linked", "ok"); onDone?.();
+            modal.close(); toast("Linked", "ok");
+            const linked = meetings.find((m) => (m.meetingId || m.eventId) === sel.value);
+            onDone?.(linked || null);
           } catch (err) { toast(err.message, "err"); }
         },
       }, "Link"),
@@ -729,41 +821,51 @@ async function openLinkMeetingModal(projectId, onDone) {
 }
 
 // ── Page: People (list) ────────────────────────────────────────────────────
+function personListCard(p) {
+  return el("a", {
+    href: "#/people/" + encodeURIComponent(p.stakeholderId),
+    class: "block bg-white rounded-xl ring-1 ring-slate-200 hover:ring-indigo-300 p-3 px-4 transition",
+  },
+    el("div", { class: "flex items-center justify-between gap-3" },
+      el("div", {},
+        el("div", { class: "text-sm font-medium" }, p.name || p.email),
+        p.email && p.name ? el("div", { class: "text-xs text-slate-500" }, p.email) : null,
+      ),
+      p.tierTag ? el("span", { class: "text-xs text-slate-500" }, p.tierTag) : null,
+    ),
+  );
+}
+
 async function pagePeople(main) {
   const data = await api("/api/people");
   main.innerHTML = "";
   const root = el("div", { class: "max-w-3xl mx-auto px-10 py-10 space-y-6" });
+  const list = el("div", { class: "grid gap-2" });
+  let emptyEl = null;
+  function appendCreatedPerson(p) {
+    if (emptyEl && emptyEl.parentNode) { emptyEl.remove(); emptyEl = null; }
+    list.insertBefore(personListCard(p), list.firstChild);
+  }
   root.appendChild(el("header", { class: "flex items-baseline justify-between" },
     el("h1", { class: "text-3xl font-semibold" }, "People"),
     el("button", { class: "text-sm text-slate-500 hover:text-ink",
-      onclick: () => openCreatePersonModal({ onDone: () => $$.route() }) }, "+ New person"),
+      onclick: () => openCreatePersonModal({ onCreated: appendCreatedPerson }) }, "+ New person"),
   ));
   if (window.chatPromptBubbles) root.appendChild(window.chatPromptBubbles([
     "Who haven't I touched in a while?",
     "Top 5 stakeholders to check in with",
     "Draft a 1:1 prep for my next meeting",
   ]));
-  if (!data.people?.length) root.appendChild(el("div", { class: "text-sm text-slate-500" }, "No stakeholders yet."));
-  const list = el("div", { class: "grid gap-2" });
-  for (const p of data.people || []) {
-    list.appendChild(el("a", {
-      href: "#/people/" + encodeURIComponent(p.stakeholderId),
-      class: "block bg-white rounded-xl ring-1 ring-slate-200 hover:ring-indigo-300 p-3 px-4 transition",
-    },
-      el("div", { class: "flex items-center justify-between gap-3" },
-        el("div", {},
-          el("div", { class: "text-sm font-medium" }, p.name || p.email),
-          p.email && p.name ? el("div", { class: "text-xs text-slate-500" }, p.email) : null,
-        ),
-        p.tierTag ? el("span", { class: "text-xs text-slate-500" }, p.tierTag) : null,
-      ),
-    ));
+  if (!data.people?.length) {
+    emptyEl = el("div", { class: "text-sm text-slate-500" }, "No stakeholders yet.");
+    root.appendChild(emptyEl);
   }
+  for (const p of data.people || []) list.appendChild(personListCard(p));
   root.appendChild(list);
   main.appendChild(root);
 }
 
-function openCreatePersonModal({ onDone } = {}) {
+function openCreatePersonModal({ onDone, onCreated } = {}) {
   const nameI = el("input", { type: "text", placeholder: "Name", autofocus: true,
     class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 text-base font-medium" });
   const emailI = el("input", { type: "email", placeholder: "Email",
@@ -779,8 +881,18 @@ function openCreatePersonModal({ onDone } = {}) {
         onclick: async () => {
           if (!nameI.value && !emailI.value) { toast("Name or email required", "err"); return; }
           try {
-            await api("/api/people", { method: "POST", body: { name: nameI.value, email: emailI.value, tierTag: tierI.value } });
-            modal.close(); toast("Added", "ok"); onDone?.();
+            const r = await api("/api/people", { method: "POST", body: { name: nameI.value, email: emailI.value, tierTag: tierI.value } });
+            modal.close(); toast("Added", "ok");
+            if (onCreated) {
+              onCreated({
+                stakeholderId: r.stakeholderId,
+                name: nameI.value,
+                email: emailI.value,
+                tierTag: tierI.value,
+              });
+            } else {
+              onDone?.();
+            }
           } catch (err) { toast(err.message, "err"); }
         },
       }, "Add"),
@@ -824,37 +936,61 @@ async function pagePersonDetail(main, personId) {
   // Projects (linked) + actions
   {
     const sec = el("section", { class: "space-y-2" });
+    const projectsHost = el("div", { class: "space-y-2" });
+    let emptyProjectsEl = null;
+    const linkedProjectIds = new Set((data.projects || []).map((p) => p.projectId));
+    function projectLinkCard(p) {
+      return el("a", {
+        href: "#/projects/" + encodeURIComponent(p.projectId),
+        class: "block bg-white rounded-xl ring-1 ring-slate-200 hover:ring-indigo-300 p-3 px-4 text-sm",
+      }, p.name);
+    }
+    function appendLinkedProject(p) {
+      if (linkedProjectIds.has(p.projectId)) return;
+      linkedProjectIds.add(p.projectId);
+      if (emptyProjectsEl && emptyProjectsEl.parentNode) {
+        emptyProjectsEl.remove();
+        emptyProjectsEl = null;
+      }
+      projectsHost.appendChild(projectLinkCard(p));
+    }
     sec.appendChild(el("div", { class: "flex items-baseline justify-between" },
       el("h2", { class: "text-lg font-semibold" }, "Projects"),
       el("div", { class: "flex gap-3 text-xs" },
         el("button", { class: "text-slate-500 hover:text-ink",
-          onclick: () => openLinkProjectToPersonModal(personId, allProjects.projects || [], () => $$.route()),
+          onclick: () => openLinkProjectToPersonModal(personId, allProjects.projects || [], appendLinkedProject),
         }, "+ Link existing"),
         el("button", { class: "text-slate-500 hover:text-ink",
-          onclick: () => openCreateProjectThenLinkModal(personId, () => $$.route()),
+          onclick: () => openCreateProjectThenLinkModal(personId, appendLinkedProject),
         }, "+ New project"),
       ),
     ));
     if (!data.projects?.length) {
-      sec.appendChild(el("div", { class: "text-sm text-slate-500" }, "No projects linked."));
+      emptyProjectsEl = el("div", { class: "text-sm text-slate-500" }, "No projects linked.");
+      projectsHost.appendChild(emptyProjectsEl);
     }
-    for (const p of data.projects || []) {
-      sec.appendChild(el("a", {
-        href: "#/projects/" + encodeURIComponent(p.projectId),
-        class: "block bg-white rounded-xl ring-1 ring-slate-200 hover:ring-indigo-300 p-3 px-4 text-sm",
-      }, p.name));
-    }
+    for (const p of data.projects || []) projectsHost.appendChild(projectLinkCard(p));
+    sec.appendChild(projectsHost);
     root.appendChild(sec);
   }
 
   // Upcoming meetings
+  const upcomingMeetingsHost = el("div", { class: "space-y-3" });
+  let upcomingEmptyEl = null;
+  function appendInvitedMeeting(m) {
+    if (upcomingEmptyEl && upcomingEmptyEl.parentNode) {
+      upcomingEmptyEl.remove();
+      upcomingEmptyEl = null;
+    }
+    upcomingMeetingsHost.appendChild(window.meetingCard(m));
+  }
   {
     const sec = el("section", { class: "space-y-3" });
     sec.appendChild(el("div", { class: "flex items-baseline justify-between" },
       el("h2", { class: "text-lg font-semibold" }, "Upcoming meetings"),
       el("div", { class: "flex gap-3 text-xs" },
         el("button", { class: "text-slate-500 hover:text-ink",
-          onclick: () => openInvitePersonToMeetingModal(personId, data.email, () => $$.route()),
+          onclick: () => openInvitePersonToMeetingModal(personId, data.email, appendInvitedMeeting),
         }, "+ Invite to existing"),
         el("button", { class: "text-slate-500 hover:text-ink",
           onclick: () => openCreateMeetingModal({ projectName: "", stakeholders: data.email ? [{ email: data.email, name: data.name }] : [] }),
@@ -862,18 +998,19 @@ async function pagePersonDetail(main, personId) {
       ),
     ));
     if (!data.upcomingMeetings?.length) {
-      sec.appendChild(el("div", { class: "text-sm text-slate-500" }, "Nothing on the calendar."));
+      upcomingEmptyEl = el("div", { class: "text-sm text-slate-500" }, "Nothing on the calendar.");
+      sec.appendChild(upcomingEmptyEl);
     }
-    for (const m of data.upcomingMeetings || []) sec.appendChild(window.meetingCard(m, { onChanged: () => $$.route() }));
+    sec.appendChild(upcomingMeetingsHost);
+    for (const m of data.upcomingMeetings || []) upcomingMeetingsHost.appendChild(window.meetingCard(m));
     root.appendChild(sec);
   }
 
-  // Recent meetings — backend re-projects from the Meetings table so the
-  // rich card (links, click-to-edit) lights up here too.
+  // Recent meetings
   if (data.recentMeetings?.length) {
     const sec = el("section", { class: "space-y-3" });
     sec.appendChild(el("h2", { class: "text-lg font-semibold mb-2" }, "Recent meetings"));
-    for (const m of data.recentMeetings) sec.appendChild(window.meetingCard(m, { onChanged: () => $$.route() }));
+    for (const m of data.recentMeetings) sec.appendChild(window.meetingCard(m));
     root.appendChild(sec);
   }
 
@@ -996,7 +1133,7 @@ function notesSection({ entityType, entityId, initialNotes }) {
 }
 
 // ── Person detail modals ───────────────────────────────────────────────────
-function openLinkProjectToPersonModal(personId, allProjects, onDone) {
+function openLinkProjectToPersonModal(personId, allProjects, onLinked) {
   if (!allProjects.length) { toast("No projects yet — create one first", "info"); return; }
   const sel = el("select", { class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 bg-white" });
   sel.appendChild(el("option", { value: "" }, "— Pick a project —"));
@@ -1014,7 +1151,9 @@ function openLinkProjectToPersonModal(personId, allProjects, onDone) {
             await api(\`/api/people/\${encodeURIComponent(personId)}/projects\`, {
               method: "POST", body: { projectId: sel.value },
             });
-            modal.close(); toast("Linked", "ok"); onDone?.();
+            modal.close(); toast("Linked", "ok");
+            const linked = allProjects.find((p) => p.projectId === sel.value);
+            if (linked) onLinked?.(linked);
           } catch (err) { toast(err.message, "err"); }
         },
       }, "Link"),
@@ -1023,7 +1162,7 @@ function openLinkProjectToPersonModal(personId, allProjects, onDone) {
   const modal = openModal(card);
 }
 
-function openCreateProjectThenLinkModal(personId, onDone) {
+function openCreateProjectThenLinkModal(personId, onCreated) {
   const nameI = el("input", { type: "text", placeholder: "Project name", autofocus: true,
     class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 text-base font-medium" });
   const descI = el("textarea", { rows: 2, placeholder: "Description…",
@@ -1039,7 +1178,12 @@ function openCreateProjectThenLinkModal(personId, onDone) {
             const r = await api("/api/projects", { method: "POST", body: {
               name: nameI.value.trim(), description: descI.value, stakeholderIds: [personId],
             }});
-            modal.close(); toast("Created", "ok"); onDone?.();
+            modal.close(); toast("Created", "ok");
+            const created = (r?.result?.results || []).find((x) => x.action === "created_project");
+            onCreated?.({
+              projectId: created?.projectId || \`tmp_\${Date.now()}\`,
+              name: nameI.value.trim(),
+            });
           } catch (err) { toast(err.message, "err"); }
         },
       }, "Create"),
@@ -1081,7 +1225,9 @@ async function openInvitePersonToMeetingModal(personId, personEmail, onDone) {
             await api(\`/api/calendar/\${encodeURIComponent(sel.value)}\`, {
               method: "PATCH", body: { addAttendeeEmails: [personEmail] },
             });
-            modal.close(); toast("Invited", "ok"); onDone?.();
+            modal.close(); toast("Invited", "ok");
+            const invited = meetings.find((m) => m.eventId === sel.value);
+            if (invited) onDone?.(invited);
           } catch (err) { toast(err.message, "err"); }
         },
       }, "Invite"),
@@ -1096,30 +1242,57 @@ async function pageTriage(main) {
   const projects = (await api("/api/projects")).projects || [];
   main.innerHTML = "";
   const root = el("div", { class: "max-w-3xl mx-auto px-10 py-10 space-y-6" });
+
+  // Live counter so the header reflects in-place removals.
+  let remaining = data.count || (data.items || []).length;
+  const counterEl = el("div", { class: "text-sm text-slate-500" },
+    remaining + " pending · sorted by urgency");
+  function decrementCounter() {
+    remaining = Math.max(0, remaining - 1);
+    counterEl.textContent = remaining + " pending · sorted by urgency";
+    if (remaining === 0 && !cardsHost.querySelector("[data-triage-card]")) {
+      cardsHost.appendChild(el("div", { class: "text-sm text-slate-500" }, "Inbox zero."));
+    }
+  }
+
   root.appendChild(el("header", { class: "flex items-baseline justify-between" },
-    el("h1", { class: "text-3xl font-semibold" }, "Triage"),
-    el("div", { class: "text-sm text-slate-500" },
-      (data.count || 0) + " pending · sorted by urgency"),
+    el("h1", { class: "text-3xl font-semibold" }, "Triage"), counterEl,
   ));
   root.appendChild(chatPromptBubbles([
     "Summarize what's in my triage queue and what to do first",
     "Bulk-dismiss anything that looks like newsletter spam",
     "Draft replies to the most urgent items",
   ]));
-  if (!data.items?.length) root.appendChild(el("div", { class: "text-sm text-slate-500" }, "Inbox zero."));
+  const cardsHost = el("div", { class: "space-y-4" });
+  root.appendChild(cardsHost);
+  if (!data.items?.length) cardsHost.appendChild(el("div", { class: "text-sm text-slate-500" }, "Inbox zero."));
   for (const it of data.items || []) {
-    root.appendChild(triageCard(it, projects));
+    cardsHost.appendChild(triageCard(it, projects, decrementCounter));
   }
   main.appendChild(root);
 }
 
-function triageCard(it, projects) {
+function triageCard(it, projects, onResolved) {
   const urg = Number(it.urgency || 0);
   const urgLabel = urg >= 5 ? "HIGH" : urg >= 2 ? "MED" : "LOW";
   const urgClass = urg >= 5 ? "bg-rose-100 text-rose-700"
                  : urg >= 2 ? "bg-amber-100 text-amber-800"
                  : "bg-slate-100 text-slate-500";
-  const card = el("div", { class: "bg-white rounded-xl ring-1 ring-slate-200 p-4 space-y-2" });
+  const card = el("div", { class: "bg-white rounded-xl ring-1 ring-slate-200 p-4 space-y-2", "data-triage-card": "1" });
+  function animateRemove() {
+    card.style.transition = "opacity 200ms ease, max-height 250ms ease, margin 250ms ease, padding 250ms ease";
+    card.style.pointerEvents = "none";
+    card.style.maxHeight = card.offsetHeight + "px";
+    requestAnimationFrame(() => {
+      card.style.maxHeight = "0";
+      card.style.marginTop = "0";
+      card.style.marginBottom = "0";
+      card.style.paddingTop = "0";
+      card.style.paddingBottom = "0";
+      card.style.opacity = "0";
+    });
+    setTimeout(() => { card.remove(); onResolved?.(); }, 260);
+  }
   // Header: urgency badge + summary + kind
   const header = el("div", { class: "flex items-baseline justify-between gap-3" },
     el("div", { class: "flex items-baseline gap-2 min-w-0" },
@@ -1159,7 +1332,8 @@ function triageCard(it, projects) {
         await api("/api/intake/" + encodeURIComponent(it.intakeId) + "/resolve", {
           method: "POST", body: { linkedTaskKey: taskKey },
         });
-        toast("Created task", "ok"); $$.route();
+        toast("Created task", "ok");
+        animateRemove();
       } catch (err) { toast(err.message, "err"); }
     },
   }, "→ Task"));
@@ -1175,7 +1349,8 @@ function triageCard(it, projects) {
       if (!confirm("Dismiss?")) return;
       try {
         await api("/api/intake/" + encodeURIComponent(it.intakeId) + "/dismiss", { method: "POST", body: {} });
-        toast("Dismissed", "ok"); $$.route();
+        toast("Dismissed", "ok");
+        animateRemove();
       } catch (err) { toast(err.message, "err"); }
     },
   }, "Dismiss"));
@@ -1258,6 +1433,314 @@ async function pickProjectInline(projects) {
   });
 }
 
+// ── Page: Goals ────────────────────────────────────────────────────────────
+// Quarterly OKR-style goals. The page lists every goal (open + closed) with
+// inline status / priority controls, opens an editor modal on click, lets
+// the user mark complete (status=achieved), and supports row delete.
+const GOAL_STATUSES = ["active", "achieved", "missed", "dropped"];
+const GOAL_PRIORITIES = ["", "high", "medium", "low"];
+
+function goalStatusBadge(status) {
+  const s = String(status || "active").toLowerCase();
+  const cls = s === "achieved" ? "bg-emerald-100 text-emerald-700"
+            : s === "missed"   ? "bg-rose-100 text-rose-700"
+            : s === "dropped"  ? "bg-slate-100 text-slate-500"
+            :                    "bg-indigo-100 text-indigo-700";
+  return el("span", {
+    class: "text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded " + cls,
+  }, s);
+}
+
+function isGoalOpen(g) {
+  const s = String(g.status || "").toLowerCase();
+  return !s || s === "active";
+}
+
+async function pageGoals(main) {
+  const data = await api("/api/goals?includeClosed=1");
+  main.innerHTML = "";
+  const root = el("div", { class: "max-w-3xl mx-auto px-10 py-10 space-y-6" });
+
+  // Section refs so newly-created goals can appear in place without a route.
+  const activeListHost = el("div", { class: "space-y-2" });
+  const closedListHost = el("div", { class: "space-y-2" });
+  let activeEmptyEl = null;
+  let closedEmptyEl = null;
+
+  function appendCreatedGoal(g) {
+    if (activeEmptyEl && activeEmptyEl.parentNode) {
+      activeEmptyEl.remove();
+      activeEmptyEl = null;
+    }
+    activeListHost.insertBefore(goalRow(g), activeListHost.firstChild);
+  }
+
+  root.appendChild(el("header", { class: "flex items-baseline justify-between" },
+    el("h1", { class: "text-3xl font-semibold" }, "Goals"),
+    el("button", {
+      class: "text-sm text-slate-500 hover:text-ink",
+      onclick: () => openGoalEditorModal(null, { onCreated: appendCreatedGoal }),
+    }, "+ New goal"),
+  ));
+  if (window.chatPromptBubbles) root.appendChild(window.chatPromptBubbles([
+    "Which goals are at risk this quarter?",
+    "Summarize progress on my active goals",
+    "Draft success criteria for a new goal",
+  ]));
+
+  const goals = data.goals || [];
+  const open = goals.filter(isGoalOpen);
+  const closed = goals.filter((g) => !isGoalOpen(g));
+
+  function buildSection(title, host, items, emptyRef, helpText) {
+    const sec = el("section", { class: "space-y-2" });
+    sec.appendChild(el("div", { class: "flex items-baseline justify-between mb-1" },
+      el("h2", { class: "text-lg font-semibold" }, title),
+      el("span", { class: "text-xs text-slate-400" }, items.length + (helpText ? " · " + helpText : "")),
+    ));
+    if (!items.length) {
+      const emptyEl = el("div", { class: "text-sm text-slate-500" }, "Nothing here.");
+      host.appendChild(emptyEl);
+      emptyRef(emptyEl);
+    }
+    for (const g of items) host.appendChild(goalRow(g));
+    sec.appendChild(host);
+    return sec;
+  }
+
+  if (!goals.length) {
+    root.appendChild(el("div", { class: "text-sm text-slate-500" },
+      "No goals yet. Click + New goal to set your first quarterly objective."));
+    // Still attach hosts so a newly-created goal can land in place.
+    root.appendChild(activeListHost);
+  } else {
+    root.appendChild(buildSection("Active", activeListHost, open,
+      (e) => { activeEmptyEl = e; }));
+    if (closed.length) root.appendChild(buildSection("Closed", closedListHost, closed,
+      (e) => { closedEmptyEl = e; }, "achieved · missed · dropped"));
+  }
+  main.appendChild(root);
+}
+
+function goalRow(g) {
+  let row;
+  let titleEl, descEl;
+  let metaEl;
+
+  function animateRemove() {
+    if (!row) return;
+    row.style.transition = "opacity 200ms ease, max-height 250ms ease, margin 250ms ease, padding 250ms ease";
+    row.style.pointerEvents = "none";
+    row.style.maxHeight = row.offsetHeight + "px";
+    requestAnimationFrame(() => {
+      row.style.maxHeight = "0";
+      row.style.marginTop = "0";
+      row.style.marginBottom = "0";
+      row.style.paddingTop = "0";
+      row.style.paddingBottom = "0";
+      row.style.opacity = "0";
+    });
+    setTimeout(() => row.remove(), 260);
+  }
+
+  function buildMeta() {
+    return el("div", { class: "flex items-center gap-2 mt-0.5 text-xs text-slate-500" },
+      goalStatusBadge(g.status),
+      g.quarter ? el("span", {}, g.quarter) : null,
+      g.priority ? el("span", { class: "uppercase tracking-wide" }, g.priority) : null,
+      g.targetDate ? el("span", {}, "due " + fmtDate(g.targetDate)) : null,
+    );
+  }
+  function applySaved(updated) {
+    Object.assign(g, updated);
+    titleEl.textContent = g.title || "(untitled goal)";
+    if (descEl) descEl.textContent = g.description || "";
+    const fresh = buildMeta();
+    metaEl.replaceWith(fresh);
+    metaEl = fresh;
+    if (!isGoalOpen(g) && row?.parentNode) animateRemove();
+  }
+
+  const completeBtn = isGoalOpen(g) ? el("button", {
+    class: "shrink-0 w-5 h-5 rounded-full border-2 border-slate-300 hover:border-emerald-500 transition flex items-center justify-center",
+    title: "Mark goal achieved",
+    onclick: async (e) => {
+      e.stopPropagation();
+      if (!confirm("Mark this goal as achieved?")) return;
+      try {
+        await api("/api/goals/" + encodeURIComponent(g.goalId) + "/complete", { method: "POST", body: {} });
+        toast("Goal achieved", "ok");
+        animateRemove();
+      } catch (err) { toast(err.message, "err"); }
+    },
+  }) : el("span", { class: "shrink-0 w-5 h-5 rounded-full bg-emerald-500 text-white text-xs flex items-center justify-center", title: g.status }, "✓");
+
+  const deleteBtn = el("button", {
+    class: "text-xs text-slate-400 hover:text-rose-600 px-2 shrink-0",
+    title: "Delete goal",
+    onclick: async (e) => {
+      e.stopPropagation();
+      if (!confirm("Delete \\"" + (g.title || "this goal") + "\\"? This cannot be undone.")) return;
+      try {
+        await api("/api/goals/" + encodeURIComponent(g.goalId), { method: "DELETE", body: {} });
+        toast("Deleted", "ok");
+        animateRemove();
+      } catch (err) { toast(err.message, "err"); }
+    },
+  }, "✕");
+
+  metaEl = buildMeta();
+  titleEl = el("div", { class: "text-sm font-medium text-ink truncate" }, g.title || "(untitled goal)");
+  descEl = el("div", { class: "text-xs text-slate-500 mt-1 truncate" }, g.description || "");
+  if (!g.description) descEl.style.display = "none";
+
+  row = el("div", {
+    class: "group flex items-center gap-3 py-2.5 px-3 -mx-3 rounded-lg bg-white ring-1 ring-slate-200 hover:ring-indigo-300 cursor-pointer transition",
+    onclick: () => openGoalEditorModal(g, {
+      onSaved: applySaved,
+      onCompleted: animateRemove,
+      onDeleted: animateRemove,
+    }),
+  },
+    completeBtn,
+    el("div", { class: "flex-1 min-w-0" }, titleEl, metaEl, descEl),
+    deleteBtn,
+  );
+  return row;
+}
+
+function openGoalEditorModal(goal, opts) {
+  // Back-compat: callers used to pass a single onDone fn. New callers pass
+  // { onCreated, onSaved, onCompleted, onDeleted } so the page can update
+  // in place rather than triggering a full route().
+  const callbacks = (typeof opts === "function") ? { onDone: opts } : (opts || {});
+  const { onDone, onCreated, onSaved, onCompleted, onDeleted } = callbacks;
+  const isNew = !goal;
+  const titleI = el("input", {
+    type: "text", value: goal?.title || "", placeholder: "Goal title", autofocus: true,
+    class: "w-full text-lg font-medium rounded-lg ring-1 ring-slate-200 px-3 py-2 focus:ring-indigo-400 focus:outline-none",
+  });
+  const descI = el("textarea", {
+    rows: 3, placeholder: "What's the goal? Why does it matter?",
+    class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 text-sm focus:ring-indigo-400 focus:outline-none resize-none",
+  });
+  descI.value = goal?.description || "";
+
+  const quarterI = el("input", {
+    type: "text", value: goal?.quarter || "", placeholder: "e.g. 2026Q2",
+    class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 text-sm",
+  });
+  const targetI = el("input", {
+    type: "date", value: (goal?.targetDate || "").slice(0, 10),
+    class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 text-sm",
+  });
+
+  const statusI = el("select", { class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 bg-white text-sm" });
+  for (const s of GOAL_STATUSES) {
+    const o = el("option", { value: s }, s);
+    if ((goal?.status || "active") === s) o.selected = true;
+    statusI.appendChild(o);
+  }
+  const priI = el("select", { class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 bg-white text-sm" });
+  for (const p of GOAL_PRIORITIES) {
+    const o = el("option", { value: p }, p || "—");
+    if ((goal?.priority || "") === p) o.selected = true;
+    priI.appendChild(o);
+  }
+
+  const successI = el("textarea", {
+    rows: 3, placeholder: "How will you know this is achieved?",
+    class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 text-sm focus:ring-indigo-400 focus:outline-none resize-none",
+  });
+  successI.value = goal?.successCriteria || "";
+
+  const notesI = el("textarea", {
+    rows: 3, placeholder: "Notes…",
+    class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 text-sm focus:ring-indigo-400 focus:outline-none resize-none",
+  });
+  notesI.value = goal?.notes || "";
+
+  const fieldLabel = (text, node) => el("label", { class: "block text-xs uppercase tracking-wide text-slate-500" }, text, node);
+
+  const card = el("div", { class: "space-y-4" },
+    el("h2", { class: "text-xl font-semibold" }, isNew ? "New goal" : "Edit goal"),
+    titleI,
+    fieldLabel("Description", descI),
+    el("div", { class: "grid grid-cols-2 gap-3" },
+      fieldLabel("Quarter", quarterI),
+      fieldLabel("Target date", targetI),
+    ),
+    el("div", { class: "grid grid-cols-2 gap-3" },
+      fieldLabel("Status", statusI),
+      fieldLabel("Priority", priI),
+    ),
+    fieldLabel("Success criteria", successI),
+    fieldLabel("Notes", notesI),
+    el("div", { class: "flex justify-between items-center pt-2 gap-3" },
+      isNew ? el("span", {}) : el("button", {
+        class: "text-sm text-rose-600 hover:underline",
+        onclick: async () => {
+          if (!confirm("Delete this goal? This cannot be undone.")) return;
+          try {
+            await api("/api/goals/" + encodeURIComponent(goal.goalId), { method: "DELETE", body: {} });
+            modal.close(); toast("Deleted", "ok");
+            if (onDeleted) onDeleted(); else onDone?.();
+          } catch (err) { toast(err.message, "err"); }
+        },
+      }, "Delete"),
+      el("div", { class: "flex gap-2" },
+        !isNew && isGoalOpen(goal) ? el("button", {
+          class: "rounded-lg ring-1 ring-emerald-300 text-emerald-700 px-4 py-2 text-sm font-medium hover:bg-emerald-50",
+          onclick: async () => {
+            try {
+              await api("/api/goals/" + encodeURIComponent(goal.goalId) + "/complete", { method: "POST", body: {} });
+              modal.close(); toast("Goal achieved", "ok");
+              if (onCompleted) onCompleted(); else onDone?.();
+            } catch (err) { toast(err.message, "err"); }
+          },
+        }, "Mark achieved") : null,
+        el("button", {
+          class: "rounded-lg bg-ink text-white px-4 py-2 text-sm font-medium hover:bg-slate-700",
+          onclick: async () => {
+            const title = titleI.value.trim();
+            if (!title) { toast("Title required", "err"); return; }
+            const targetDate = targetI.value ? new Date(targetI.value).toISOString() : "";
+            const patch = {
+              title, description: descI.value, quarter: quarterI.value,
+              status: statusI.value, priority: priI.value, targetDate,
+              successCriteria: successI.value, notes: notesI.value,
+            };
+            try {
+              if (isNew) {
+                const r = await api("/api/goals", { method: "POST", body: patch });
+                toast("Created", "ok");
+                modal.close();
+                if (onCreated) {
+                  const created = (r?.result?.results || []).find((x) => x.action === "created_goal");
+                  onCreated({
+                    goalId: created?.goalId || \`tmp_\${Date.now()}\`,
+                    ...patch,
+                  });
+                } else {
+                  onDone?.();
+                }
+              } else {
+                await api("/api/goals/" + encodeURIComponent(goal.goalId), {
+                  method: "PATCH", body: { patch },
+                });
+                toast("Saved", "ok");
+                modal.close();
+                if (onSaved) onSaved(patch); else onDone?.();
+              }
+            } catch (err) { toast(err.message, "err"); }
+          },
+        }, isNew ? "Create" : "Save"),
+      ),
+    ),
+  );
+  const modal = openModal(card);
+}
+
 // ── Wire pages + nav into the kit's router ─────────────────────────────────
 // The kit's spa-core handles shell rendering, default chat sidebar, and
 // boot. We just declare which pages exist and which hashes route to them.
@@ -1267,12 +1750,14 @@ window.pageProjectDetail = pageProjectDetail;
 window.pagePeople = pagePeople;
 window.pagePersonDetail = pagePersonDetail;
 window.pageTriage = pageTriage;
+window.pageGoals = pageGoals;
 
 window.AGENT_BRAND = { mark: "✦", label: "Chief" };
 window.NAV = [
   { hash: "#/now",      label: "Now" },
   { hash: "#/today",    label: "Today" },
   { hash: "#/week",     label: "This Week" },
+  { hash: "#/goals",    label: "Goals" },
   { hash: "#/projects", label: "Projects" },
   { hash: "#/people",   label: "People" },
   { hash: "#/triage",   label: "Triage" },
@@ -1290,6 +1775,7 @@ window.ROUTES = [
   { pattern: /^#\\/now$/,             handler: "pageNow" },
   { pattern: /^#\\/today$/,           handler: "pageToday" },
   { pattern: /^#\\/week$/,            handler: "pageWeek" },
+  { pattern: /^#\\/goals$/,           handler: "pageGoals" },
   { pattern: /^#\\/projects$/,        handler: "pageProjects" },
   { pattern: /^#\\/projects\\/(.+)$/,  handler: "pageProjectDetail" },
   { pattern: /^#\\/people$/,          handler: "pagePeople" },
