@@ -106,6 +106,20 @@ export async function commitProjectUpdates({ sheets, updates }) {
   }
 }
 
+// Soft-delete: marks status='deleted' rather than removing the row, so the
+// audit trail stays intact and isOpen() filters the project out of default
+// list_projects / get_goal_360 views. Sheets API has no row-delete on the
+// values endpoint, and downstream Tasks may still reference the projectId.
+export async function commitProjectDeletes({ sheets, deletes }) {
+  for (const del of deletes || []) {
+    const found = await sheets.findRowByKey("Projects", "projectId", del.projectId);
+    if (!found) continue;
+    const ts = nowIso();
+    const after = { ...found.data, status: "deleted", lastTouchedAt: ts, updatedAt: ts };
+    await sheets.updateRow("Projects", found.rowNum, rowFromObject(after, PROJECT_COLUMNS));
+  }
+}
+
 // ── Factory ──────────────────────────────────────────────────────────────────
 
 /**
@@ -243,6 +257,35 @@ export function createGoalsTools({ spreadsheetId, sheets, storeChangeset }) {
         expiresAt: cs.expiresAt,
         preview: { action: "update_project", projectId: args.projectId, before, after, reason: args.reason },
         instruction: "Call commit_changeset({changesetId}) to apply.",
+      });
+    } catch (e) {
+      return formatContent({ error: e.message });
+    }
+  }
+
+  async function runProposeDeleteProject(args = {}) {
+    if (!storeChangeset) return formatContent({ error: "storeChangeset not wired" });
+    if (!spreadsheetId) return formatContent({ error: "PPP_SHEETS_SPREADSHEET_ID not set" });
+    if (!args.projectId) return formatContent({ error: "projectId is required" });
+
+    try {
+      const found = await findRowByKey("Projects", "projectId", args.projectId);
+      if (!found) return formatContent({ error: `Project not found: ${args.projectId}` });
+
+      const before = { ...found.data };
+      const cs = await storeChangeset(
+        "projects",
+        [],
+        [],
+        [{ projectId: args.projectId, before, reason: args.reason || "" }],
+      );
+      return formatContent({
+        changesetId: cs.changesetId,
+        expiresAt: cs.expiresAt,
+        preview: { action: "delete_project", projectId: args.projectId, before, reason: args.reason },
+        instruction:
+          "Soft-delete: marks status='deleted' on commit. Tasks referencing this projectId are left untouched. " +
+          "Call commit_changeset({changesetId}) to apply.",
       });
     } catch (e) {
       return formatContent({ error: e.message });
@@ -552,6 +595,24 @@ export function createGoalsTools({ spreadsheetId, sheets, storeChangeset }) {
         additionalProperties: false,
       },
       run: runProposeUpdateProject,
+    },
+
+    propose_delete_project: {
+      description:
+        "Propose deleting a project. Soft-delete: marks status='deleted' so the row stays in Sheets " +
+        "for audit, but it drops out of default list_projects / get_goal_360 results. Tasks that " +
+        "reference this projectId are left untouched — clean those up separately if needed. " +
+        "Returns a changesetId; call commit_changeset to apply.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          projectId: { type: "string" },
+          reason: { type: "string" },
+        },
+        required: ["projectId"],
+        additionalProperties: false,
+      },
+      run: runProposeDeleteProject,
     },
 
     list_goals: {
