@@ -322,8 +322,15 @@ function isoToLocalInput(iso) {
 
 function meetingCard(m, opts = {}) {
   const { onChanged } = opts;
+  // Highlight when one or more invitees have declined — that's a signal to
+  // reschedule rather than show up. Personal-decline meetings are filtered
+  // out server-side, so any anyDeclined here is for *other* attendees.
+  const declinedNames = Array.isArray(m.declinedAttendees) ? m.declinedAttendees : [];
+  const ringClass = m.anyDeclined
+    ? "ring-2 ring-rose-300 hover:ring-rose-400"
+    : "ring-1 ring-slate-200 hover:ring-indigo-300";
   const card = el("div", {
-    class: "bg-white rounded-xl ring-1 ring-slate-200 hover:ring-indigo-300 p-4 space-y-2 cursor-pointer transition",
+    class: \`bg-white rounded-xl \${ringClass} p-4 space-y-2 cursor-pointer transition\`,
     onclick: (e) => {
       // Don't open editor when the user clicks a real link inside the card.
       if (e.target.closest("a")) return;
@@ -337,6 +344,13 @@ function meetingCard(m, opts = {}) {
       [fmtDayDate(m.startTime), fmtTime(m.startTime) + " – " + fmtTime(m.endTime)]
         .filter(Boolean).join(" · ")),
   ));
+  if (m.anyDeclined) {
+    const who = declinedNames.length
+      ? declinedNames.slice(0, 3).join(", ") + (declinedNames.length > 3 ? \` +\${declinedNames.length - 3}\` : "")
+      : "An invitee";
+    card.appendChild(el("div", { class: "text-xs font-medium text-rose-600" },
+      \`⚠ \${who} declined — reschedule?\`));
+  }
   // Link row: calendar invite + zoom/meet
   const links = [];
   if (m.htmlLink) {

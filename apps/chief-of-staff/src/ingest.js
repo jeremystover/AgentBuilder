@@ -169,7 +169,12 @@ async function ingestCalendar({ calendar, sheets, sinceMs }) {
   const timeMin = new Date(sinceMs).toISOString();
   const timeMax = new Date(Date.now() + 7 * 86400000).toISOString();
 
-  const events = await calendar.listEvents("primary", { timeMin, timeMax, maxResults: 50 });
+  // showDeleted: true so cancellations come back as status="cancelled" instead
+  // of silently dropping out of the list — without it, declined/cancelled
+  // meetings stay stale in the Meetings sheet forever.
+  const events = await calendar.listEvents("primary", {
+    timeMin, timeMax, maxResults: 50, showDeleted: true,
+  });
 
   // Load existing meetings to avoid duplicates
   let existingMeetings = [];
@@ -232,23 +237,33 @@ async function ingestCalendar({ calendar, sheets, sinceMs }) {
         });
       }
     } else {
-      // Update existing row if title/time changed
+      // Refresh the existing row whenever anything material changed —
+      // including attendee response status (declines) and meeting status
+      // (cancelled). The previous title/startTime-only check missed both.
       const existing = existingMeetings.find((m) => m.eventId === norm.eventId);
-      if (existing && (existing.title !== norm.title || existing.startTime !== norm.startTime)) {
-        const found = await sheets.findRowByKey("Meetings", "eventId", norm.eventId);
-        if (found) {
-          await sheets.updateRow("Meetings", found.rowNum, {
-            ...existing,
-            title: norm.title,
-            startTime: norm.startTime,
-            endTime: norm.endTime,
-            description: norm.description,
-            attendeesJson: JSON.stringify(norm.attendees),
-            rawJson: norm.rawJson,
-            updatedAt: nowIso(),
-          });
-          updatedCount++;
-        }
+      if (!existing) continue;
+      const newAttendeesJson = JSON.stringify(norm.attendees);
+      const changed =
+        existing.title !== norm.title ||
+        existing.startTime !== norm.startTime ||
+        existing.endTime !== norm.endTime ||
+        existing.description !== norm.description ||
+        existing.attendeesJson !== newAttendeesJson ||
+        existing.rawJson !== norm.rawJson;
+      if (!changed) continue;
+      const found = await sheets.findRowByKey("Meetings", "eventId", norm.eventId);
+      if (found) {
+        await sheets.updateRow("Meetings", found.rowNum, {
+          ...existing,
+          title: norm.title,
+          startTime: norm.startTime,
+          endTime: norm.endTime,
+          description: norm.description,
+          attendeesJson: newAttendeesJson,
+          rawJson: norm.rawJson,
+          updatedAt: nowIso(),
+        });
+        updatedCount++;
       }
     }
   }
@@ -370,6 +385,12 @@ async function ingestWorkCalendar({ sheets, workCalSheets, sinceMs }) {
     if (!eventRow) continue; // changelog entry without a matching snapshot row
 
     const evt = parseWorkEventRow(eventRow);
+    // Fold the work-cal status (e.g. "cancelled") into rawJson so the web
+    // layer can read it via projectMeeting just like personal-calendar rows.
+    const enrichedRawJson = JSON.stringify({
+      ...(safeParseJson(evt.rawJson) || {}),
+      status: evt.status || "",
+    });
 
     if (!existingEventIds.has(evt.eventId)) {
       const meetingId = generateId("mtg");
@@ -386,7 +407,7 @@ async function ingestWorkCalendar({ sheets, workCalSheets, sinceMs }) {
         "work-calendar",
         "google.com",
         `work-calendar|${evt.eventId}`,
-        evt.rawJson,
+        enrichedRawJson,
         "",   // transcriptRef
         "",   // zoomMeetingId
         "",   // zoomRecordingId
@@ -407,7 +428,7 @@ async function ingestWorkCalendar({ sheets, workCalSheets, sinceMs }) {
           location: evt.location,
           organizer: evt.organizer,
           attendeesJson: JSON.stringify(evt.attendees),
-          rawJson: evt.rawJson,
+          rawJson: enrichedRawJson,
           updatedAt: nowIso(),
         });
         updatedMeetings++;
