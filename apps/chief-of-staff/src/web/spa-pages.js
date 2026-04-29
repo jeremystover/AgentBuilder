@@ -24,40 +24,86 @@ function taskRow(task, opts = {}) {
   const overdue = isOverdue(task.dueAt);
   const projName = task.projectId && projectsById[task.projectId]
     ? projectsById[task.projectId].name : "";
-  const isToday = !!task.today;
+
+  // Mutable state captured by closures so we can update the row in place
+  // after a complete/star toggle without re-rendering the whole page.
+  // The server returns fresh state on the next route(); these in-DOM
+  // updates only need to last until the user navigates away.
+  let row;
+  let todayState = !!task.today;
+
+  const TODAY_BTN_ON  = "shrink-0 w-6 h-6 rounded-full text-sm leading-none transition flex items-center justify-center bg-amber-100 text-amber-600 ring-1 ring-amber-300 hover:bg-amber-200";
+  const TODAY_BTN_OFF = "shrink-0 w-6 h-6 rounded-full text-sm leading-none transition flex items-center justify-center text-slate-300 hover:text-amber-500 hover:bg-amber-50";
+  const ROW_ON  = "group flex items-center gap-3 py-2.5 px-3 -mx-3 rounded-lg bg-amber-50/60 hover:bg-amber-50 cursor-pointer";
+  const ROW_OFF = "group flex items-center gap-3 py-2.5 px-3 -mx-3 rounded-lg hover:bg-slate-50 cursor-pointer";
 
   const checkbox = el("button", {
     class: "shrink-0 w-5 h-5 rounded-full border-2 border-slate-300 hover:border-emerald-500 transition flex items-center justify-center",
     title: "Mark complete",
     onclick: async (e) => {
       e.stopPropagation();
+      // Optimistically fade the row out — fire the API in the background
+      // and restore on failure rather than triggering a full re-route.
+      if (row) {
+        row.style.transition = "opacity 200ms ease, max-height 250ms ease, margin 250ms ease, padding 250ms ease";
+        row.style.pointerEvents = "none";
+        row.style.opacity = "0.4";
+      }
       try {
         await api(\`/api/tasks/\${encodeURIComponent(task.taskKey)}/complete\`, { method: "POST", body: {} });
         toast("Completed", "ok");
-        onChanged?.();
-      } catch (err) { toast(err.message, "err"); }
+        if (row) {
+          row.style.maxHeight = row.offsetHeight + "px";
+          requestAnimationFrame(() => {
+            row.style.maxHeight = "0";
+            row.style.marginTop = "0";
+            row.style.marginBottom = "0";
+            row.style.paddingTop = "0";
+            row.style.paddingBottom = "0";
+            row.style.opacity = "0";
+          });
+          setTimeout(() => row.remove(), 260);
+        }
+      } catch (err) {
+        if (row) {
+          row.style.opacity = "";
+          row.style.pointerEvents = "";
+        }
+        toast(err.message, "err");
+      }
     },
   });
 
   // Today toggle — pin a task to "do this today". Persists for the
   // calendar day and surfaces it at the top of /today and in Quick Wins.
   const todayBtn = showTodayToggle ? el("button", {
-    class: \`shrink-0 w-6 h-6 rounded-full text-sm leading-none transition flex items-center justify-center \${isToday
-      ? "bg-amber-100 text-amber-600 ring-1 ring-amber-300 hover:bg-amber-200"
-      : "text-slate-300 hover:text-amber-500 hover:bg-amber-50"}\`,
-    title: isToday ? "Today task — click to remove" : "Mark as today task",
+    class: todayState ? TODAY_BTN_ON : TODAY_BTN_OFF,
+    title: todayState ? "Today task — click to remove" : "Mark as today task",
     onclick: async (e) => {
       e.stopPropagation();
+      const next = !todayState;
+      // Optimistic UI update — flip styles immediately, revert on failure.
+      todayState = next;
+      task.today = next;
+      todayBtn.className = next ? TODAY_BTN_ON : TODAY_BTN_OFF;
+      todayBtn.title = next ? "Today task — click to remove" : "Mark as today task";
+      if (row) row.className = next ? ROW_ON : ROW_OFF;
       try {
-        if (isToday) {
-          await api(\`/api/today-tasks/\${encodeURIComponent(task.taskKey)}\`, { method: "DELETE", body: {} });
-          toast("Removed from today", "ok");
-        } else {
+        if (next) {
           await api("/api/today-tasks", { method: "POST", body: { taskKey: task.taskKey } });
           toast("Marked for today", "ok");
+        } else {
+          await api(\`/api/today-tasks/\${encodeURIComponent(task.taskKey)}\`, { method: "DELETE", body: {} });
+          toast("Removed from today", "ok");
         }
-        onChanged?.();
-      } catch (err) { toast(err.message, "err"); }
+      } catch (err) {
+        todayState = !next;
+        task.today = !next;
+        todayBtn.className = todayState ? TODAY_BTN_ON : TODAY_BTN_OFF;
+        todayBtn.title = todayState ? "Today task — click to remove" : "Mark as today task";
+        if (row) row.className = todayState ? ROW_ON : ROW_OFF;
+        toast(err.message, "err");
+      }
     },
   }, "★") : null;
 
@@ -82,11 +128,8 @@ function taskRow(task, opts = {}) {
     priSel.appendChild(o);
   }
 
-  const rowClass = isToday
-    ? "group flex items-center gap-3 py-2.5 px-3 -mx-3 rounded-lg bg-amber-50/60 hover:bg-amber-50 cursor-pointer"
-    : "group flex items-center gap-3 py-2.5 px-3 -mx-3 rounded-lg hover:bg-slate-50 cursor-pointer";
-  const row = el("div", {
-    class: rowClass,
+  row = el("div", {
+    class: todayState ? ROW_ON : ROW_OFF,
     onclick: () => openTaskEditor(task, { onChanged }),
   },
     checkbox,
