@@ -395,6 +395,142 @@ function openPlanReviewModal({ kind, action, periodKey, brief, onDone }) {
   openModal(card);
 }
 
+// ── Chat sidebar — chief-of-staff override ─────────────────────────────────
+// Mirrors web-ui-kit's defaultMountChatSidebar but, when the user is on
+// /today or /week, prepends a "planning" panel that hosts what used to live
+// inline on those pages: today's/week's brief (autosave + ✨ Generate), the
+// per-page sample prompt pills, and the Plan / Review modal launchers.
+//
+// The page itself is left to focus on tasks + meetings. On any other page
+// the sidebar renders as the plain chat bar — no panel, no clutter.
+function isoWeekKey(d) {
+  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const dayNum = (date.getUTCDay() + 6) % 7;
+  date.setUTCDate(date.getUTCDate() - dayNum + 3);
+  const firstThursday = new Date(Date.UTC(date.getUTCFullYear(), 0, 4));
+  const week = 1 + Math.round(
+    ((date - firstThursday) / 86400000 - 3 + ((firstThursday.getUTCDay() + 6) % 7)) / 7
+  );
+  return \`\${date.getUTCFullYear()}-W\${String(week).padStart(2, "0")}\`;
+}
+
+function startOfWeekDate(d) {
+  const out = new Date(d);
+  out.setHours(0, 0, 0, 0);
+  const diff = (out.getDay() + 6) % 7;
+  out.setDate(out.getDate() - diff);
+  return out;
+}
+
+async function buildPlanningPanel(hash) {
+  // Returns a DOM node to slot above the chat transcript — or null when the
+  // current page doesn't have a planning surface (Now, Projects, …).
+  let kind, periodKey, label, bubbles;
+  if (hash.startsWith("#/today")) {
+    kind = "day";
+    periodKey = new Date().toISOString().slice(0, 10);
+    label = new Date().toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+    bubbles = [
+      "What's most important today?",
+      "Reschedule anything I'll miss",
+      "Draft my standup update",
+    ];
+  } else if (hash.startsWith("#/week")) {
+    kind = "week";
+    const now = new Date();
+    periodKey = isoWeekKey(now);
+    const start = startOfWeekDate(now);
+    const end = new Date(start); end.setDate(start.getDate() + 6);
+    label = \`\${fmtDate(start)} – \${fmtDate(end)}\`;
+    bubbles = [
+      "What are the themes for this week?",
+      "Which projects are at risk?",
+      "Who do I need to follow up with?",
+    ];
+  } else {
+    return null;
+  }
+
+  let brief;
+  try {
+    const data = await api(\`/api/briefs/\${kind}/\${encodeURIComponent(periodKey)}\`);
+    brief = data.brief || { kind, periodKey, goalsMd: "", generatedMd: "", reviewMd: "" };
+  } catch {
+    brief = { kind, periodKey, goalsMd: "", generatedMd: "", reviewMd: "" };
+  }
+
+  const panel = el("div", { class: "px-5 py-4 border-b border-slate-200 bg-slate-50/60 space-y-3" });
+  // Re-use the same components the page used to render inline so behavior
+  // (autosave, ✨ Generate, modal flow) stays identical — we're just moving
+  // them into the right rail.
+  panel.appendChild(briefEditor({ kind, periodKey, brief, range: kind === "week" ? label : null }));
+  if (window.chatPromptBubbles) panel.appendChild(window.chatPromptBubbles(bubbles));
+  panel.appendChild(planReviewButtons({
+    kind, periodKey, brief,
+    // Re-route to refresh the page's tasks (today task pins, completions,
+    // newly-created tasks) after the modal commits. Matches the previous
+    // refreshTasks callback the inline buttons used.
+    onDone: () => window.__cos?.route?.(),
+  }));
+  return panel;
+}
+
+async function mountCosChatSidebar(aside) {
+  aside.innerHTML = "";
+  const head = el("div", { class: "px-5 pt-5 pb-3 border-b border-slate-200" },
+    el("div", { class: "flex items-center justify-between" },
+      el("div", { class: "text-sm font-semibold uppercase tracking-wide text-slate-500" }, "Chat"),
+      el("button", { class: "text-xs text-slate-400 hover:text-ink",
+        onclick: () => { history.length = 0; transcript.innerHTML = ""; } }, "Clear"),
+    ),
+  );
+  const planningSlot = el("div", {});
+  const transcript = el("div", { class: "flex-1 overflow-y-auto scrollbar-thin px-5 py-4 space-y-3 text-sm" });
+  const ta = el("textarea", { rows: 2, placeholder: "Ask…",
+    class: "flex-1 rounded-lg ring-1 ring-slate-200 px-3 py-2 text-sm focus:ring-indigo-400 focus:outline-none resize-none" });
+  const voice = el("button", { class: "rounded-lg ring-1 ring-slate-200 px-3 py-2 text-sm hover:bg-slate-50" }, "🎤");
+  attachVoice(voice, ta);
+  const send = el("button", { class: "rounded-lg bg-ink text-white px-3 py-2 text-sm font-medium hover:bg-slate-700" }, "↑");
+  const inputRow = el("div", { class: "px-5 py-4 border-t border-slate-200 flex gap-2 items-end" }, ta, voice, send);
+
+  let history = [];
+  async function submit() {
+    const msg = ta.value.trim(); if (!msg) return;
+    ta.value = "";
+    transcript.appendChild(el("div", { class: "flex justify-end" },
+      el("div", { class: "bg-ink text-white rounded-2xl rounded-br-sm px-3 py-2 max-w-[85%] whitespace-pre-wrap" }, msg)));
+    transcript.scrollTop = transcript.scrollHeight;
+    const pending = el("div", { class: "text-slate-400 italic" }, "Thinking…");
+    transcript.appendChild(pending);
+    try {
+      const data = await api("/api/chat", { method: "POST", body: { message: msg, history,
+        pageContext: { hash: location.hash } } });
+      pending.remove();
+      history = data.messages || history;
+      transcript.appendChild(el("div", {},
+        el("div", { class: "bg-white ring-1 ring-slate-200 rounded-2xl rounded-bl-sm px-3 py-2 max-w-[95%] whitespace-pre-wrap" },
+          data.reply || "(no reply)")));
+      transcript.scrollTop = transcript.scrollHeight;
+    } catch (err) {
+      pending.remove();
+      transcript.appendChild(el("div", { class: "text-rose-600" }, "Error: " + err.message));
+    }
+  }
+  send.addEventListener("click", submit);
+  ta.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); }
+  });
+  aside.classList.add("flex", "flex-col");
+  aside.append(head, planningSlot, transcript, inputRow);
+
+  // Brief fetch is async — render the rest immediately, slot the panel in
+  // when it's ready so the sidebar isn't blocked on the network round-trip.
+  const panel = await buildPlanningPanel(location.hash || "");
+  if (panel) planningSlot.appendChild(panel);
+}
+
+window.mountChatSidebar = mountCosChatSidebar;
+
 // ── Calendar list (used on Today + This Week + Project/Person detail) ─────
 function fmtDayDate(s) {
   if (!s) return "";
@@ -928,8 +1064,8 @@ async function pageToday(main) {
   // into the page without a full re-render.
   const justAddedSec = el("section", { class: "space-y-1" });
   // Holds whichever task list the server returned + an emptyState placeholder.
-  // Re-rendered in place when the show-completed toggle flips so the rest of
-  // the page (brief, plan/review modals, meetings) keeps its DOM.
+  // Re-rendered in place when the show-completed toggle flips so the meetings
+  // section below keeps its DOM.
   const tasksHost = el("div", { class: "space-y-8" });
 
   function appendCreatedTask(newTask) {
@@ -992,14 +1128,6 @@ async function pageToday(main) {
     ),
   ));
 
-  root.appendChild(briefEditor({ kind: "day", periodKey: data.date, brief: data.brief }));
-  if (window.chatPromptBubbles) root.appendChild(window.chatPromptBubbles([
-    "What's most important today?",
-    "Reschedule anything I'll miss",
-    "Draft my standup update",
-  ]));
-  root.appendChild(planReviewButtons({ kind: "day", periodKey: data.date, brief: data.brief, onDone: refreshTasks }));
-
   root.appendChild(tasksHost);
   renderTasks(data);
 
@@ -1048,14 +1176,6 @@ async function pageWeek(main) {
       el("span", { class: "text-sm text-slate-500" }, weekRange),
     ),
   ));
-  root.appendChild(briefEditor({ kind: "week", periodKey: data.periodKey, brief: data.brief, range: weekRange }));
-  if (window.chatPromptBubbles) root.appendChild(window.chatPromptBubbles([
-    "What are the themes for this week?",
-    "Which projects are at risk?",
-    "Who do I need to follow up with?",
-  ]));
-  root.appendChild(planReviewButtons({ kind: "week", periodKey: data.periodKey, brief: data.brief, onDone: refreshWeekTasks }));
-
   root.appendChild(tasksHost);
   renderWeekTasks(data);
 
