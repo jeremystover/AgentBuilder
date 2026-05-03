@@ -20,6 +20,9 @@ web UI at `/app` for browsing tracked items and full price history.
 
 ## Non-goals
 - Auto-purchasing items or executing checkout — buy decisions are manual.
+  Even if a future adapter speaks OpenAI's Agentic Commerce Protocol,
+  this agent calls only ACP's discovery endpoints, never
+  `complete_purchase` / Instant Checkout.
 - Ingesting *past* purchases for bookkeeping (that's CFO's `amazon-import`).
 - General page-content monitoring with regex/contains/hash matchers
   (that's Research Agent's `manage_watches`).

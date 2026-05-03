@@ -85,12 +85,19 @@ export async function discoverProductUrls(
 function buildPrompt(item: TrackedItem): string {
   const lines: string[] = [];
   lines.push(
-    `Find current product listings for "${item.title}"${item.model_number ? ` (model ${item.model_number})` : ""} on Amazon, Walmart, Target, Best Buy, B&H, Newegg, Apple, and any major US retailer.`,
+    `Find current product listings for "${item.title}"${item.model_number ? ` (model ${item.model_number})` : ""} on major US retailers.`,
+  );
+  // ACP-integrated retailers (as of 2026 OpenAI Agentic Commerce Protocol
+  // discovery roster) tend to expose the freshest structured product data
+  // for agent consumption, so prefer those when they actually stock the
+  // item. Then fall through to the rest of the major-retailer field.
+  lines.push(
+    "Prefer ACP-integrated retailers when they stock the item: Target, Best Buy, The Home Depot, Lowe's, Wayfair, Nordstrom, Sephora. Then check Amazon, Walmart, B&H, Newegg, Apple, and any other major US retailer with stock.",
   );
   if (item.description) lines.push(`Description: ${item.description}`);
   if (item.notes) lines.push(`Notes: ${item.notes}`);
   if (item.retailers.length > 0)
-    lines.push(`Prefer these retailers if they have stock: ${item.retailers.join(", ")}.`);
+    lines.push(`Buyer-specified retailer preference: ${item.retailers.join(", ")}.`);
   lines.push(
     "Use web_search. Pick the canonical product page URL on each retailer (the one a shopper would land on, not a search-results page).",
   );
