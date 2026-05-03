@@ -8,8 +8,9 @@
  */
 
 export const SPA_PAGES_JS = `
+// $, el, api, toast, fmtDate are already top-level from SPA_CORE_JS
+// (concatenated above); re-declaring them here would shadow & throw.
 const C = window.__cos;
-const { $, el, api, toast, fmtDate } = C;
 
 window.AGENT_BRAND = { mark: "$", label: "Tracker" };
 window.NAV = [
