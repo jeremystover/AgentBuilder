@@ -44,6 +44,9 @@ importers:
       '@agentbuilder/registry':
         specifier: workspace:*
         version: link:../../packages/registry
+      '@agentbuilder/web-ui-kit':
+        specifier: workspace:*
+        version: link:../../packages/web-ui-kit
       agents:
         specifier: ^0.0.95
         version: 0.0.95(@cloudflare/workers-types@4.20260413.1)(react@19.2.5)
@@ -66,6 +69,9 @@ importers:
       '@agentbuilder/llm':
         specifier: workspace:*
         version: link:../../packages/llm
+      '@agentbuilder/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
       '@agentbuilder/web-ui-kit':
         specifier: workspace:*
         version: link:../../packages/web-ui-kit
@@ -124,6 +130,9 @@ importers:
       '@agentbuilder/llm':
         specifier: workspace:*
         version: link:../../packages/llm
+      '@agentbuilder/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
       '@agentbuilder/web-ui-kit':
         specifier: workspace:*
         version: link:../../packages/web-ui-kit
@@ -189,6 +198,10 @@ importers:
         version: 4.83.0(@cloudflare/workers-types@4.20260413.1)
 
   apps/linkedin-watcher:
+    dependencies:
+      '@agentbuilder/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250410.0
@@ -211,6 +224,9 @@ importers:
       '@agentbuilder/extract-article':
         specifier: workspace:*
         version: link:../../packages/extract-article
+      '@agentbuilder/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250410.0
@@ -227,6 +243,9 @@ importers:
       '@agentbuilder/llm':
         specifier: workspace:*
         version: link:../../packages/llm
+      '@agentbuilder/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
       '@agentbuilder/web-ui-kit':
         specifier: workspace:*
         version: link:../../packages/web-ui-kit
@@ -306,6 +325,9 @@ importers:
       '@agentbuilder/llm':
         specifier: workspace:*
         version: link:../../packages/llm
+      '@agentbuilder/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
       '@agentbuilder/web-ui-kit':
         specifier: workspace:*
         version: link:../../packages/web-ui-kit
@@ -365,6 +387,9 @@ importers:
       '@agentbuilder/extract-article':
         specifier: workspace:*
         version: link:../../packages/extract-article
+      '@agentbuilder/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250410.0
@@ -453,6 +478,15 @@ importers:
       '@anthropic-ai/sdk':
         specifier: ^0.88.0
         version: 0.88.0(zod@3.25.76)
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20250410.0
+        version: 4.20260413.1
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/observability:
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250410.0

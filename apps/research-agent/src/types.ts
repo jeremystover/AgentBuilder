@@ -78,13 +78,14 @@ export interface AssetsBinding {
 // auth helpers find `env.DB` without us having to rename CONTENT_DB.
 // CONTENT_DB and DB_LAB point at the same physical database (research-agent-db).
 export interface Env {
-  CONTENT_DB:      D1Database;
-  CONTENT_VECTORS: VectorizeIndex;
-  CONTENT_STORE:   R2Bucket;
-  AI:              Ai;
-  CHAT_SESSION:    DurableObjectNamespace;
-  SEND_EMAIL?:     SendEmailBinding;
-  ASSETS?:         AssetsBinding;
+  CONTENT_DB:           D1Database;
+  CONTENT_VECTORS:      VectorizeIndex;
+  CONTENT_STORE:        R2Bucket;
+  AI:                   Ai;
+  CHAT_SESSION:         DurableObjectNamespace;
+  SEND_EMAIL?:          SendEmailBinding;
+  ASSETS?:              AssetsBinding;
+  AGENTBUILDER_CORE_DB?: D1Database;
 
   // Secrets
   MCP_BEARER_TOKEN:        string;

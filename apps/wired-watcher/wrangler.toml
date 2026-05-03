@@ -20,6 +20,13 @@ binding = "VAULT_DB"
 database_name = "wired-watcher-vault"
 database_id = "REPLACE_WITH_D1_ID"
 
+# Shared fleet-wide D1 — observability tables (cron_runs, cron_errors).
+# Read by the AgentBuilder dashboard.
+[[d1_databases]]
+binding = "AGENTBUILDER_CORE_DB"
+database_name = "agentbuilder-core"
+database_id = "51a422d2-e9ea-46e8-b6c8-233229434eca"
+
 [vars]
 RESEARCH_AGENT_URL = "https://research-agent.jsstover.workers.dev"
 ENVIRONMENT        = "production"

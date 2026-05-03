@@ -36,6 +36,10 @@ import { generateMorningBrief, generateCommitmentNudges, createAutomationTools }
 import { createContentTools } from "./content-tools.js";
 import { readContent } from "./content.js";
 import { runCron, logError } from "./observability.js";
+import {
+  runCron as runFleetCron,
+  logError as logFleetError,
+} from "@agentbuilder/observability";
 import { bootstrapSheets } from "./bootstrap.js";
 import { createGoalsTools } from "./goals.js";
 import { createStateExportTools, generateStateExport, renderStateMarkdown } from "./state-export.js";
@@ -536,13 +540,21 @@ export default {
         err: new Error(`No handler for cron pattern: ${event.cron}`),
         context: { cron: event.cron },
       });
+      await logFleetError(env, "chief-of-staff", "cron:unknown", new Error(`No handler for cron pattern: ${event.cron}`), { cron: event.cron });
       return;
     }
 
+    // Run inside the fleet observability wrapper (writes cron_runs row to
+    // agentbuilder-core D1, read by the dashboard) AND mirror to the legacy
+    // Sheets-based runCron so the existing Sheets audit trail keeps working.
     ctx.waitUntil(
-      runCron(
-        { sheets, spreadsheetId, trigger: entry.trigger, cron: event.cron },
-        entry.handler
+      runFleetCron(
+        env,
+        { agentId: "chief-of-staff", trigger: entry.trigger, cron: event.cron },
+        () => runCron(
+          { sheets, spreadsheetId, trigger: entry.trigger, cron: event.cron },
+          entry.handler
+        ),
       )
     );
   },

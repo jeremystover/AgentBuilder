@@ -1,4 +1,4 @@
-import type { KVNamespace, R2Bucket } from "@cloudflare/workers-types";
+import type { D1Database, KVNamespace, R2Bucket } from "@cloudflare/workers-types";
 
 export interface WatchedProfile {
   slug:        string;   // e.g. "kylelagunas"
@@ -20,11 +20,12 @@ export interface ProxycurlPost {
 }
 
 export interface Env {
-  LINKEDIN_STATE:     KVNamespace;
-  LINKEDIN_CONTENT:   R2Bucket;
-  PROXYCURL_API_KEY:  string;
-  INTERNAL_SECRET:    string;
-  WATCHER_API_KEY:    string;
-  RESEARCH_AGENT_URL: string;
-  ENVIRONMENT:        string;
+  LINKEDIN_STATE:        KVNamespace;
+  LINKEDIN_CONTENT:      R2Bucket;
+  AGENTBUILDER_CORE_DB?: D1Database;
+  PROXYCURL_API_KEY:     string;
+  INTERNAL_SECRET:       string;
+  WATCHER_API_KEY:       string;
+  RESEARCH_AGENT_URL:    string;
+  ENVIRONMENT:           string;
 }

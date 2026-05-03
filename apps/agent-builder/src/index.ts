@@ -15,6 +15,7 @@
  */
 
 import type { Env } from '../worker-configuration';
+import { handleDashboard } from './dashboard/index.js';
 export { AgentBuilderDO } from './durable-object.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -199,6 +200,10 @@ export default {
         personas: ['architect', 'builder', 'fleet-manager'],
       });
     }
+
+    // ── /dashboard — fleet monitoring web UI ─────────────────────────────────
+    const dashboardResponse = await handleDashboard(request, env);
+    if (dashboardResponse) return dashboardResponse;
 
     // ── REST /chat (for curl / chat.sh) ─────────────────────────────────────
     if (url.pathname === '/chat' && request.method === 'POST') {

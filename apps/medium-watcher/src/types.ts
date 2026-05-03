@@ -21,11 +21,12 @@ export interface RssItem {
 }
 
 export interface Env {
-  MEDIUM_STATE:        KVNamespace;
-  VAULT_DB:            D1Database;
-  WATCHER_API_KEY:     string;
-  INTERNAL_SECRET:     string;
-  KEK_BASE64:          string;
-  RESEARCH_AGENT_URL:  string;
-  ENVIRONMENT:         string;
+  MEDIUM_STATE:           KVNamespace;
+  VAULT_DB:               D1Database;
+  AGENTBUILDER_CORE_DB?:  D1Database;
+  WATCHER_API_KEY:        string;
+  INTERNAL_SECRET:        string;
+  KEK_BASE64:             string;
+  RESEARCH_AGENT_URL:     string;
+  ENVIRONMENT:            string;
 }

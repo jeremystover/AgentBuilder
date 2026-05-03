@@ -30,6 +30,7 @@ import {
   SPA_CORE_JS,
   verifyPassword,
 } from "@agentbuilder/web-ui-kit";
+import { runCron } from "@agentbuilder/observability";
 import { runDailyDigest } from "./cron/daily";
 import { runPriorityRefresh } from "./cron/priority";
 import { handleMcpRequest } from "./mcp/server";
@@ -192,23 +193,20 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 }
 
 async function handleScheduled(controller: ScheduledController, env: Env): Promise<void> {
-  console.log(
-    `[cron] trigger=${controller.cron} at=${new Date(controller.scheduledTime).toISOString()}`,
-  );
   if (controller.cron === "0 12 * * *") {
-    try {
-      await runDailyDigest(env);
-    } catch (e) {
-      console.error("[cron/daily] failed:", e);
-    }
+    await runCron(
+      env,
+      { agentId: "shopping-price-tracker", trigger: "daily-digest", cron: controller.cron },
+      () => runDailyDigest(env),
+    );
     return;
   }
   if (controller.cron === "0 */4 * * *") {
-    try {
-      await runPriorityRefresh(env);
-    } catch (e) {
-      console.error("[cron/priority] failed:", e);
-    }
+    await runCron(
+      env,
+      { agentId: "shopping-price-tracker", trigger: "priority-refresh", cron: controller.cron },
+      () => runPriorityRefresh(env),
+    );
     return;
   }
 }

@@ -1,6 +1,6 @@
 {
   "$schemaVersion": 1,
-  "updatedAt": "2026-05-03T13:50:39.532Z",
+  "updatedAt": "2026-05-03T15:00:00.000Z",
   "agents": [
     {
       "id": "agent-builder",
@@ -150,7 +150,29 @@
         ]
       },
       "version": "4.0.0",
-      "lastDeployed": "2026-04-13T00:00:00.000Z"
+      "lastDeployed": "2026-04-13T00:00:00.000Z",
+      "crons": [
+        {
+          "schedule": "*/10 * * * *",
+          "trigger": "ingest-and-zoom",
+          "description": "Every 10 minutes — pull new Gmail / Calendar / Drive items into IntakeQueue and poll Zoom for new recordings."
+        },
+        {
+          "schedule": "0 6 * * *",
+          "trigger": "state-export",
+          "description": "6am daily — regenerate Current_State.md on Drive so the goals/projects/tasks tree is browsable."
+        },
+        {
+          "schedule": "0 7 * * *",
+          "trigger": "morning-brief",
+          "description": "7am daily — draft the morning brief (calendar, tasks, follow-ups) into Drive."
+        },
+        {
+          "schedule": "0 9 * * 1",
+          "trigger": "commitment-nudges",
+          "description": "9am Monday — generate commitment nudge drafts for stakeholders the user owes a follow-up."
+        }
+      ]
     },
     {
       "id": "cfo",
@@ -242,7 +264,19 @@
         ]
       },
       "version": "0.1.0",
-      "lastDeployed": "2026-04-13T00:00:00.000Z"
+      "lastDeployed": "2026-04-13T00:00:00.000Z",
+      "crons": [
+        {
+          "schedule": "0 9 * * *",
+          "trigger": "nightly-sync",
+          "description": "Nightly Teller transaction sync (~05:00 ET) — pulls and stages new transactions for review."
+        },
+        {
+          "schedule": "*/30 * * * *",
+          "trigger": "sms-dispatch",
+          "description": "Every 30 min — SMS dispatcher; self-checks Pacific local time + per-person preferred slots so 47 of 48 daily fires are no-ops."
+        }
+      ]
     },
     {
       "id": "guest-booking",
@@ -375,7 +409,14 @@
           "Building or modifying other agents (that's Agent Builder)"
         ]
       },
-      "version": "0.0.1"
+      "version": "0.0.1",
+      "crons": [
+        {
+          "schedule": "0 14 * * *",
+          "trigger": "daily-poll",
+          "description": "Daily at 7am Pacific — poll watched LinkedIn profiles via Proxycurl, dedupe, hand off new posts to Research Agent."
+        }
+      ]
     },
     {
       "id": "medium-watcher",
@@ -439,7 +480,14 @@
           "Building or modifying other agents (that's Agent Builder)"
         ]
       },
-      "version": "0.0.1"
+      "version": "0.0.1",
+      "crons": [
+        {
+          "schedule": "0 14 * * *",
+          "trigger": "daily-poll",
+          "description": "Daily at 7am Pacific — poll Medium member RSS, fetch each new article with subscriber cookie, hand off to Research Agent."
+        }
+      ]
     },
     {
       "id": "wired-watcher",
@@ -504,7 +552,14 @@
           "Building or modifying other agents (that's Agent Builder)"
         ]
       },
-      "version": "0.0.1"
+      "version": "0.0.1",
+      "crons": [
+        {
+          "schedule": "30 14 * * *",
+          "trigger": "daily-poll",
+          "description": "Daily at 7:30am Pacific — poll Wired RSS, fetch each new article with subscriber cookie, hand off to Research Agent."
+        }
+      ]
     },
     {
       "id": "research-agent",
@@ -583,7 +638,19 @@
           "Real-time web search — this agent searches ingested content only"
         ]
       },
-      "version": "0.0.1"
+      "version": "0.0.1",
+      "crons": [
+        {
+          "schedule": "*/5 * * * *",
+          "trigger": "check-watches",
+          "description": "Every 5 minutes — re-check page-monitoring watches and notify on diffs."
+        },
+        {
+          "schedule": "*/30 * * * *",
+          "trigger": "poll-bluesky",
+          "description": "Every 30 minutes — poll Bluesky source feeds and ingest new posts into the knowledge base."
+        }
+      ]
     },
     {
       "id": "graphic-designer",
@@ -832,7 +899,19 @@
           "Building or modifying other agents (that's Agent Builder)"
         ]
       },
-      "version": "0.0.1"
+      "version": "0.0.1",
+      "crons": [
+        {
+          "schedule": "0 12 * * *",
+          "trigger": "daily-digest",
+          "description": "Daily at 12:00 UTC (08:00 ET during EDT) — search every tracked item, build the digest, send the digest email."
+        },
+        {
+          "schedule": "0 */4 * * *",
+          "trigger": "priority-refresh",
+          "description": "Every 4 hours — re-search only priority='high' items so urgent prices stay fresh; never sends email."
+        }
+      ]
     }
   ]
 }

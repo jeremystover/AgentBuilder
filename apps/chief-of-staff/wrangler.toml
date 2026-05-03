@@ -143,6 +143,13 @@ binding = "DB"
 database_name = "chief-of-staff-db"
 database_id = "fb337f5e-b57c-4844-aa08-10872deb8089"
 
+# Shared fleet-wide D1 — observability tables (cron_runs, cron_errors).
+# Read by the AgentBuilder dashboard.
+[[d1_databases]]
+binding = "AGENTBUILDER_CORE_DB"
+database_name = "agentbuilder-core"
+database_id = "51a422d2-e9ea-46e8-b6c8-233229434eca"
+
 # ── Local dev ─────────────────────────────────────────────────────────────────
 # For local dev with `wrangler dev`, create .dev.vars (gitignored) with:
 #

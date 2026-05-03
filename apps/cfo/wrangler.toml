@@ -30,6 +30,13 @@ binding = "DB"
 database_name = "cfo-db"
 database_id = "7a8081f3-8ae5-4344-8902-5cbd7992670f"
 
+# Shared fleet-wide D1 — observability tables (cron_runs, cron_errors).
+# Read by the AgentBuilder dashboard.
+[[d1_databases]]
+binding = "AGENTBUILDER_CORE_DB"
+database_name = "agentbuilder-core"
+database_id = "51a422d2-e9ea-46e8-b6c8-233229434eca"
+
 # Snapshot-and-copy R2 during migration. Create with:
 #   wrangler r2 bucket create cfo-files
 # then copy objects from tax-prep-files via the R2 API / rclone.
