@@ -1978,7 +1978,7 @@ api("/api/config").then((cfg) => {
 window.ROUTES = [
   { pattern: /^#\\/now$/,             handler: "pageNow" },
   { pattern: /^#\\/today$/,           handler: "pageToday" },
-  { pattern: /^#\\/week$/,            handler: "pageWeek" },
+  { pattern: /^#\\/week(?:\\/(next))?$/, handler: "pageWeek" },
   { pattern: /^#\\/goals$/,           handler: "pageGoals" },
   { pattern: /^#\\/projects$/,        handler: "pageProjects" },
   { pattern: /^#\\/projects\\/(.+)$/,  handler: "pageProjectDetail" },
