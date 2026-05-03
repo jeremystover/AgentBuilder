@@ -334,6 +334,14 @@ export function createGoalsTools({ spreadsheetId, sheets, storeChangeset }) {
     }
   }
 
+  async function runMarkProjectDone(args = {}) {
+    return runProposeUpdateProject({
+      projectId: args.projectId,
+      patch: { status: "done" },
+      reason: args.reason || "marked done",
+    });
+  }
+
   async function runListGoals(args = {}) {
     if (!spreadsheetId) return formatContent({ error: "PPP_SHEETS_SPREADSHEET_ID not set" });
     try {
@@ -679,6 +687,22 @@ export function createGoalsTools({ spreadsheetId, sheets, storeChangeset }) {
         additionalProperties: false,
       },
       run: runProposeDeleteProject,
+    },
+
+    mark_project_done: {
+      description:
+        "Mark a project as done. Returns a changesetId; call commit_changeset to apply. " +
+        "The project will no longer appear under goals — only in the 'Done & inactive' section.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          projectId: { type: "string" },
+          reason: { type: "string" },
+        },
+        required: ["projectId"],
+        additionalProperties: false,
+      },
+      run: runMarkProjectDone,
     },
 
     list_goals: {

@@ -562,9 +562,28 @@ async function pageProjectDetail(main, projectId) {
   main.innerHTML = "";
   const root = el("div", { class: "max-w-3xl mx-auto px-10 py-10 space-y-8" });
   root.appendChild(el("a", { href: "#/projects", class: "text-xs text-slate-500 hover:text-ink" }, "← Projects"));
+  const isDone = String(data.status || "").toLowerCase() === "done";
   root.appendChild(el("header", { class: "flex items-baseline justify-between" },
     el("h1", { class: "text-3xl font-semibold" }, data.name || "(untitled project)"),
-    el("span", { class: "text-sm text-slate-500" }, (data.status || "") + (data.healthStatus ? " · " + data.healthStatus : "")),
+    el("div", { class: "flex items-baseline gap-4" },
+      el("span", { class: "text-sm text-slate-500" }, (data.status || "") + (data.healthStatus ? " · " + data.healthStatus : "")),
+      el("button", {
+        class: isDone
+          ? "text-sm text-emerald-600 hover:text-emerald-800"
+          : "text-sm text-slate-500 hover:text-emerald-700",
+        onclick: async () => {
+          try {
+            const newStatus = isDone ? "active" : "done";
+            await api("/api/projects/" + encodeURIComponent(projectId), {
+              method: "PATCH",
+              body: { patch: { status: newStatus }, reason: "marked " + newStatus + " via web UI" },
+            });
+            toast(isDone ? "Project reopened" : "Project marked done", "ok");
+            window.location.hash = "#/projects";
+          } catch (err) { toast(err.message, "err"); }
+        },
+      }, isDone ? "Reopen project" : "Mark done"),
+    ),
   ));
   if (window.chatPromptBubbles) root.appendChild(window.chatPromptBubbles([
     "What's the latest on this project?",
