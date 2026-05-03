@@ -708,8 +708,15 @@ export async function handleApiRequest(request, ctx) {
   }
   if (method === "POST" && path === "/api/people") {
     const body = await readJson();
-    const id = await createStakeholderRow(sheets, body);
-    return jsonResponse({ ok: true, stakeholderId: id });
+    try {
+      const id = await createStakeholderRow(sheets, body);
+      return jsonResponse({ ok: true, stakeholderId: id });
+    } catch (err) {
+      if (err?.code === "duplicate_email") {
+        return jsonResponse({ error: err.message, stakeholderId: err.existingStakeholderId }, 409);
+      }
+      throw err;
+    }
   }
 
   // ── Tasks ────────────────────────────────────────────────────────────────
@@ -1127,8 +1134,15 @@ export async function handleApiRequest(request, ctx) {
     if (!body?.name && !body?.email) {
       return jsonResponse({ error: "name or email is required" }, 400);
     }
-    const stakeholderId = await createStakeholderRow(sheets, body);
-    return jsonResponse({ ok: true, stakeholderId }, 201);
+    try {
+      const stakeholderId = await createStakeholderRow(sheets, body);
+      return jsonResponse({ ok: true, stakeholderId }, 201);
+    } catch (err) {
+      if (err?.code === "duplicate_email") {
+        return jsonResponse({ error: err.message, stakeholderId: err.existingStakeholderId }, 409);
+      }
+      throw err;
+    }
   }
 
   return jsonResponse({ error: "not found" }, 404);
@@ -1400,6 +1414,17 @@ function scoreIntakeUrgency(row, payload) {
 // directly. Kept in api.js so the discrepancy with tasks/projects is obvious.
 
 async function createStakeholderRow(sheets, body) {
+  const emailKey = String(body.email || "").trim().toLowerCase();
+  if (emailKey) {
+    const existing = await readAll(sheets, "Stakeholders");
+    const dup = existing.find((s) => String(s.email || "").trim().toLowerCase() === emailKey);
+    if (dup) {
+      const err = new Error(`Stakeholder with email ${body.email} already exists`);
+      err.code = "duplicate_email";
+      err.existingStakeholderId = dup.stakeholderId;
+      throw err;
+    }
+  }
   const stakeholderId = body.stakeholderId || `sh_${Date.now().toString(36)}`;
   const row = {
     stakeholderId,
