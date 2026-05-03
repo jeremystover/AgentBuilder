@@ -913,7 +913,11 @@ function openAddStakeholderToProjectModal(projectId, allPeople, onAdded) {
     el("div", { class: "flex justify-end" },
       el("button", {
         class: "rounded-lg bg-ink text-white px-4 py-2 text-sm font-medium hover:bg-slate-700",
-        onclick: async () => {
+        onclick: async (e) => {
+          const btn = e.currentTarget;
+          if (btn.disabled) return;
+          btn.disabled = true;
+          btn.textContent = "Adding…";
           try {
             let id = sel.value;
             let added = id ? peopleById[id] : null;
@@ -922,7 +926,7 @@ function openAddStakeholderToProjectModal(projectId, allPeople, onAdded) {
               id = r.stakeholderId;
               added = { stakeholderId: id, name: newName.value, email: newEmail.value };
             }
-            if (!id) { toast("Pick or create a person", "err"); return; }
+            if (!id) { toast("Pick or create a person", "err"); btn.disabled = false; btn.textContent = "Add"; return; }
             const cur = await api("/api/projects/" + encodeURIComponent(projectId));
             const ids = new Set([...(cur.stakeholders || []).map((s) => s.stakeholderId), id].filter(Boolean));
             await api("/api/projects/" + encodeURIComponent(projectId), {
@@ -930,7 +934,7 @@ function openAddStakeholderToProjectModal(projectId, allPeople, onAdded) {
             });
             modal.close(); toast("Added", "ok");
             if (added) onAdded?.(added);
-          } catch (err) { toast(err.message, "err"); }
+          } catch (err) { toast(err.message, "err"); btn.disabled = false; btn.textContent = "Add"; }
         },
       }, "Add"),
     ),
