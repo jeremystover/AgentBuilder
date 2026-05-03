@@ -14,7 +14,12 @@ function json(body: unknown, status = 200): Response {
 
 function authOk(request: Request, env: Env): boolean {
   const header = request.headers.get("Authorization");
-  return header === `Bearer ${env.WATCHER_API_KEY}`;
+  if (!header) return false;
+  if (header === `Bearer ${env.WATCHER_API_KEY}`) return true;
+  // Fleet-internal callers (e.g. research-agent's follow_author tool) auth
+  // with the shared INTERNAL_SECRET. Same pattern as research-agent's /ingest.
+  if (env.INTERNAL_SECRET && header === `Bearer ${env.INTERNAL_SECRET}`) return true;
+  return false;
 }
 
 function slugFromFeedUrl(feedUrl: string): string {

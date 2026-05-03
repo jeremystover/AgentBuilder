@@ -241,7 +241,26 @@ export async function handleLabApi(request: Request, env: Env): Promise<Response
     return handleCreateIdea(request, env, { external: true });
   }
 
+  // ── Article actions (follow author) ──────────────────────────────────────
+  {
+    const m = path.match(/^\/api\/lab\/articles\/([^/]+)\/follow-author$/);
+    if (m && method === "POST") return handleFollowAuthor(m[1] as string, env);
+  }
+
   return null;
+}
+
+async function handleFollowAuthor(articleId: string, env: Env): Promise<Response> {
+  const { followAuthor, FollowAuthorInput } = await import("./mcp/tools/follow_author");
+  const parsed = FollowAuthorInput.safeParse({ article_id: articleId });
+  if (!parsed.success) {
+    return jsonResponse({ error: "Invalid article_id (expected uuid)" }, 400);
+  }
+  try {
+    return jsonResponse(await followAuthor(parsed.data, env));
+  } catch (e) {
+    return jsonResponse({ error: e instanceof Error ? e.message : String(e) }, 500);
+  }
 }
 
 // ── Ideas handlers ─────────────────────────────────────────────────────────

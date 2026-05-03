@@ -103,6 +103,12 @@ export interface Env {
   // article rather than scanned for URLs. See email/handler.ts.
   NEWSLETTER_SENDERS?:     string;
 
+  // Base URL of the deployed medium-watcher worker (no trailing slash).
+  // Used by the follow_author tool to POST /watch with the shared
+  // INTERNAL_SECRET. Optional — when unset, follow_author returns a
+  // configuration error instead of attempting the call.
+  MEDIUM_WATCHER_URL?:     string;
+
   // Lab — added by the /lab web UI
   ANTHROPIC_API_KEY?:      string;
   WEB_UI_PASSWORD?:        string;
