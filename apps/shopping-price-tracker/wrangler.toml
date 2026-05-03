@@ -24,7 +24,7 @@ new_sqlite_classes = ["ShoppingPriceTrackerDO"]
 [[d1_databases]]
 binding = "DB"
 database_name = "shopping-price-tracker-db"
-database_id = ""
+database_id = "cbf1249d-92bf-47fc-9c65-9abd7603bad4"
 
 # Shared fleet-wide D1 — observability tables (cron_runs, cron_errors).
 # Read by the AgentBuilder dashboard.
