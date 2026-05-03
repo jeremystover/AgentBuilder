@@ -11,7 +11,7 @@ crons = ["0 14 * * *"]
 # KV — watchlist of feeds + per-feed seen-id state for dedup
 [[kv_namespaces]]
 binding = "MEDIUM_STATE"
-id = "REPLACE_WITH_KV_ID"
+id = "d7606e7eee6d4846b90befcb2785475d"
 
 # D1 — credential vault (cookies)
 # Create with: wrangler d1 create medium-watcher-vault
@@ -19,7 +19,7 @@ id = "REPLACE_WITH_KV_ID"
 [[d1_databases]]
 binding = "VAULT_DB"
 database_name = "medium-watcher-vault"
-database_id = "REPLACE_WITH_D1_ID"
+database_id = "852dc9a2-1ae8-4249-844a-9f949cfc85a7"
 
 # Shared fleet-wide D1 — observability tables (cron_runs, cron_errors).
 # Read by the AgentBuilder dashboard.
