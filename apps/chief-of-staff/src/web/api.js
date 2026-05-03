@@ -417,7 +417,9 @@ export async function handleApiRequest(request, ctx) {
     return await handleToday(url.searchParams.get("includeCompleted") === "1");
   }
   if (method === "GET" && path === "/api/week") {
-    return await handleWeek(url.searchParams.get("includeCompleted") === "1");
+    const rawOffset = parseInt(url.searchParams.get("weekOffset") || "0", 10);
+    const weekOffset = Number.isFinite(rawOffset) ? rawOffset : 0;
+    return await handleWeek(url.searchParams.get("includeCompleted") === "1", weekOffset);
   }
 
   // ── Projects ─────────────────────────────────────────────────────────────
@@ -1329,8 +1331,9 @@ export async function handleApiRequest(request, ctx) {
     });
   }
 
-  async function handleWeek(includeCompleted) {
+  async function handleWeek(includeCompleted, weekOffset = 0) {
     const now = new Date();
+    if (weekOffset) now.setDate(now.getDate() + weekOffset * 7);
     const wStart = startOfWeek(now).toISOString();
     const wEnd = endOfWeek(now).toISOString();
     const periodKey = isoWeekKey(now);

@@ -437,12 +437,18 @@ async function buildPlanningPanel(hash) {
     ];
   } else if (hash.startsWith("#/week")) {
     kind = "week";
+    const isNext = hash === "#/week/next";
     const now = new Date();
+    if (isNext) now.setDate(now.getDate() + 7);
     periodKey = isoWeekKey(now);
     const start = startOfWeekDate(now);
     const end = new Date(start); end.setDate(start.getDate() + 6);
     label = \`\${fmtDate(start)} – \${fmtDate(end)}\`;
-    bubbles = [
+    bubbles = isNext ? [
+      "Help me plan next week's themes",
+      "Which projects need attention next week?",
+      "What should I prep over the weekend?",
+    ] : [
       "What are the themes for this week?",
       "Which projects are at risk?",
       "Who do I need to follow up with?",
@@ -1142,9 +1148,18 @@ async function pageToday(main) {
 }
 
 // ── Page: This Week ────────────────────────────────────────────────────────
-async function pageWeek(main) {
+async function pageWeek(main, mode) {
+  const isNext = mode === "next";
+  const weekQs = (includeCompleted) => {
+    const qs = new URLSearchParams();
+    if (includeCompleted) qs.set("includeCompleted", "1");
+    if (isNext) qs.set("weekOffset", "1");
+    const s = qs.toString();
+    return s ? "?" + s : "";
+  };
+
   const initialIncludeCompleted = showCompletedFlag("week");
-  const data = await api("/api/week" + (initialIncludeCompleted ? "?includeCompleted=1" : ""));
+  const data = await api("/api/week" + weekQs(initialIncludeCompleted));
   const projects = (await api("/api/projects")).projects || [];
   const projectsById = Object.fromEntries(projects.map((p) => [p.projectId, p]));
   main.innerHTML = "";
@@ -1164,14 +1179,25 @@ async function pageWeek(main) {
   async function refreshWeekTasks() {
     const includeCompleted = showCompletedFlag("week");
     try {
-      const fresh = await api("/api/week" + (includeCompleted ? "?includeCompleted=1" : ""));
+      const fresh = await api("/api/week" + weekQs(includeCompleted));
       renderWeekTasks(fresh);
     } catch (err) { toast(err.message, "err"); }
   }
 
+  const weekToggle = (label, targetHash, active) => el("a", {
+    href: targetHash,
+    class: active
+      ? "rounded-md bg-ink text-white px-2.5 py-1 text-xs font-medium"
+      : "rounded-md ring-1 ring-slate-200 text-slate-600 px-2.5 py-1 text-xs hover:bg-slate-50",
+  }, label);
+
   root.appendChild(el("header", { class: "flex items-baseline justify-between gap-3" },
-    el("h1", { class: "text-3xl font-semibold" }, "This Week"),
+    el("h1", { class: "text-3xl font-semibold" }, isNext ? "Next Week" : "This Week"),
     el("div", { class: "flex items-center gap-3" },
+      el("div", { class: "flex gap-1" },
+        weekToggle("This Week", "#/week", !isNext),
+        weekToggle("Next Week", "#/week/next", isNext),
+      ),
       showCompletedToggle("week", refreshWeekTasks),
       el("span", { class: "text-sm text-slate-500" }, weekRange),
     ),
