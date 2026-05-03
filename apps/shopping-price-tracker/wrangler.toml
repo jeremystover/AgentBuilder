@@ -1,0 +1,53 @@
+name = "shopping-price-tracker"
+main = "src/index.ts"
+compatibility_date = "2025-04-01"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+# Worker handles every request first. Without this flag, Cloudflare's assets
+# binding intercepts unmatched paths and returns index.html via the SPA
+# fallback BEFORE the Worker fetch handler runs — that bypasses our auth
+# gate at /app entirely.
+run_worker_first = true
+
+[[durable_objects.bindings]]
+name = "AGENT_DO"
+class_name = "ShoppingPriceTrackerDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ShoppingPriceTrackerDO"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "shopping-price-tracker-db"
+database_id = "cbf1249d-92bf-47fc-9c65-9abd7603bad4"
+
+# Shared fleet-wide D1 — observability tables (cron_runs, cron_errors).
+# Read by the AgentBuilder dashboard.
+[[d1_databases]]
+binding = "AGENTBUILDER_CORE_DB"
+database_name = "agentbuilder-core"
+database_id = "51a422d2-e9ea-46e8-b6c8-233229434eca"
+
+[[send_email]]
+name = "SEND_EMAIL"
+
+# Daily digest at 12:00 UTC (08:00 ET during EDT) plus a 4-hourly priority
+# refresh that only processes priority='high' items and never sends email.
+[triggers]
+crons = ["0 12 * * *", "0 */4 * * *"]
+
+[vars]
+ENVIRONMENT = "production"
+DIGEST_FROM = "jsstover@gmail.com"
+
+# Secrets (set via wrangler secret put):
+#   wrangler secret put MCP_HTTP_KEY        — bearer token for /mcp
+#   wrangler secret put WEB_UI_PASSWORD     — single shared password for /app
+#   wrangler secret put EXTERNAL_API_KEY    — bearer token for /api/v1/*
+#   wrangler secret put ANTHROPIC_API_KEY   — digest summaries + web_search
+#   wrangler secret put EBAY_APP_ID         — eBay Browse API

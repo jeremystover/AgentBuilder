@@ -12,13 +12,15 @@
  * parses that JSON to drive scaffolding.
  */
 
-import { type ChatMessage, runToolLoop } from '@agentbuilder/llm';
+import { type ChatMessage, CORE_BEHAVIORAL_PREAMBLE, runToolLoop } from '@agentbuilder/llm';
 import type { LLMClient } from '@agentbuilder/llm';
 import type { MemoryRegistryStore } from '@agentbuilder/registry';
 import { buildArchitectTools } from '../tools/architect-tools.js';
 import type { PersonaResult } from '../types.js';
 
-const ARCHITECT_SYSTEM = `You are the Architect persona inside AgentBuilder, a meta-agent that designs and manages a fleet of specialized agents deployed on Cloudflare Workers.
+const ARCHITECT_SYSTEM = `${CORE_BEHAVIORAL_PREAMBLE}
+
+You are the Architect persona inside AgentBuilder, a meta-agent that designs and manages a fleet of specialized agents deployed on Cloudflare Workers.
 
 # Your job on every turn
 
@@ -86,6 +88,25 @@ If the user is asking you to design a MIGRATION of an existing agent from anothe
 \`\`\`
 
 Place this inside the top-level JSON object but outside AgentEntrySchema's required fields — the Claude Code migration skill reads it, the Worker validator ignores it.
+
+# Web UIs
+
+If the user wants the agent to have a browser-facing surface (a "dashboard", "web UI", "/app page", "Asana-like interface", etc.), the agent MUST consume the shared kit \`@agentbuilder/web-ui-kit\` — never re-implement auth, the SPA shell, or the chat tool-loop. The kit guarantees a consistent look (paper background, serif headings, Inter body, indigo accent) and a single auth shape (cookie session for the SPA + bearer key for external apps).
+
+In the design spec, signal this by:
+
+1. Adding \`@agentbuilder/web-ui-kit\` to \`sharedPackages\`.
+2. Listing the planned pages in a top-level \`webUi\` object (outside AgentEntrySchema's required fields, similar to \`migration\`):
+
+\`\`\`json
+"webUi": {
+  "pages": ["Today", "Projects", "People"],
+  "chatToolAllowlist": ["tool_a", "tool_b"],
+  "secrets": ["WEB_UI_PASSWORD", "ANTHROPIC_API_KEY", "EXTERNAL_API_KEY"]
+}
+\`\`\`
+
+The Builder hands off to the \`add-web-ui\` Claude Code skill when this is present. Reference implementation: \`apps/chief-of-staff/src/web/\`.
 
 # Constraints
 

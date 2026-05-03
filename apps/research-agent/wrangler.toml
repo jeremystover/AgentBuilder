@@ -22,6 +22,13 @@ binding = "CONTENT_DB"
 database_name = "research-agent-db"
 database_id = "3c019a9b-ad01-4621-b7cb-8dfd81940082"
 
+# Shared fleet-wide D1 — observability tables (cron_runs, cron_errors).
+# Read by the AgentBuilder dashboard.
+[[d1_databases]]
+binding = "AGENTBUILDER_CORE_DB"
+database_name = "agentbuilder-core"
+database_id = "51a422d2-e9ea-46e8-b6c8-233229434eca"
+
 # Vectorize — semantic similarity index (create via: wrangler vectorize create research-agent-content --dimensions=768 --metric=cosine)
 [[vectorize]]
 binding = "CONTENT_VECTORS"
@@ -32,17 +39,54 @@ index_name = "research-agent-content"
 binding = "CONTENT_STORE"
 bucket_name = "research-agent-content"
 
-# Cron — poll Bluesky sources every 30 minutes
+# Cron triggers:
+#   */5  — page-monitoring watches (check_watches)
+#   */30 — Bluesky source polling (poll_bluesky)
 [triggers]
-crons = ["*/30 * * * *"]
+crons = ["*/5 * * * *", "*/30 * * * *"]
+
+# Outbound email for watch notifications. The destination address(es) must be
+# verified in the Cloudflare dashboard (Email > Destination addresses) before
+# Workers can send to them.
+[[send_email]]
+name = "SEND_EMAIL"
 
 [vars]
 ENVIRONMENT = "production"
+# The verified From address for watch-notification emails.
+# Override in prod via `wrangler secret put WATCH_NOTIFY_FROM` if you prefer.
+WATCH_NOTIFY_FROM = "jsstover@gmail.com"
+# Chief of Staff MCP endpoint for the Lab chat sidebar (idea promotion +
+# project listing). The Lab worker calls this server-to-server with
+# CHIEF_OF_STAFF_MCP_KEY as the bearer token.
+CHIEF_OF_STAFF_MCP_URL = "https://chief-of-staff.jsstover.workers.dev/mcp"
+
+# Static assets — the Lab SPA is built by Vite into ./dist and served by
+# Cloudflare's assets binding. The worker's fetch handler still owns
+# /api/*, /mcp, /chat, /ingest, /health and explicitly falls through to
+# ASSETS for anything else (mainly /lab and /lab/*).
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+# Worker handles every request first. WITHOUT this flag, Cloudflare's
+# assets binding intercepts paths that don't match a file and returns
+# index.html via the SPA fallback BEFORE the Worker fetch handler runs.
+# That bypasses our auth gate at /lab entirely, so unauthenticated
+# visitors see the SPA, the SPA hits /api/lab/* (which IS handled by the
+# Worker), gets 401, and infinite-loops on the redirect-to-login. With
+# run_worker_first = true the Worker is the source of truth and
+# delegates to ASSETS only after auth passes.
+run_worker_first = true
 
 # Inbound email routing is configured in the Cloudflare dashboard (Email > Email Workers).
 # The email() handler in src/index.ts processes forwarded messages automatically.
 
 # Secrets (set via wrangler secret put):
-#   wrangler secret put MCP_BEARER_TOKEN      — bearer token for /mcp endpoint
-#   wrangler secret put BLUESKY_IDENTIFIER    — Bluesky handle (e.g. user.bsky.social)
-#   wrangler secret put BLUESKY_APP_PASSWORD  — Bluesky app-specific password
+#   wrangler secret put MCP_BEARER_TOKEN         — bearer token for /mcp endpoint
+#   wrangler secret put BLUESKY_IDENTIFIER       — Bluesky handle (e.g. user.bsky.social)
+#   wrangler secret put BLUESKY_APP_PASSWORD     — Bluesky app-specific password
+#   wrangler secret put ANTHROPIC_API_KEY        — required for /api/lab/chat (the Lab chat sidebar)
+#   wrangler secret put WEB_UI_PASSWORD          — single shared password for the /lab browser UI
+#   wrangler secret put EXTERNAL_API_KEY         — bearer token for /api/lab/v1/* from other apps
+#   wrangler secret put CHIEF_OF_STAFF_MCP_KEY   — bearer token to call chief-of-staff /mcp from this worker

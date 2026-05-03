@@ -1,0 +1,39 @@
+name = "medium-watcher"
+main = "src/index.ts"
+compatibility_date = "2025-04-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Daily cron — 7:00 America/Los_Angeles ≈ 14:00 UTC.
+# Member RSS only updates when the followed authors publish, so daily is plenty.
+[triggers]
+crons = ["0 14 * * *"]
+
+# KV — watchlist of feeds + per-feed seen-id state for dedup
+[[kv_namespaces]]
+binding = "MEDIUM_STATE"
+id = "d7606e7eee6d4846b90befcb2785475d"
+
+# D1 — credential vault (cookies)
+# Create with: wrangler d1 create medium-watcher-vault
+# Then `wrangler d1 execute medium-watcher-vault --file=./migrations/0001_init.sql`
+[[d1_databases]]
+binding = "VAULT_DB"
+database_name = "medium-watcher-vault"
+database_id = "852dc9a2-1ae8-4249-844a-9f949cfc85a7"
+
+# Shared fleet-wide D1 — observability tables (cron_runs, cron_errors).
+# Read by the AgentBuilder dashboard.
+[[d1_databases]]
+binding = "AGENTBUILDER_CORE_DB"
+database_name = "agentbuilder-core"
+database_id = "51a422d2-e9ea-46e8-b6c8-233229434eca"
+
+[vars]
+RESEARCH_AGENT_URL = "https://research-agent.jsstover.workers.dev"
+ENVIRONMENT        = "production"
+
+# Secrets (set via wrangler secret put):
+#   wrangler secret put WATCHER_API_KEY    — bearer token for this worker's REST API
+#   wrangler secret put INTERNAL_SECRET    — must match research-agent's INTERNAL_SECRET
+#   wrangler secret put KEK_BASE64         — base64 of 32 random bytes (vault KEK)
+#                                            generate with: pnpm cred genkey

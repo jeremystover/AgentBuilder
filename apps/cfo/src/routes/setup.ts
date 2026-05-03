@@ -34,9 +34,10 @@ export async function handleSetup(request: Request, env: Env): Promise<Response>
 
   // ── Create business entities ──────────────────────────────────────────────
   const entities = [
-    { slug: 'coaching', name: 'Coaching Business', entity_type: 'schedule_c' },
-    { slug: 'airbnb',   name: 'Whitford House',    entity_type: 'schedule_e' },
-    { slug: 'family',   name: 'Family / Personal',  entity_type: 'personal'   },
+    { slug: 'elyse_coaching',  name: "Elyse's Coaching",  entity_type: 'schedule_c' },
+    { slug: 'jeremy_coaching', name: "Jeremy's Coaching",  entity_type: 'schedule_c' },
+    { slug: 'airbnb',          name: 'Whitford House',     entity_type: 'schedule_e' },
+    { slug: 'family',          name: 'Family / Personal',  entity_type: 'personal'   },
   ];
 
   for (const e of entities) {
@@ -57,16 +58,18 @@ export async function handleSetup(request: Request, env: Env): Promise<Response>
   // ── Seed chart of accounts ────────────────────────────────────────────────
   const coaInserts: Array<() => Promise<unknown>> = [];
 
-  if (entityMap.coaching) {
-    for (const [code, meta] of Object.entries(SCHEDULE_C_CATEGORIES)) {
-      const cid = crypto.randomUUID();
-      coaInserts.push(() =>
-        env.DB.prepare(
-          `INSERT INTO chart_of_accounts (id, business_entity_id, code, name, form_line, category_type)
-           VALUES (?, ?, ?, ?, ?, ?)
-           ON CONFLICT(business_entity_id, code) DO NOTHING`,
-        ).bind(cid, entityMap.coaching, code, meta.name, meta.form_line, code === 'income' ? 'income' : 'expense').run(),
-      );
+  for (const coachingSlug of ['elyse_coaching', 'jeremy_coaching'] as const) {
+    if (entityMap[coachingSlug]) {
+      for (const [code, meta] of Object.entries(SCHEDULE_C_CATEGORIES)) {
+        const cid = crypto.randomUUID();
+        coaInserts.push(() =>
+          env.DB.prepare(
+            `INSERT INTO chart_of_accounts (id, business_entity_id, code, name, form_line, category_type)
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT(business_entity_id, code) DO NOTHING`,
+          ).bind(cid, entityMap[coachingSlug], code, meta.name, meta.form_line, code === 'income' ? 'income' : 'expense').run(),
+        );
+      }
     }
   }
 

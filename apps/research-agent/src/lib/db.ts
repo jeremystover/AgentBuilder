@@ -572,6 +572,205 @@ export const attachmentQueries = {
   },
 };
 
+// ── Row types (watches) ───────────────────────────────────────
+
+export type WatchMatchType = "contains" | "not_contains" | "regex" | "hash";
+export type WatchNotifyMode = "once" | "every";
+
+export interface WatchRow {
+  id:                 string;
+  name:               string;
+  url:                string;
+  interval_minutes:   number;
+  match_type:         WatchMatchType;
+  match_value:        string | null;
+  notify_email:       string;
+  notify_mode:        WatchNotifyMode;
+  enabled:            number;
+  last_checked_at:    string | null;
+  last_hash:          string | null;
+  last_matched_at:    string | null;
+  last_notified_at:   string | null;
+  last_error:         string | null;
+  consecutive_errors: number;
+  created_at:         string;
+  updated_at:         string;
+}
+
+export interface WatchHitRow {
+  id:         string;
+  watch_id:   string;
+  matched_at: string;
+  snippet:    string | null;
+  page_hash:  string | null;
+  notified:   number;
+}
+
+// ── watchQueries ──────────────────────────────────────────────
+
+export const watchQueries = {
+
+  async create(
+    db: D1Database,
+    p: {
+      id: string;
+      name: string;
+      url: string;
+      interval_minutes: number;
+      match_type: WatchMatchType;
+      match_value: string | null;
+      notify_email: string;
+      notify_mode: WatchNotifyMode;
+    },
+  ): Promise<void> {
+    const now = new Date().toISOString();
+    await db
+      .prepare(`
+        INSERT INTO watches (
+          id, name, url, interval_minutes, match_type, match_value,
+          notify_email, notify_mode, enabled, consecutive_errors,
+          created_at, updated_at
+        ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,1,0,?9,?9)
+      `)
+      .bind(
+        p.id, p.name, p.url, p.interval_minutes, p.match_type,
+        p.match_value, p.notify_email, p.notify_mode, now,
+      )
+      .run();
+  },
+
+  async findById(db: D1Database, id: string): Promise<WatchRow | null> {
+    return (await db.prepare("SELECT * FROM watches WHERE id = ?").bind(id).first<WatchRow>()) ?? null;
+  },
+
+  async list(db: D1Database, opts: { enabled?: boolean } = {}): Promise<WatchRow[]> {
+    if (opts.enabled !== undefined) {
+      const r = await db
+        .prepare("SELECT * FROM watches WHERE enabled = ?1 ORDER BY created_at DESC")
+        .bind(opts.enabled ? 1 : 0)
+        .all<WatchRow>();
+      return r.results;
+    }
+    const r = await db.prepare("SELECT * FROM watches ORDER BY created_at DESC").all<WatchRow>();
+    return r.results;
+  },
+
+  /** List watches whose next check is due: never-checked OR last_checked_at <= now - interval. */
+  async listDue(db: D1Database, nowIso: string): Promise<WatchRow[]> {
+    const r = await db
+      .prepare(`
+        SELECT * FROM watches
+        WHERE enabled = 1
+          AND (
+            last_checked_at IS NULL
+            OR datetime(last_checked_at, '+' || interval_minutes || ' minutes') <= datetime(?1)
+          )
+      `)
+      .bind(nowIso)
+      .all<WatchRow>();
+    return r.results;
+  },
+
+  async setEnabled(db: D1Database, id: string, enabled: boolean): Promise<void> {
+    const now = new Date().toISOString();
+    await db
+      .prepare("UPDATE watches SET enabled = ?1, updated_at = ?2 WHERE id = ?3")
+      .bind(enabled ? 1 : 0, now, id)
+      .run();
+  },
+
+  async update(
+    db: D1Database,
+    id: string,
+    patch: {
+      name?: string;
+      interval_minutes?: number;
+      match_type?: WatchMatchType;
+      match_value?: string | null;
+      notify_email?: string;
+      notify_mode?: WatchNotifyMode;
+    },
+  ): Promise<WatchRow | null> {
+    const existing = await this.findById(db, id);
+    if (!existing) return null;
+    const now = new Date().toISOString();
+    const merged = {
+      name:             patch.name ?? existing.name,
+      interval_minutes: patch.interval_minutes ?? existing.interval_minutes,
+      match_type:       patch.match_type ?? existing.match_type,
+      match_value:      patch.match_value !== undefined ? patch.match_value : existing.match_value,
+      notify_email:     patch.notify_email ?? existing.notify_email,
+      notify_mode:      patch.notify_mode ?? existing.notify_mode,
+    };
+    await db
+      .prepare(`
+        UPDATE watches SET
+          name = ?1, interval_minutes = ?2, match_type = ?3, match_value = ?4,
+          notify_email = ?5, notify_mode = ?6, updated_at = ?7
+        WHERE id = ?8
+      `)
+      .bind(
+        merged.name, merged.interval_minutes, merged.match_type, merged.match_value,
+        merged.notify_email, merged.notify_mode, now, id,
+      )
+      .run();
+    return { ...existing, ...merged, updated_at: now };
+  },
+
+  async recordCheck(
+    db: D1Database,
+    id: string,
+    p: { hash: string | null; matched: boolean; notified: boolean; error: string | null },
+  ): Promise<void> {
+    const now = new Date().toISOString();
+    await db
+      .prepare(`
+        UPDATE watches SET
+          last_checked_at    = ?1,
+          last_hash          = COALESCE(?2, last_hash),
+          last_matched_at    = CASE WHEN ?3 = 1 THEN ?1 ELSE last_matched_at END,
+          last_notified_at   = CASE WHEN ?4 = 1 THEN ?1 ELSE last_notified_at END,
+          last_error         = ?5,
+          consecutive_errors = CASE WHEN ?5 IS NULL THEN 0 ELSE consecutive_errors + 1 END,
+          updated_at         = ?1
+        WHERE id = ?6
+      `)
+      .bind(now, p.hash, p.matched ? 1 : 0, p.notified ? 1 : 0, p.error, id)
+      .run();
+  },
+
+  async delete(db: D1Database, id: string): Promise<void> {
+    await db.prepare("DELETE FROM watches WHERE id = ?").bind(id).run();
+  },
+};
+
+export const watchHitQueries = {
+
+  async insert(
+    db: D1Database,
+    p: { watch_id: string; snippet: string | null; page_hash: string | null; notified: boolean },
+  ): Promise<string> {
+    const id  = crypto.randomUUID();
+    const now = new Date().toISOString();
+    await db
+      .prepare(`
+        INSERT INTO watch_hits (id, watch_id, matched_at, snippet, page_hash, notified)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+      `)
+      .bind(id, p.watch_id, now, p.snippet, p.page_hash, p.notified ? 1 : 0)
+      .run();
+    return id;
+  },
+
+  async listForWatch(db: D1Database, watchId: string, limit = 10): Promise<WatchHitRow[]> {
+    const r = await db
+      .prepare("SELECT * FROM watch_hits WHERE watch_id = ?1 ORDER BY matched_at DESC LIMIT ?2")
+      .bind(watchId, limit)
+      .all<WatchHitRow>();
+    return r.results;
+  },
+};
+
 // ── cleanupLogQueries ─────────────────────────────────────────
 
 export const cleanupLogQueries = {

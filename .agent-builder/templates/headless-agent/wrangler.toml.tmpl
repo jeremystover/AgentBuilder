@@ -19,3 +19,23 @@ binding = "AI"
 # binding = "DB"
 # database_name = "agentbuilder-core"
 # database_id = "REPLACE_WITH_DB_ID"
+
+# Required if this agent has a `[triggers] crons = [...]` block — uncomment
+# so cron runs land in the fleet observability tables read by the
+# /dashboard UI on agent-builder. See AGENTS.md rule 11.
+# [[d1_databases]]
+# binding = "AGENTBUILDER_CORE_DB"
+# database_name = "agentbuilder-core"
+# database_id = "51a422d2-e9ea-46e8-b6c8-233229434eca"
+
+# Add cron expressions here once the agent has scheduled work. Each entry
+# must also be (a) handled in src/index.ts via @agentbuilder/observability
+# `runCron` and (b) listed in the agent's `crons[]` array in the registry.
+# [triggers]
+# crons = ["0 7 * * *"]
+
+# Document every secret this Worker reads from `env.X` and mirror the list
+# into `secrets[]` on the registry entry — the dashboard uses it to tell
+# operators what to `wrangler secret put` before deploy.
+#   wrangler secret put ANTHROPIC_API_KEY  --name __AGENT_ID__
+#   wrangler secret put MCP_HTTP_KEY       --name __AGENT_ID__

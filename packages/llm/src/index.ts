@@ -15,3 +15,4 @@ export * from './models.js';
 export * from './client.js';
 export * from './types.js';
 export * from './tool-loop.js';
+export * from './behavioral-preamble.js';

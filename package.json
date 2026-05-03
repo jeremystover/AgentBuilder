@@ -16,7 +16,8 @@
     "format": "biome format --write .",
     "check": "biome check --write .",
     "create-agent": "tsx tools/create-agent.ts",
-    "fleet:setup-secrets": "bash tools/setup-fleet-secrets.sh"
+    "fleet:setup-secrets": "bash tools/setup-fleet-secrets.sh",
+    "cred": "tsx tools/credentials.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",

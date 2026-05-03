@@ -10,6 +10,11 @@
     "typecheck": "tsc --noEmit",
     "test": "node --test src/test"
   },
+  "dependencies": {
+    "@agentbuilder/llm": "workspace:*",
+    "@agentbuilder/observability": "workspace:*",
+    "@agentbuilder/web-ui-kit": "workspace:*"
+  },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260415.1",
     "typescript": "^5.6.3",

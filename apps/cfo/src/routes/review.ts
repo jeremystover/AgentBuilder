@@ -75,7 +75,7 @@ export async function handleNextReviewItem(request: Request, env: Env): Promise<
 // ── PATCH /review/:id ─────────────────────────────────────────────────────────
 const ResolveSchema = z.object({
   action: z.enum(['accept', 'classify', 'skip', 'reopen']),
-  entity: z.enum(['coaching_business', 'airbnb_activity', 'family_personal']).optional(),
+  entity: z.enum(['elyse_coaching', 'jeremy_coaching', 'airbnb_activity', 'family_personal']).optional(),
   category_tax: z.string().optional(),
   category_budget: z.string().optional(),
 });
@@ -108,7 +108,7 @@ async function resolveReviewItem(
   userId: string,
   item: ReviewItem,
   action: 'accept' | 'classify' | 'skip' | 'reopen',
-  entity?: 'coaching_business' | 'airbnb_activity' | 'family_personal',
+  entity?: 'elyse_coaching' | 'jeremy_coaching' | 'airbnb_activity' | 'family_personal',
   category_tax?: string,
   category_budget?: string,
 ): Promise<'pending' | 'resolved' | 'skipped'> {

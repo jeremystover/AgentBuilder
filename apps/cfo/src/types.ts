@@ -5,6 +5,7 @@
  */
 export interface Env {
   DB: D1Database;
+  AGENTBUILDER_CORE_DB?: D1Database;
   BUCKET: R2Bucket;
   ASSETS: Fetcher;
   TELLER_APPLICATION_ID?: string;
@@ -13,11 +14,25 @@ export interface Env {
   DEFAULT_BANK_PROVIDER?: string;
   ANTHROPIC_API_KEY: string;
   MCP_HTTP_KEY?: string;
+  // Web UI cookie auth (kit). Required for /, /api/web/*; the legacy
+  // /legacy SPA still uses header auth and ignores these.
+  WEB_UI_PASSWORD?: string;
+  EXTERNAL_API_KEY?: string;
+  // Single-user pin for the new /api/web/* surface — cookie sessions
+  // don't carry a user id. Defaults to 'default' which matches the
+  // legacy header-auth fallback in getUserId().
+  WEB_UI_USER_ID?: string;
+  // Twilio for SMS-based gamified categorization (Phase A).
+  // Inbound webhook (/sms/inbound) verifies X-Twilio-Signature with
+  // TWILIO_AUTH_TOKEN — required even if outbound is unconfigured.
+  TWILIO_ACCOUNT_SID?: string;
+  TWILIO_AUTH_TOKEN?: string;
+  TWILIO_FROM?: string;
 }
 
 export type BankProvider = 'teller';
 
-export type Entity = 'coaching_business' | 'airbnb_activity' | 'family_personal';
+export type Entity = 'elyse_coaching' | 'jeremy_coaching' | 'airbnb_activity' | 'family_personal';
 export type ClassificationMethod = 'rule' | 'ai' | 'manual' | 'historical';
 export type ReviewReason = 'low_confidence' | 'no_match' | 'conflict' | 'flagged' | 'unclassified';
 

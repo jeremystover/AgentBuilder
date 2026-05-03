@@ -1,6 +1,6 @@
 {
   "$schemaVersion": 1,
-  "updatedAt": "2026-04-18T02:34:34.887Z",
+  "updatedAt": "2026-05-03T15:00:00.000Z",
   "agents": [
     {
       "id": "agent-builder",
@@ -65,7 +65,15 @@
           "Handling production traffic for consumer apps"
         ]
       },
-      "version": "0.0.1"
+      "version": "0.0.1",
+      "secrets": [
+        "ANTHROPIC_API_KEY",
+        "GITHUB_APP_PRIVATE_KEY",
+        "GOOGLE_OAUTH_CLIENT_SECRET",
+        "WEB_UI_PASSWORD",
+        "EXTERNAL_API_KEY",
+        "MCP_HTTP_KEY"
+      ]
     },
     {
       "id": "chief-of-staff",
@@ -150,7 +158,50 @@
         ]
       },
       "version": "4.0.0",
-      "lastDeployed": "2026-04-13T00:00:00.000Z"
+      "lastDeployed": "2026-04-13T00:00:00.000Z",
+      "crons": [
+        {
+          "schedule": "*/10 * * * *",
+          "trigger": "ingest-and-zoom",
+          "description": "Every 10 minutes — pull new Gmail / Calendar / Drive items into IntakeQueue and poll Zoom for new recordings."
+        },
+        {
+          "schedule": "0 6 * * *",
+          "trigger": "state-export",
+          "description": "6am daily — regenerate Current_State.md on Drive so the goals/projects/tasks tree is browsable."
+        },
+        {
+          "schedule": "0 7 * * *",
+          "trigger": "morning-brief",
+          "description": "7am daily — draft the morning brief (calendar, tasks, follow-ups) into Drive."
+        },
+        {
+          "schedule": "0 9 * * 1",
+          "trigger": "commitment-nudges",
+          "description": "9am Monday — generate commitment nudge drafts for stakeholders the user owes a follow-up."
+        }
+      ],
+      "secrets": [
+        "ANTHROPIC_API_KEY",
+        "GOOGLE_OAUTH_CLIENT_ID",
+        "GOOGLE_OAUTH_CLIENT_SECRET",
+        "GOOGLE_OAUTH_REFRESH_TOKEN",
+        "GOOGLE_OAUTH_GONG_CLIENT_ID",
+        "GOOGLE_OAUTH_GONG_CLIENT_SECRET",
+        "GOOGLE_OAUTH_GONG_REFRESH_TOKEN",
+        "GOOGLE_SERVICE_ACCOUNT_JSON",
+        "PPP_SHEETS_SPREADSHEET_ID",
+        "BLUESKY_HANDLE",
+        "BLUESKY_APP_PASSWORD",
+        "BLUESKY_PDS",
+        "ZOOM_ACCOUNT_ID",
+        "ZOOM_CLIENT_ID",
+        "ZOOM_CLIENT_SECRET",
+        "WEB_UI_PASSWORD",
+        "EXTERNAL_API_KEY",
+        "MCP_HTTP_KEY",
+        "INTERNAL_CRON_KEY"
+      ]
     },
     {
       "id": "cfo",
@@ -242,7 +293,30 @@
         ]
       },
       "version": "0.1.0",
-      "lastDeployed": "2026-04-13T00:00:00.000Z"
+      "lastDeployed": "2026-04-13T00:00:00.000Z",
+      "crons": [
+        {
+          "schedule": "0 9 * * *",
+          "trigger": "nightly-sync",
+          "description": "Nightly Teller transaction sync (~05:00 ET) — pulls and stages new transactions for review."
+        },
+        {
+          "schedule": "*/30 * * * *",
+          "trigger": "sms-dispatch",
+          "description": "Every 30 min — SMS dispatcher; self-checks Pacific local time + per-person preferred slots so 47 of 48 daily fires are no-ops."
+        }
+      ],
+      "secrets": [
+        "ANTHROPIC_API_KEY",
+        "TELLER_APPLICATION_ID",
+        "MCP_HTTP_KEY",
+        "WEB_UI_PASSWORD",
+        "EXTERNAL_API_KEY",
+        "WEB_UI_USER_ID",
+        "TWILIO_ACCOUNT_SID",
+        "TWILIO_AUTH_TOKEN",
+        "TWILIO_FROM"
+      ]
     },
     {
       "id": "guest-booking",
@@ -317,7 +391,235 @@
           "Dynamic pricing — this agent audits price consistency, it does not set prices"
         ]
       },
-      "version": "0.0.1"
+      "version": "0.0.1",
+      "secrets": [
+        "ANTHROPIC_API_KEY",
+        "MCP_HTTP_KEY",
+        "GUESTY_API_KEY"
+      ]
+    },
+    {
+      "id": "linkedin-watcher",
+      "name": "LinkedIn Watcher",
+      "purpose": "Polls a watchlist of LinkedIn profiles daily via Proxycurl and feeds any new posts into Research Agent's knowledge base. Background feeder worker — not user-facing.",
+      "owner": "jeremystover",
+      "status": "draft",
+      "kind": "headless",
+      "skills": [
+        "linkedin-profile-poll",
+        "post-deduplication",
+        "watchlist-management",
+        "research-agent-handoff"
+      ],
+      "tools": [
+        "add-watched-profile",
+        "remove-watched-profile",
+        "list-watched-profiles",
+        "manual-run"
+      ],
+      "mcpServers": [],
+      "sharedPackages": [],
+      "oauthScopes": [],
+      "cloudflare": {
+        "workerName": "linkedin-watcher",
+        "durableObjects": [],
+        "d1": [],
+        "kv": [
+          "linkedin-watcher-state"
+        ],
+        "r2": [
+          "linkedin-watcher-content"
+        ],
+        "queues": [],
+        "hasAssets": false
+      },
+      "routing": {
+        "triggerPhrases": [
+          "watch linkedin profile",
+          "add linkedin watch",
+          "stop watching linkedin",
+          "poll linkedin now"
+        ],
+        "examples": [
+          "Watch https://www.linkedin.com/in/kylelagunas for new posts",
+          "List the LinkedIn profiles I'm watching",
+          "Stop watching kylelagunas",
+          "Run the LinkedIn poll right now"
+        ],
+        "nonGoals": [
+          "Searching or synthesizing content (that's Research Agent)",
+          "Posting to LinkedIn or any social network",
+          "Pulling messages, connections, or non-post activity",
+          "Ephemeral profile reads for planning context (that's Chief of Staff's read_content)",
+          "Building or modifying other agents (that's Agent Builder)"
+        ]
+      },
+      "version": "0.0.1",
+      "crons": [
+        {
+          "schedule": "0 14 * * *",
+          "trigger": "daily-poll",
+          "description": "Daily at 7am Pacific — poll watched LinkedIn profiles via Proxycurl, dedupe, hand off new posts to Research Agent."
+        }
+      ],
+      "secrets": [
+        "PROXYCURL_API_KEY",
+        "INTERNAL_SECRET",
+        "WATCHER_API_KEY"
+      ]
+    },
+    {
+      "id": "medium-watcher",
+      "name": "Medium Watcher",
+      "purpose": "Polls Medium member RSS feeds daily, fetches each new article with the subscriber's cookie so member-only bodies come through, and forwards extracted content into Research Agent. Background feeder worker — not user-facing.",
+      "owner": "jeremystover",
+      "status": "draft",
+      "kind": "headless",
+      "skills": [
+        "medium-feed-poll",
+        "cookie-replay-fetch",
+        "article-extraction",
+        "watchlist-management",
+        "research-agent-handoff"
+      ],
+      "tools": [
+        "add-watched-feed",
+        "remove-watched-feed",
+        "list-watched-feeds",
+        "manage-credentials",
+        "manual-run"
+      ],
+      "mcpServers": [],
+      "sharedPackages": [
+        "@agentbuilder/credential-vault",
+        "@agentbuilder/crypto"
+      ],
+      "oauthScopes": [],
+      "cloudflare": {
+        "workerName": "medium-watcher",
+        "durableObjects": [],
+        "d1": [
+          "medium-watcher-vault"
+        ],
+        "kv": [
+          "medium-watcher-state"
+        ],
+        "r2": [],
+        "queues": [],
+        "hasAssets": false
+      },
+      "routing": {
+        "triggerPhrases": [
+          "watch medium",
+          "add medium feed",
+          "stop watching medium",
+          "poll medium now",
+          "update my medium cookie"
+        ],
+        "examples": [
+          "Watch https://medium.com/feed/@danshipper",
+          "List the Medium feeds I'm watching",
+          "Stop watching @danshipper",
+          "Refresh my Medium cookie"
+        ],
+        "nonGoals": [
+          "Searching or synthesizing content (that's Research Agent)",
+          "Posting to Medium",
+          "Fetching member-only content for someone else's account",
+          "Discovering Medium feeds (you supply the URL)",
+          "Building or modifying other agents (that's Agent Builder)"
+        ]
+      },
+      "version": "0.0.1",
+      "crons": [
+        {
+          "schedule": "0 14 * * *",
+          "trigger": "daily-poll",
+          "description": "Daily at 7am Pacific — poll Medium member RSS, fetch each new article with subscriber cookie, hand off to Research Agent."
+        }
+      ],
+      "secrets": [
+        "WATCHER_API_KEY",
+        "INTERNAL_SECRET",
+        "KEK_BASE64"
+      ]
+    },
+    {
+      "id": "wired-watcher",
+      "name": "Wired Watcher",
+      "purpose": "Polls Wired RSS feeds (sections, tags) daily, fetches each new article with the subscriber's cookie so paywalled bodies come through, and forwards extracted content into Research Agent. Background feeder worker — not user-facing.",
+      "owner": "jeremystover",
+      "status": "draft",
+      "kind": "headless",
+      "skills": [
+        "wired-feed-poll",
+        "cookie-replay-fetch",
+        "article-extraction",
+        "watchlist-management",
+        "research-agent-handoff"
+      ],
+      "tools": [
+        "add-watched-feed",
+        "remove-watched-feed",
+        "list-watched-feeds",
+        "manage-credentials",
+        "manual-run"
+      ],
+      "mcpServers": [],
+      "sharedPackages": [
+        "@agentbuilder/credential-vault",
+        "@agentbuilder/crypto",
+        "@agentbuilder/extract-article"
+      ],
+      "oauthScopes": [],
+      "cloudflare": {
+        "workerName": "wired-watcher",
+        "durableObjects": [],
+        "d1": [
+          "wired-watcher-vault"
+        ],
+        "kv": [
+          "wired-watcher-state"
+        ],
+        "r2": [],
+        "queues": [],
+        "hasAssets": false
+      },
+      "routing": {
+        "triggerPhrases": [
+          "watch wired",
+          "add wired feed",
+          "stop watching wired",
+          "poll wired now",
+          "update my wired cookie"
+        ],
+        "examples": [
+          "Watch https://www.wired.com/feed/category/business/rss",
+          "List the Wired feeds I'm watching",
+          "Stop watching category-business",
+          "Refresh my Wired cookie"
+        ],
+        "nonGoals": [
+          "Searching or synthesizing content (that's Research Agent)",
+          "Bypassing other Condé Nast paywalls (use a separate watcher per property)",
+          "Fetching paywalled content for someone else's account",
+          "Discovering Wired feeds (you supply the URL)",
+          "Building or modifying other agents (that's Agent Builder)"
+        ]
+      },
+      "version": "0.0.1",
+      "crons": [
+        {
+          "schedule": "30 14 * * *",
+          "trigger": "daily-poll",
+          "description": "Daily at 7:30am Pacific — poll Wired RSS, fetch each new article with subscriber cookie, hand off to Research Agent."
+        }
+      ],
+      "secrets": [
+        "WATCHER_API_KEY",
+        "INTERNAL_SECRET",
+        "KEK_BASE64"
+      ]
     },
     {
       "id": "research-agent",
@@ -396,7 +698,31 @@
           "Real-time web search — this agent searches ingested content only"
         ]
       },
-      "version": "0.0.1"
+      "version": "0.0.1",
+      "crons": [
+        {
+          "schedule": "*/5 * * * *",
+          "trigger": "check-watches",
+          "description": "Every 5 minutes — re-check page-monitoring watches and notify on diffs."
+        },
+        {
+          "schedule": "*/30 * * * *",
+          "trigger": "poll-bluesky",
+          "description": "Every 30 minutes — poll Bluesky source feeds and ingest new posts into the knowledge base."
+        }
+      ],
+      "secrets": [
+        "ANTHROPIC_API_KEY",
+        "MCP_BEARER_TOKEN",
+        "BLUESKY_IDENTIFIER",
+        "BLUESKY_APP_PASSWORD",
+        "INTERNAL_SECRET",
+        "WATCH_NOTIFY_FROM",
+        "NEWSLETTER_SENDERS",
+        "WEB_UI_PASSWORD",
+        "EXTERNAL_API_KEY",
+        "CHIEF_OF_STAFF_MCP_KEY"
+      ]
     },
     {
       "id": "graphic-designer",
@@ -489,7 +815,201 @@
           "Guest booking or property management (that's Guest Booking)"
         ]
       },
-      "version": "0.0.1"
+      "version": "0.0.1",
+      "secrets": [
+        "ANTHROPIC_API_KEY",
+        "MCP_HTTP_KEY",
+        "OPENAI_API_KEY",
+        "UNSPLASH_ACCESS_KEY",
+        "PEXELS_API_KEY",
+        "CANVA_API_KEY",
+        "GOOGLE_TOKEN_VAULT_KEK",
+        "GOOGLE_OAUTH_CLIENT_ID",
+        "GOOGLE_OAUTH_CLIENT_SECRET"
+      ]
+    },
+    {
+      "id": "termination-documentation",
+      "name": "Termination Documentation",
+      "purpose": "Guides a California employee through documenting a possible wrongful-termination or hostile-workplace claim: interviews the user, builds an evidence checklist grounded in US and California employment law, tracks collection, ingests Claude.ai file uploads into an organized Google Drive folder, drafts a Google Docs evidence memo for counsel or HR, and walks through a 24-hour company-exit checklist.",
+      "owner": "jeremystover",
+      "status": "draft",
+      "kind": "headless",
+      "skills": [
+        "intake-interview",
+        "evidence-plan",
+        "checklist-tracking",
+        "chronology",
+        "upload-ingestion",
+        "drive-organization",
+        "top-packet-ranking",
+        "gap-analysis",
+        "memo-drafting"
+      ],
+      "tools": [
+        "intake_interview",
+        "build_evidence_plan",
+        "update_checklist",
+        "status",
+        "chronology",
+        "generate_top_packet",
+        "gap_report",
+        "draft_memo",
+        "ingest_upload"
+      ],
+      "mcpServers": [],
+      "sharedPackages": [
+        "@agentbuilder/core",
+        "@agentbuilder/llm",
+        "@agentbuilder/auth-google"
+      ],
+      "oauthScopes": [
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/documents"
+      ],
+      "cloudflare": {
+        "workerName": "termination-documentation",
+        "durableObjects": [
+          "TerminationDocumentationDO"
+        ],
+        "d1": [],
+        "kv": [],
+        "r2": [],
+        "queues": [],
+        "hasAssets": false
+      },
+      "routing": {
+        "triggerPhrases": [
+          "wrongful termination",
+          "document my termination",
+          "I was fired",
+          "I'm being laid off",
+          "hostile workplace documentation",
+          "severance negotiation evidence",
+          "build an evidence checklist",
+          "organize my termination case",
+          "24 hours with my work laptop",
+          "company exit checklist"
+        ],
+        "examples": [
+          "I think I'm about to be laid off in California — help me document it",
+          "Interview me about my situation and build a wrongful-termination evidence plan",
+          "I was fired after reporting harassment — what should I collect?",
+          "I'm uploading my offer letter, reviews, and Slack exports — file them in my case folder",
+          "Draft an evidence memo I can share with my employment lawyer",
+          "I have 24 hours with my work laptop — walk me through what to grab and what to leave",
+          "What's still missing from my evidence packet?"
+        ],
+        "nonGoals": [
+          "Giving legal advice, predicting claim outcomes, or representing the user",
+          "Filing DFEH/CRD or EEOC charges, or sending demand letters on the user's behalf",
+          "Negotiating severance or drafting settlement demands",
+          "Advising the user to remove employer-confidential or trade-secret material from company systems",
+          "Contacting witnesses, coworkers, HR, or employer counsel on the user's behalf",
+          "Personal productivity, calendar, tasks, or stakeholder management (that's Chief of Staff)",
+          "Severance tax planning, 401(k) rollover modeling, or bookkeeping (that's CFO)",
+          "Persistent article ingestion or research-corpus search (that's Research Agent)",
+          "Building or modifying other agents (that's Agent Builder)",
+          "Employment law outside California / US federal law"
+        ]
+      },
+      "version": "0.0.1",
+      "secrets": [
+        "MCP_HTTP_KEY",
+        "ANTHROPIC_API_KEY",
+        "GOOGLE_TOKEN_VAULT_KEK",
+        "GOOGLE_OAUTH_CLIENT_ID",
+        "GOOGLE_OAUTH_CLIENT_SECRET",
+        "OAUTH_STATE_SECRET"
+      ]
+    },
+    {
+      "id": "shopping-price-tracker",
+      "name": "Shopping Price Tracker",
+      "purpose": "Tracks daily prices for products and airline tickets via Claude API web_search, eBay Browse API, and a JSON-LD URL-watch scraper. Auto-discovers retailer URLs on intake; emails a daily digest so the user can decide when to buy.",
+      "owner": "jeremystover",
+      "status": "draft",
+      "kind": "app",
+      "skills": [
+        "intake-tracked-item",
+        "intake-tracked-flight",
+        "url-discovery",
+        "daily-price-search",
+        "price-history",
+        "daily-digest-email",
+        "manual-refresh"
+      ],
+      "tools": [
+        "add_tracked_item",
+        "update_tracked_item",
+        "list_tracked_items",
+        "remove_tracked_item",
+        "get_item_history",
+        "run_search_now",
+        "latest_digest",
+        "manage_digest_recipients"
+      ],
+      "mcpServers": [],
+      "sharedPackages": [
+        "@agentbuilder/core",
+        "@agentbuilder/llm",
+        "@agentbuilder/web-ui-kit"
+      ],
+      "oauthScopes": [],
+      "cloudflare": {
+        "workerName": "shopping-price-tracker",
+        "durableObjects": [
+          "ShoppingPriceTrackerDO"
+        ],
+        "d1": [
+          "shopping-price-tracker-db"
+        ],
+        "kv": [],
+        "r2": [],
+        "queues": [],
+        "hasAssets": true
+      },
+      "routing": {
+        "triggerPhrases": [
+          "track this price",
+          "watch this product",
+          "track flights to",
+          "what's the best price for",
+          "show shopping digest"
+        ],
+        "examples": [
+          "Track Sony WH-1000XM5 headphones with a $280 target",
+          "Watch flights JFK to LIS, depart May 15-22, return June 1-8, max $700",
+          "What's the latest digest?"
+        ],
+        "nonGoals": [
+          "Auto-purchasing items or executing checkout",
+          "Ingesting purchase history (that's CFO's amazon-import)",
+          "General page-content monitoring (that's Research Agent's manage_watches)",
+          "Calendar, tasks, goals, or stakeholder management (that's Chief of Staff)",
+          "Building or modifying other agents (that's Agent Builder)"
+        ]
+      },
+      "version": "0.0.1",
+      "crons": [
+        {
+          "schedule": "0 12 * * *",
+          "trigger": "daily-digest",
+          "description": "Daily at 12:00 UTC (08:00 ET during EDT) — search every tracked item, build the digest, send the digest email."
+        },
+        {
+          "schedule": "0 */4 * * *",
+          "trigger": "priority-refresh",
+          "description": "Every 4 hours — re-search only priority='high' items so urgent prices stay fresh; never sends email."
+        }
+      ],
+      "secrets": [
+        "ANTHROPIC_API_KEY",
+        "EBAY_APP_ID",
+        "MCP_HTTP_KEY",
+        "WEB_UI_PASSWORD",
+        "EXTERNAL_API_KEY"
+      ]
     }
   ]
 }

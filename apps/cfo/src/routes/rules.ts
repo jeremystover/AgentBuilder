@@ -9,7 +9,7 @@ const RuleSchema = z.object({
   match_field:    z.enum(['merchant_name', 'description', 'account_id', 'amount']),
   match_operator: z.enum(['contains', 'equals', 'starts_with', 'ends_with', 'regex']),
   match_value:    z.string().min(1),
-  entity:         z.enum(['coaching_business', 'airbnb_activity', 'family_personal']),
+  entity:         z.enum(['elyse_coaching', 'jeremy_coaching', 'airbnb_activity', 'family_personal']),
   category_tax:   z.string().optional(),
   category_budget:z.string().optional(),
   priority:       z.number().int().default(0),

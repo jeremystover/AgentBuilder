@@ -27,9 +27,9 @@ this monorepo — it dogfoods every capability it gives other agents.
 ```
 
 - **`apps/*`** — one Cloudflare Worker per agent. Each has a Durable Object, its own `wrangler.toml`, and a `SKILL.md`.
-- **`packages/*`** — shared TypeScript libraries, consumed with `workspace:*`.
+- **`packages/*`** — shared TypeScript libraries, consumed with `workspace:*`. Notable: `@agentbuilder/web-ui-kit` for any agent that grows a `/app` browser surface (auth, SPA shell, chat tool-loop — all consistent across the fleet).
 - **`registry/agents.json`** — the fleet's source of truth. PR-reviewable.
-- **`.agent-builder/templates/`** — templates the scaffolder copies from.
+- **`.agent-builder/templates/`** — templates the scaffolder copies from. Includes a `web-ui/` template + `add-web-ui` Claude Code skill for adding a browser UI to an existing agent.
 - **`tools/`** — repo-wide CLIs (currently: `create-agent`).
 
 ## Stack

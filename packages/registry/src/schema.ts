@@ -30,6 +30,17 @@ export const CloudflareBindingsSchema = z.object({
   hasAssets: z.boolean().default(false),
 });
 
+/**
+ * Cron trigger metadata. The schedule mirrors the wrangler.toml cron
+ * expressions; trigger is the human-readable handler name used in the
+ * scheduled() switch statement and in `cron_runs.trigger`.
+ */
+export const CronEntrySchema = z.object({
+  schedule: z.string(),
+  trigger: z.string(),
+  description: z.string().default(''),
+});
+
 export const AgentEntrySchema = z.object({
   id: z.string().regex(/^[a-z][a-z0-9-]*$/, 'kebab-case only'),
   name: z.string(),
@@ -41,12 +52,23 @@ export const AgentEntrySchema = z.object({
 
   skills: z.array(z.string()).default([]),
   tools: z.array(z.string()).default([]),
+  /** Optional one-liners explaining what each tool does. Keyed by tool name. */
+  toolDescriptions: z.record(z.string(), z.string()).optional(),
   mcpServers: z.array(z.string()).default([]),
   sharedPackages: z.array(z.string()).default([]),
   oauthScopes: z.array(z.string()).default([]),
 
   cloudflare: CloudflareBindingsSchema,
   routing: AgentRoutingSchema,
+
+  /** Cron triggers this agent runs on. Empty if the agent has no scheduled work. */
+  crons: z.array(CronEntrySchema).default([]),
+
+  /**
+   * Names of secrets this agent expects (set via `wrangler secret put`).
+   * Display-only metadata for the dashboard — values never live here.
+   */
+  secrets: z.array(z.string()).default([]),
 
   version: z.string().default('0.0.1'),
   lastEval: z.string().optional(),
@@ -63,3 +85,4 @@ export type AgentEntry = z.infer<typeof AgentEntrySchema>;
 export type Registry = z.infer<typeof RegistrySchema>;
 export type CloudflareBindings = z.infer<typeof CloudflareBindingsSchema>;
 export type AgentRouting = z.infer<typeof AgentRoutingSchema>;
+export type CronEntry = z.infer<typeof CronEntrySchema>;

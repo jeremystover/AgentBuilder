@@ -198,8 +198,10 @@ function diffEntries(before: AgentEntry, after: AgentEntry) {
     const b = before[key];
     const a = after[key];
     if (Array.isArray(b) && Array.isArray(a)) {
-      const added = a.filter((x) => !b.includes(x));
-      const removed = b.filter((x) => !a.includes(x));
+      const ba = b as unknown[];
+      const aa = a as unknown[];
+      const added = aa.filter((x) => !ba.includes(x));
+      const removed = ba.filter((x) => !aa.includes(x));
       if (added.length > 0 || removed.length > 0) {
         changes[key] = { added, removed };
       }

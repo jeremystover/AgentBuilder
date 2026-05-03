@@ -91,6 +91,19 @@ export async function commitGoalUpdates({ sheets, updates }) {
   }
 }
 
+// Soft-delete: marks status='deleted' rather than removing the row so the
+// audit trail stays intact and isOpen() filters it out of default list_goals
+// / get_goal_360 views. Downstream Projects may still reference the goalId;
+// clean those up separately if needed.
+export async function commitGoalDeletes({ sheets, deletes }) {
+  for (const del of deletes || []) {
+    const found = await sheets.findRowByKey("Goals", "goalId", del.goalId);
+    if (!found) continue;
+    const after = { ...found.data, status: "deleted", updatedAt: nowIso() };
+    await sheets.updateRow("Goals", found.rowNum, rowFromObject(after, GOAL_COLUMNS));
+  }
+}
+
 export async function commitProjectAdds({ sheets, projects }) {
   if (!projects || projects.length === 0) return;
   const rows = projects.map((p) => rowFromObject(p, PROJECT_COLUMNS));
@@ -102,6 +115,20 @@ export async function commitProjectUpdates({ sheets, updates }) {
     const found = await sheets.findRowByKey("Projects", "projectId", upd.projectId);
     if (!found) continue;
     const after = { ...upd.after, updatedAt: nowIso() };
+    await sheets.updateRow("Projects", found.rowNum, rowFromObject(after, PROJECT_COLUMNS));
+  }
+}
+
+// Soft-delete: marks status='deleted' rather than removing the row, so the
+// audit trail stays intact and isOpen() filters the project out of default
+// list_projects / get_goal_360 views. Sheets API has no row-delete on the
+// values endpoint, and downstream Tasks may still reference the projectId.
+export async function commitProjectDeletes({ sheets, deletes }) {
+  for (const del of deletes || []) {
+    const found = await sheets.findRowByKey("Projects", "projectId", del.projectId);
+    if (!found) continue;
+    const ts = nowIso();
+    const after = { ...found.data, status: "deleted", lastTouchedAt: ts, updatedAt: ts };
     await sheets.updateRow("Projects", found.rowNum, rowFromObject(after, PROJECT_COLUMNS));
   }
 }
@@ -184,6 +211,35 @@ export function createGoalsTools({ spreadsheetId, sheets, storeChangeset }) {
     }
   }
 
+  async function runProposeDeleteGoal(args = {}) {
+    if (!storeChangeset) return formatContent({ error: "storeChangeset not wired" });
+    if (!spreadsheetId) return formatContent({ error: "PPP_SHEETS_SPREADSHEET_ID not set" });
+    if (!args.goalId) return formatContent({ error: "goalId is required" });
+
+    try {
+      const found = await findRowByKey("Goals", "goalId", args.goalId);
+      if (!found) return formatContent({ error: `Goal not found: ${args.goalId}` });
+
+      const before = { ...found.data };
+      const cs = await storeChangeset(
+        "goals",
+        [],
+        [],
+        [{ goalId: args.goalId, before, reason: args.reason || "" }],
+      );
+      return formatContent({
+        changesetId: cs.changesetId,
+        expiresAt: cs.expiresAt,
+        preview: { action: "delete_goal", goalId: args.goalId, before, reason: args.reason },
+        instruction:
+          "Soft-delete: marks status='deleted' on commit. Projects referencing this goalId are left untouched. " +
+          "Call commit_changeset({changesetId}) to apply.",
+      });
+    } catch (e) {
+      return formatContent({ error: e.message });
+    }
+  }
+
   async function runProposeCreateProject(args = {}) {
     if (!storeChangeset) return formatContent({ error: "storeChangeset not wired" });
     if (!args.name) return formatContent({ error: "name is required" });
@@ -249,6 +305,35 @@ export function createGoalsTools({ spreadsheetId, sheets, storeChangeset }) {
     }
   }
 
+  async function runProposeDeleteProject(args = {}) {
+    if (!storeChangeset) return formatContent({ error: "storeChangeset not wired" });
+    if (!spreadsheetId) return formatContent({ error: "PPP_SHEETS_SPREADSHEET_ID not set" });
+    if (!args.projectId) return formatContent({ error: "projectId is required" });
+
+    try {
+      const found = await findRowByKey("Projects", "projectId", args.projectId);
+      if (!found) return formatContent({ error: `Project not found: ${args.projectId}` });
+
+      const before = { ...found.data };
+      const cs = await storeChangeset(
+        "projects",
+        [],
+        [],
+        [{ projectId: args.projectId, before, reason: args.reason || "" }],
+      );
+      return formatContent({
+        changesetId: cs.changesetId,
+        expiresAt: cs.expiresAt,
+        preview: { action: "delete_project", projectId: args.projectId, before, reason: args.reason },
+        instruction:
+          "Soft-delete: marks status='deleted' on commit. Tasks referencing this projectId are left untouched. " +
+          "Call commit_changeset({changesetId}) to apply.",
+      });
+    } catch (e) {
+      return formatContent({ error: e.message });
+    }
+  }
+
   async function runListGoals(args = {}) {
     if (!spreadsheetId) return formatContent({ error: "PPP_SHEETS_SPREADSHEET_ID not set" });
     try {
@@ -258,7 +343,7 @@ export function createGoalsTools({ spreadsheetId, sheets, storeChangeset }) {
       const filtered = goals.filter((g) => {
         if (quarter && String(g.quarter) !== quarter) return false;
         if (status && String(g.status || "").toLowerCase() !== status) return false;
-        if (!status && !isOpen(g.status)) return false; // default = active only
+        if (!status && !args.includeClosed && !isOpen(g.status)) return false; // default = active only
         return true;
       });
       return formatContent({
@@ -325,7 +410,13 @@ export function createGoalsTools({ spreadsheetId, sheets, storeChangeset }) {
       if (!goal) return formatContent({ error: `Goal not found: ${args.goalId}` });
 
       const goalId = String(goal.goalId || "");
-      const childProjects = projects.filter((p) => String(p.goalId || "") === goalId);
+      // Hide deleted/dropped projects from the 360 view — same rule as
+      // list_projects' default filter and the web UI.
+      const childProjects = projects.filter((p) => {
+        if (String(p.goalId || "") !== goalId) return false;
+        const s = String(p.status || "").toLowerCase();
+        return s !== "deleted" && s !== "dropped";
+      });
       const childProjectIds = new Set(childProjects.map((p) => String(p.projectId || "")));
 
       const openTasks = tasks
@@ -512,6 +603,24 @@ export function createGoalsTools({ spreadsheetId, sheets, storeChangeset }) {
       run: runProposeUpdateGoal,
     },
 
+    propose_delete_goal: {
+      description:
+        "Propose deleting a goal. Soft-delete: marks status='deleted' so the row stays in Sheets " +
+        "for audit, but it drops out of default list_goals / get_goal_360 results. Projects that " +
+        "reference this goalId are left untouched — clean those up separately if needed. " +
+        "Returns a changesetId; call commit_changeset to apply.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          goalId: { type: "string" },
+          reason: { type: "string" },
+        },
+        required: ["goalId"],
+        additionalProperties: false,
+      },
+      run: runProposeDeleteGoal,
+    },
+
     propose_create_project: {
       description:
         "Propose creating a new project that ladders up to a goal. Returns a changesetId. " +
@@ -554,6 +663,24 @@ export function createGoalsTools({ spreadsheetId, sheets, storeChangeset }) {
       run: runProposeUpdateProject,
     },
 
+    propose_delete_project: {
+      description:
+        "Propose deleting a project. Soft-delete: marks status='deleted' so the row stays in Sheets " +
+        "for audit, but it drops out of default list_projects / get_goal_360 results. Tasks that " +
+        "reference this projectId are left untouched — clean those up separately if needed. " +
+        "Returns a changesetId; call commit_changeset to apply.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          projectId: { type: "string" },
+          reason: { type: "string" },
+        },
+        required: ["projectId"],
+        additionalProperties: false,
+      },
+      run: runProposeDeleteProject,
+    },
+
     list_goals: {
       description:
         "List goals, optionally filtered by quarter or status. Default returns active goals only.",
@@ -562,6 +689,7 @@ export function createGoalsTools({ spreadsheetId, sheets, storeChangeset }) {
         properties: {
           quarter: { type: "string" },
           status: { type: "string" },
+          includeClosed: { type: "boolean" },
         },
         additionalProperties: false,
       },

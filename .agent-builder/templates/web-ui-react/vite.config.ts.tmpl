@@ -1,0 +1,28 @@
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import { resolve } from "node:path";
+
+// SPA served at /{{SURFACE}}/ on {{AGENT_ID}}.workers.dev. base= must
+// match the /<surface>/ prefix the worker fronts the assets at, or the
+// generated index.html will reference assets at the wrong path.
+//
+// The dev server proxies /api/<surface> + /<surface>/login + /logout to
+// localhost:8787 so cookie auth + the JSON API work in HMR.
+export default defineConfig({
+  root: resolve(__dirname, "src/lab"),
+  base: "/{{SURFACE}}/",
+  plugins: [react()],
+  build: {
+    outDir: resolve(__dirname, "dist"),
+    emptyOutDir: true,
+    sourcemap: true,
+  },
+  server: {
+    port: 5173,
+    proxy: {
+      "/api/{{SURFACE}}": { target: "http://localhost:8787", changeOrigin: true },
+      "/{{SURFACE}}/login": { target: "http://localhost:8787", changeOrigin: true },
+      "/{{SURFACE}}/logout": { target: "http://localhost:8787", changeOrigin: true },
+    },
+  },
+});

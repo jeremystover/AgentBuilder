@@ -17,14 +17,45 @@ new_sqlite_classes = ["AgentBuilderDO"]
 [ai]
 binding = "AI"
 
-# Shared D1 database for the fleet: token vault, registry cache, eval runs.
+# Shared D1 database for the fleet: token vault, registry cache, eval runs,
+# observability tables (cron_runs, cron_errors), web sessions.
 # Created via `wrangler d1 create agentbuilder-core` — see README.
 [[d1_databases]]
 binding = "DB"
 database_name = "agentbuilder-core"
 database_id = "51a422d2-e9ea-46e8-b6c8-233229434eca"
 
+# ── Fleet D1 read-only bindings for the /dashboard browser ────────────────────
+# Each binding gives the dashboard read access to one agent's D1. New agents
+# with a deployed D1 should be added here so they appear in the D1 browser.
+[[d1_databases]]
+binding = "DB_CFO"
+database_name = "cfo-db"
+database_id = "7a8081f3-8ae5-4344-8902-5cbd7992670f"
+
+[[d1_databases]]
+binding = "DB_CHIEF_OF_STAFF"
+database_name = "chief-of-staff-db"
+database_id = "fb337f5e-b57c-4844-aa08-10872deb8089"
+
+[[d1_databases]]
+binding = "DB_GUEST_BOOKING"
+database_name = "guest-booking-db"
+database_id = "9d7bfbe9-0eb3-4431-925c-72ab04bf3e35"
+
+[[d1_databases]]
+binding = "DB_GRAPHIC_DESIGNER"
+database_name = "graphic-designer-db"
+database_id = "c8ce3cda-69a8-4045-a05d-7bfd899aa19e"
+
+[[d1_databases]]
+binding = "DB_RESEARCH_AGENT"
+database_name = "research-agent-db"
+database_id = "3c019a9b-ad01-4621-b7cb-8dfd81940082"
+
 # Secrets pulled from Cloudflare Secrets Store:
 #   wrangler secret put ANTHROPIC_API_KEY
 #   wrangler secret put GITHUB_APP_PRIVATE_KEY
-#   wrangler secret put GOOGLE_OAUTH_CLIENT_SECRET 
+#   wrangler secret put GOOGLE_OAUTH_CLIENT_SECRET
+#   wrangler secret put WEB_UI_PASSWORD     # /dashboard cookie auth
+#   wrangler secret put EXTERNAL_API_KEY    # bearer auth for /dashboard/api/*

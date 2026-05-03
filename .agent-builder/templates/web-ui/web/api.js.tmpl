@@ -1,0 +1,64 @@
+/**
+ * web/api.js — JSON endpoints for the {{AGENT_NAME}} web UI.
+ *
+ * Authenticated upstream by worker.js (cookie session OR bearer key).
+ * Mutations route through the existing tool registry's propose_X +
+ * commit_changeset helpers when the agent uses that audit pattern.
+ *
+ * Add routes here as you build out pages. The pattern:
+ *
+ *   if (method === "GET" && path === "/api/things") {
+ *     return jsonResponse({ things: await readAll(sheets, "Things") });
+ *   }
+ *   if (method === "POST" && path === "/api/things") {
+ *     const body = await readJson(request);
+ *     const result = await proposeAndCommit(tools, "propose_create_thing", { ... });
+ *     return jsonResponse({ ok: true, result });
+ *   }
+ *
+ * For external apps to create records, expose POST /api/v1/<noun> routes
+ * with a stable shape — any client with the bearer key can hit them.
+ */
+
+import { jsonResponse, readJson, callTool, proposeAndCommit } from "@agentbuilder/web-ui-kit";
+
+async function readAll(sheets, name) {
+  try { return await sheets.readSheetAsObjects(name); } catch { return []; }
+}
+
+export async function handleApiRequest(request, ctx) {
+  const { tools, sheets, env } = ctx;
+  const url = new URL(request.url);
+  const path = url.pathname;
+  const method = request.method;
+
+  // ── EXAMPLE: GET /api/items ────────────────────────────────────────────
+  // Replace with your agent's actual data shape.
+  if (method === "GET" && path === "/api/items") {
+    const items = await readAll(sheets, "Items");
+    return jsonResponse({ items });
+  }
+
+  // ── EXAMPLE: POST /api/items (cookie or bearer auth) ──────────────────
+  if (method === "POST" && path === "/api/items") {
+    const body = await readJson(request);
+    if (!body?.title) return jsonResponse({ error: "title is required" }, 400);
+    // If your agent uses propose/commit, swap callTool for proposeAndCommit:
+    //   const result = await proposeAndCommit(tools, "propose_create_item", { ... });
+    // Otherwise call directly:
+    const result = await callTool(tools, "create_item", { title: body.title });
+    return jsonResponse({ ok: true, result });
+  }
+
+  // ── EXAMPLE: external REST surface for other apps ─────────────────────
+  // The /api/v1/* routes are versioned + stable so external integrations
+  // don't break when the SPA's internal /api/* routes evolve.
+  if (method === "POST" && path === "/api/v1/items") {
+    const body = await readJson(request);
+    if (!body?.title) return jsonResponse({ error: "title is required" }, 400);
+    const result = await callTool(tools, "create_item", { title: body.title });
+    return jsonResponse({ ok: true, result }, 201);
+  }
+
+  return jsonResponse({ error: "not found" }, 404);
+}

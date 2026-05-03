@@ -36,10 +36,41 @@ import { generateMorningBrief, generateCommitmentNudges, createAutomationTools }
 import { createContentTools } from "./content-tools.js";
 import { readContent } from "./content.js";
 import { runCron, logError } from "./observability.js";
+import {
+  runCron as runFleetCron,
+  logError as logFleetError,
+} from "@agentbuilder/observability";
 import { bootstrapSheets } from "./bootstrap.js";
 import { createGoalsTools } from "./goals.js";
 import { createStateExportTools, generateStateExport, renderStateMarkdown } from "./state-export.js";
 import { createEmailFilterMCPTools } from "./email-filters.js";
+import {
+  requireWebSession,
+  requireApiAuth,
+  createSession,
+  destroySession,
+  setSessionCookieHeader,
+  clearSessionCookieHeader,
+  verifyPassword,
+} from "./web/auth.js";
+import { handleApiRequest } from "./web/api.js";
+import { handleChatRequest, handlePlanReviewRequest, handlePersonBriefRequest } from "./web/chat.js";
+import { loginHtml, appHtml } from "./web/spa-html.js";
+import { SPA_PAGES_JS } from "./web/spa-pages.js";
+import { SPA_PAGES2_JS } from "./web/spa-pages2.js";
+import { SPA_CORE_JS } from "@agentbuilder/web-ui-kit";
+import {
+  FAVICON_ICO_B64,
+  FAVICON_16_PNG_B64,
+  FAVICON_32_PNG_B64,
+  APPLE_TOUCH_ICON_B64,
+  ICON_192_PNG_B64,
+  ICON_512_PNG_B64,
+  ICON_512_MASKABLE_B64,
+  FAVICON_SVG,
+  MANIFEST_JSON,
+  bytesFromB64,
+} from "./web/icons.js";
 
 // ── Data store resolution ────────────────────────────────────────────────────
 // When env.DB (Cloudflare D1) is bound, use it as the primary data store.
@@ -58,6 +89,84 @@ function resolveDataStore(env, gfetch) {
   }
   const spreadsheetId = env.PPP_SHEETS_SPREADSHEET_ID || "";
   return { sheets: createSheets(gfetch, spreadsheetId), spreadsheetId };
+}
+
+// Builds the merged TOOLS registry shared by /mcp and the web UI's /api/*.
+// Mirrors the construction inside fetch() for /mcp — keep them in sync.
+function buildToolContext(env) {
+  const config = {
+    DEFAULT_FOLDER_ID: env.PPP_MCP_DRIVE_FOLDER_ID || "",
+    APPS_SHEET_ID: env.PPP_MCP_APPS_SHEET_ID || "",
+    DEFAULT_SHEET_NAME: env.PPP_MCP_APPS_SHEET_NAME || "Apps",
+    APP_ID: env.PPP_MCP_APP_ID || "",
+    MAX_CHARS: Number(env.PPP_MCP_MAX_CHARS || 12_000),
+    WEB_TIMEOUT_MS: Number(env.PPP_MCP_WEB_TIMEOUT_MS || 8_000),
+    WEB_MAX_REDIRECTS: Number(env.PPP_MCP_WEB_MAX_REDIRECTS || 3),
+    WEB_MAX_BYTES: Number(env.PPP_MCP_WEB_MAX_BYTES || 1_000_000),
+    WEB_RATE_LIMIT_PER_MIN: Number(env.PPP_MCP_WEB_RATE_LIMIT_PER_MIN || 30),
+    WEB_ALLOWLIST: String(env.PPP_MCP_WEB_ALLOWLIST || "")
+      .split(",").map((v) => v.trim().toLowerCase()).filter(Boolean),
+    WEB_DENYLIST: String(env.PPP_MCP_WEB_DENYLIST || "")
+      .split(",").map((v) => v.trim().toLowerCase()).filter(Boolean),
+  };
+
+  const { gfetch } = createGfetch(env);
+  const { sheets, spreadsheetId } = resolveDataStore(env, gfetch);
+  const workCalSheetId = env.PPP_WORK_CAL_SHEET_ID || "";
+  const workCalSheets = workCalSheetId ? createSheets(gfetch, workCalSheetId) : null;
+
+  const phase1ToolsRaw = createTools({ spreadsheetId, sheets });
+  const storeChangeset = phase1ToolsRaw.__storeChangeset;
+  const { __storeChangeset: _ignored, ...phase1Tools } = phase1ToolsRaw;
+  const phase2CrmTools = createCrmTools({ spreadsheetId, sheets });
+  const phase2ReviewTools = createReviewTools({ spreadsheetId, sheets });
+  const phase3ZoomTools = createZoomTools({ env, gfetch, sheets, spreadsheetId });
+  const userFetches = createUserFetches(env);
+  const ufetch = userFetches.personal?.ufetch;
+  const ingestTools = createIngestTools({ ufetch, userFetches, gfetch, sheets, spreadsheetId, workCalSheets, env });
+  const phase4AutomationTools = createAutomationTools({ ufetch, sheets, spreadsheetId });
+  const { tools: contentTools, loaders, drive } = createContentTools({ gfetch, config });
+  const goalsTools = createGoalsTools({ spreadsheetId, sheets, storeChangeset });
+  const stateExportTools = createStateExportTools({ spreadsheetId, sheets, drive });
+  const emailFilterToolDefs = createEmailFilterMCPTools({ sheets });
+  const emailFilterTools = emailFilterToolDefs.reduce((acc, def) => {
+    acc[def.name] = { description: def.description, inputSchema: def.inputSchema, run: def.handler };
+    return acc;
+  }, {});
+
+  const tools = {
+    ...contentTools,
+    ...phase1Tools,
+    ...goalsTools,
+    ...stateExportTools,
+    ...phase2CrmTools,
+    ...phase2ReviewTools,
+    ...phase3ZoomTools,
+    ...ingestTools,
+    ...emailFilterTools,
+    ...phase4AutomationTools,
+    bootstrap_sheets: {
+      description:
+        "Verify and initialize the Google Sheets schema. Creates missing tabs " +
+        "and appends missing columns (non-destructive — existing data and extra " +
+        "columns are preserved). Returns a report of what was created/fixed/ok. " +
+        "Safe to run repeatedly — idempotent.",
+      inputSchema: { type: "object", properties: {}, additionalProperties: false },
+      run: async () => {
+        if (!spreadsheetId) {
+          return { content: [{ type: "text", text: JSON.stringify({ error: "PPP_SHEETS_SPREADSHEET_ID not set" }) }] };
+        }
+        try {
+          const report = await bootstrapSheets(sheets);
+          return { content: [{ type: "text", text: JSON.stringify({ ok: true, report }) }] };
+        } catch (e) {
+          return { content: [{ type: "text", text: JSON.stringify({ error: e.message }) }] };
+        }
+      },
+    },
+  };
+
+  return { tools, sheets, spreadsheetId, loaders, env };
 }
 
 // ── Pure utilities ───────────────────────────────────────────────────────────
@@ -145,8 +254,10 @@ const TOOL_CATEGORIES = {
     "propose_resolve_commitment",
     "propose_create_goal",
     "propose_update_goal",
+    "propose_delete_goal",
     "propose_create_project",
     "propose_update_project",
+    "propose_delete_project",
     "propose_resolve_intake",
     "propose_bulk_resolve_intake",
     "propose_extract_action_items",
@@ -318,10 +429,13 @@ async function handleJsonRpc(message, tools, loaders) {
     const name = params?.name;
     const tool = tools[name];
     if (!tool) return { jsonrpc: "2.0", id, error: asError(-32601, `Unknown tool: ${name}`) };
+    const t0 = Date.now();
     try {
       const result = await tool.run(params?.arguments || {});
+      console.log(`[tool] ${name} ok ${Date.now() - t0}ms`);
       return { jsonrpc: "2.0", id, result };
     } catch (e) {
+      console.error(`[tool] ${name} error ${Date.now() - t0}ms: ${e.message}`);
       return { jsonrpc: "2.0", id, error: asError(-32000, e.message) };
     }
   }
@@ -426,13 +540,21 @@ export default {
         err: new Error(`No handler for cron pattern: ${event.cron}`),
         context: { cron: event.cron },
       });
+      await logFleetError(env, "chief-of-staff", "cron:unknown", new Error(`No handler for cron pattern: ${event.cron}`), { cron: event.cron });
       return;
     }
 
+    // Run inside the fleet observability wrapper (writes cron_runs row to
+    // agentbuilder-core D1, read by the dashboard) AND mirror to the legacy
+    // Sheets-based runCron so the existing Sheets audit trail keeps working.
     ctx.waitUntil(
-      runCron(
-        { sheets, spreadsheetId, trigger: entry.trigger, cron: event.cron },
-        entry.handler
+      runFleetCron(
+        env,
+        { agentId: "chief-of-staff", trigger: entry.trigger, cron: event.cron },
+        () => runCron(
+          { sheets, spreadsheetId, trigger: entry.trigger, cron: event.cron },
+          entry.handler
+        ),
       )
     );
   },
@@ -443,6 +565,52 @@ export default {
     // Health check
     if (request.method === "GET" && urlObj.pathname === "/health") {
       return jsonResponse({ ok: true });
+    }
+
+    // ── Branded icons ────────────────────────────────────────────────────
+    // Public assets — served before any auth gate so the browser tab and
+    // MacOS Chrome "Install as App" can fetch them on the login page.
+    // Bytes live in src/web/icons.js (regenerate via scripts/gen-icons.py).
+    if (request.method === "GET") {
+      const iconRoutes = {
+        "/favicon.ico":             { b64: FAVICON_ICO_B64,       type: "image/x-icon" },
+        "/favicon-16.png":          { b64: FAVICON_16_PNG_B64,    type: "image/png" },
+        "/favicon-32.png":          { b64: FAVICON_32_PNG_B64,    type: "image/png" },
+        "/apple-touch-icon.png":    { b64: APPLE_TOUCH_ICON_B64,  type: "image/png" },
+        // iOS sometimes asks for the precomposed variant — serve the same bytes.
+        "/apple-touch-icon-precomposed.png": { b64: APPLE_TOUCH_ICON_B64, type: "image/png" },
+        "/icon-192.png":            { b64: ICON_192_PNG_B64,      type: "image/png" },
+        "/icon-512.png":            { b64: ICON_512_PNG_B64,      type: "image/png" },
+        "/icon-512-maskable.png":   { b64: ICON_512_MASKABLE_B64, type: "image/png" },
+      };
+      const iconHit = iconRoutes[urlObj.pathname];
+      if (iconHit) {
+        return new Response(bytesFromB64(iconHit.b64), {
+          status: 200,
+          headers: {
+            "content-type": iconHit.type,
+            "cache-control": "public, max-age=86400",
+          },
+        });
+      }
+      if (urlObj.pathname === "/favicon.svg") {
+        return new Response(FAVICON_SVG, {
+          status: 200,
+          headers: {
+            "content-type": "image/svg+xml; charset=utf-8",
+            "cache-control": "public, max-age=86400",
+          },
+        });
+      }
+      if (urlObj.pathname === "/manifest.webmanifest") {
+        return new Response(MANIFEST_JSON, {
+          status: 200,
+          headers: {
+            "content-type": "application/manifest+json; charset=utf-8",
+            "cache-control": "public, max-age=86400",
+          },
+        });
+      }
     }
 
     // Dashboard — read-only HTML view of Goals → Projects → Tasks.
@@ -594,6 +762,174 @@ export default {
       }
     }
 
+    // Internal: auth diagnostic — tests SA JSON parse, JWT sign, token exchange,
+    // and a live Sheets API call. Each step is reported independently so the
+    // exact failure point is visible without needing Cloudflare log tail.
+    //   curl -s "https://<worker>/internal/auth-check?key=<INTERNAL_CRON_KEY>" | jq
+    if (request.method === "GET" && urlObj.pathname === "/internal/auth-check") {
+      const auth = requireAuth(request, env, { scope: "internal" });
+      if (!auth.ok) return auth.response;
+
+      const steps = [];
+
+      // Step 1: parse GOOGLE_SERVICE_ACCOUNT_JSON
+      let saJson = null;
+      try {
+        const raw = env.GOOGLE_SERVICE_ACCOUNT_JSON || "";
+        saJson = JSON.parse(raw);
+        const pk = saJson.private_key || "";
+        steps.push({
+          step: "1_json_parse",
+          ok: !!(saJson.client_email && pk),
+          client_email: saJson.client_email || null,
+          private_key_length: pk.length,
+          private_key_starts_with: pk.slice(0, 27),
+          has_real_newlines: pk.includes("\n"),
+          type: saJson.type || null,
+        });
+      } catch (e) {
+        steps.push({ step: "1_json_parse", ok: false, error: e.message });
+        return jsonResponse({ ok: false, steps });
+      }
+
+      if (!saJson.client_email || !saJson.private_key) {
+        steps.push({ step: "2_get_access_token", ok: false, error: "Skipped — missing client_email or private_key" });
+        return jsonResponse({ ok: false, steps });
+      }
+
+      // Step 2: JWT sign + token exchange (getAccessToken does both)
+      let gfetch2;
+      try {
+        const { gfetch: gf, getAccessToken } = createGfetch(env);
+        gfetch2 = gf;
+        const token = await getAccessToken();
+        steps.push({ step: "2_get_access_token", ok: true, token_prefix: token.slice(0, 10) + "…" });
+      } catch (e) {
+        steps.push({ step: "2_get_access_token", ok: false, error: e.message });
+        return jsonResponse({ ok: false, steps });
+      }
+
+      // Step 3: Sheets API — fetch spreadsheet metadata (lightweight, no data read)
+      const spreadsheetId = env.PPP_SHEETS_SPREADSHEET_ID || "";
+      if (!spreadsheetId || spreadsheetId === "d1") {
+        steps.push({ step: "3_sheets_api", ok: null, skipped: "PPP_SHEETS_SPREADSHEET_ID not set or using D1" });
+      } else {
+        try {
+          const res = await gfetch2(
+            `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=spreadsheetId,properties.title`
+          );
+          const meta = await res.json();
+          steps.push({
+            step: "3_sheets_api",
+            ok: true,
+            spreadsheet_id: meta.spreadsheetId,
+            spreadsheet_title: meta.properties?.title,
+          });
+        } catch (e) {
+          steps.push({ step: "3_sheets_api", ok: false, error: e.message });
+        }
+      }
+
+      const allOk = steps.every((s) => s.ok === true || s.ok === null);
+      return jsonResponse({ ok: allOk, steps });
+    }
+
+    // ── Web UI routes ─────────────────────────────────────────────────────
+    // /app/login — GET shows form, POST verifies password + sets cookie.
+    if (urlObj.pathname === "/app/login") {
+      if (request.method === "GET") {
+        return new Response(loginHtml({}), {
+          status: 200,
+          headers: { "content-type": "text/html; charset=utf-8" },
+        });
+      }
+      if (request.method === "POST") {
+        if (!env.WEB_UI_PASSWORD) {
+          return new Response(loginHtml({ error: "WEB_UI_PASSWORD is not configured on this Worker." }), {
+            status: 500,
+            headers: { "content-type": "text/html; charset=utf-8" },
+          });
+        }
+        const form = await request.formData().catch(() => null);
+        const password = form?.get?.("password") || "";
+        if (!verifyPassword(env, password)) {
+          return new Response(loginHtml({ error: "Wrong password." }), {
+            status: 401,
+            headers: { "content-type": "text/html; charset=utf-8" },
+          });
+        }
+        if (!env.DB) {
+          return new Response("D1 binding required for web UI sessions.", { status: 500 });
+        }
+        const { sessionId } = await createSession(env);
+        const secure = urlObj.protocol === "https:";
+        return new Response(null, {
+          status: 302,
+          headers: {
+            location: "/app",
+            "set-cookie": setSessionCookieHeader(sessionId, { secure }),
+          },
+        });
+      }
+    }
+
+    if (urlObj.pathname === "/app/logout") {
+      const session = await requireWebSession(request, env, { mode: "page" });
+      if (session.ok) await destroySession(env, session.sessionId);
+      const secure = urlObj.protocol === "https:";
+      return new Response(null, {
+        status: 302,
+        headers: {
+          location: "/app/login",
+          "set-cookie": clearSessionCookieHeader({ secure }),
+        },
+      });
+    }
+
+    // /app/app.js — concatenated SPA bundle (auth-gated).
+    if (request.method === "GET" && urlObj.pathname === "/app/app.js") {
+      const auth = await requireWebSession(request, env, { mode: "page" });
+      if (!auth.ok) return auth.response;
+      const body = SPA_CORE_JS + "\n" + SPA_PAGES_JS + "\n" + SPA_PAGES2_JS;
+      return new Response(body, {
+        status: 200,
+        headers: {
+          "content-type": "application/javascript; charset=utf-8",
+          "cache-control": "no-store",
+        },
+      });
+    }
+
+    // /app or /app/* — serve the SPA shell. Hash routing inside.
+    if (request.method === "GET" && (urlObj.pathname === "/app" || urlObj.pathname.startsWith("/app/"))) {
+      const auth = await requireWebSession(request, env, { mode: "page" });
+      if (!auth.ok) return auth.response;
+      return new Response(appHtml(), {
+        status: 200,
+        headers: { "content-type": "text/html; charset=utf-8" },
+      });
+    }
+
+    // ── /api/* — JSON API for the SPA + external apps ────────────────────
+    if (urlObj.pathname.startsWith("/api/")) {
+      const auth = await requireApiAuth(request, env);
+      if (!auth.ok) return auth.response;
+
+      const ctx = buildToolContext(env);
+      if (urlObj.pathname === "/api/chat" && request.method === "POST") {
+        return await handleChatRequest(request, ctx);
+      }
+      const planMatch = urlObj.pathname.match(/^\/api\/(day-plan|day-review|week-plan|week-review)$/);
+      if (planMatch && request.method === "POST") {
+        return await handlePlanReviewRequest(request, ctx, planMatch[1]);
+      }
+      const personBriefMatch = urlObj.pathname.match(/^\/api\/people\/([^/]+)\/brief\/generate$/);
+      if (personBriefMatch && request.method === "POST") {
+        return await handlePersonBriefRequest(request, ctx, decodeURIComponent(personBriefMatch[1]));
+      }
+      return await handleApiRequest(request, ctx);
+    }
+
     if (request.method !== "POST" || urlObj.pathname !== "/mcp") {
       return jsonResponse({ error: "Not found" }, 404);
     }
@@ -604,114 +940,8 @@ export default {
       if (!auth.ok) return auth.response;
     }
 
-    // Config from env
-    const config = {
-      DEFAULT_FOLDER_ID: env.PPP_MCP_DRIVE_FOLDER_ID || "",
-      APPS_SHEET_ID: env.PPP_MCP_APPS_SHEET_ID || "",
-      DEFAULT_SHEET_NAME: env.PPP_MCP_APPS_SHEET_NAME || "Apps",
-      APP_ID: env.PPP_MCP_APP_ID || "",
-      MAX_CHARS: Number(env.PPP_MCP_MAX_CHARS || 12_000),
-      WEB_TIMEOUT_MS: Number(env.PPP_MCP_WEB_TIMEOUT_MS || 8_000),
-      WEB_MAX_REDIRECTS: Number(env.PPP_MCP_WEB_MAX_REDIRECTS || 3),
-      WEB_MAX_BYTES: Number(env.PPP_MCP_WEB_MAX_BYTES || 1_000_000),
-      WEB_RATE_LIMIT_PER_MIN: Number(env.PPP_MCP_WEB_RATE_LIMIT_PER_MIN || 30),
-      WEB_ALLOWLIST: String(env.PPP_MCP_WEB_ALLOWLIST || "")
-        .split(",")
-        .map((v) => v.trim().toLowerCase())
-        .filter(Boolean),
-      WEB_DENYLIST: String(env.PPP_MCP_WEB_DENYLIST || "")
-        .split(",")
-        .map((v) => v.trim().toLowerCase())
-        .filter(Boolean),
-    };
-
-    // Per-request Google auth context (token is cached at module level)
-    const { gfetch } = createGfetch(env);
-    const { sheets, spreadsheetId } = resolveDataStore(env, gfetch);
-    const workCalSheetId = env.PPP_WORK_CAL_SHEET_ID || "";
-    const workCalSheets = workCalSheetId ? createSheets(gfetch, workCalSheetId) : null;
-    const phase1ToolsRaw = createTools({ spreadsheetId, sheets });
-    // storeChangeset is exposed so goals.js proposals land in the same
-    // Changesets sheet and flow through commit_changeset in tools.js. Strip
-    // it off before spreading into the registry so it doesn't leak into
-    // tools/list as a fake tool.
-    const storeChangeset = phase1ToolsRaw.__storeChangeset;
-    const { __storeChangeset: _ignored, ...phase1Tools } = phase1ToolsRaw;
-    const phase2CrmTools = createCrmTools({ spreadsheetId, sheets });
-    const phase2ReviewTools = createReviewTools({ spreadsheetId, sheets });
-    const phase3ZoomTools = createZoomTools({ env, gfetch, sheets, spreadsheetId });
-    const userFetches = createUserFetches(env);
-    const ufetch = userFetches.personal?.ufetch;
-    const ingestTools = createIngestTools({ ufetch, userFetches, gfetch, sheets, spreadsheetId, workCalSheets, env });
-    const phase4AutomationTools = createAutomationTools({ ufetch, sheets, spreadsheetId });
-    const { tools: contentTools, loaders, drive } = createContentTools({ gfetch, config });
-    const goalsTools = createGoalsTools({ spreadsheetId, sheets, storeChangeset });
-    const stateExportTools = createStateExportTools({ spreadsheetId, sheets, drive });
-    const emailFilterToolDefs = createEmailFilterMCPTools({ sheets });
-    const emailFilterTools = emailFilterToolDefs.reduce((acc, def) => {
-      acc[def.name] = {
-        description: def.description,
-        inputSchema: def.inputSchema,
-        run: def.handler,
-      };
-      return acc;
-    }, {});
-
-    // Build full tool registry
-    const TOOLS = {
-      // Drive markdown + web/Drive content tools
-      ...contentTools,
-
-      // Phase 1: hydrate, intake, tasks, commitments, changesets
-      ...phase1Tools,
-
-      // Phase 5: Goals → Projects → Tasks hierarchy + state export.
-      // These land after phase1 so propose_*/commit_changeset remain paired.
-      ...goalsTools,
-      ...stateExportTools,
-
-      // Phase 2: CRM (stakeholder/project 360, relationship health)
-      ...phase2CrmTools,
-
-      // Phase 2: Reviews and decision journal
-      ...phase2ReviewTools,
-
-      // Phase 3: Zoom recording poll and transcript tools
-      ...phase3ZoomTools,
-
-      // Ingest: Gmail + Calendar + Drive cron ingestion + Calendar write tools
-      ...ingestTools,
-
-      // Email filtering: watch for specific senders/keywords and flag for response
-      ...emailFilterTools,
-
-      // Phase 4: Morning brief, commitment nudges, draft replies, agent run logging
-      ...phase4AutomationTools,
-
-      // Admin: verify/initialize the Google Sheets schema. Creates missing
-      // tabs and appends missing columns non-destructively. Call this after
-      // provisioning a new spreadsheet, or when upgrading to a schema that
-      // added columns/sheets.
-      bootstrap_sheets: {
-        description:
-          "Verify and initialize the Google Sheets schema. Creates missing tabs " +
-          "and appends missing columns (non-destructive — existing data and extra " +
-          "columns are preserved). Returns a report of what was created/fixed/ok. " +
-          "Safe to run repeatedly — idempotent.",
-        inputSchema: { type: "object", properties: {}, additionalProperties: false },
-        run: async () => {
-          if (!spreadsheetId) {
-            return { content: [{ type: "text", text: JSON.stringify({ error: "PPP_SHEETS_SPREADSHEET_ID not set" }) }] };
-          }
-          try {
-            const report = await bootstrapSheets(sheets);
-            return { content: [{ type: "text", text: JSON.stringify({ ok: true, report }) }] };
-          } catch (e) {
-            return { content: [{ type: "text", text: JSON.stringify({ error: e.message }) }] };
-          }
-        },
-      },
-    };
+    // Per-request tool context — same registry the /api/* routes use.
+    const { tools: TOOLS, loaders } = buildToolContext(env);
 
     // Parse body
     let raw, msg;
