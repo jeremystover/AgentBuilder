@@ -101,13 +101,15 @@ function generateId(prefix: string): string {
 
 function safeStringify(value: unknown): string {
   try {
-    return JSON.stringify(value);
+    const json = JSON.stringify(value);
+    if (json !== undefined) return json;
   } catch {
-    try {
-      return String(value);
-    } catch {
-      return '';
-    }
+    // fall through to String()
+  }
+  try {
+    return String(value);
+  } catch {
+    return '';
   }
 }
 
