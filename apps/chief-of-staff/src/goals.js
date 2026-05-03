@@ -152,7 +152,7 @@ export async function commitProjectDeletes({ sheets, deletes }) {
  * writes.
  */
 export function createGoalsTools({ spreadsheetId, sheets, storeChangeset }) {
-  const { readSheetAsObjects, findRowByKey } = sheets;
+  const { readSheetAsObjects, findRowByKey, findRowsByKey } = sheets;
 
   async function runProposeCreateGoal(args = {}) {
     if (!storeChangeset) return formatContent({ error: "storeChangeset not wired — goals writes disabled" });
@@ -286,7 +286,11 @@ export function createGoalsTools({ spreadsheetId, sheets, storeChangeset }) {
     if (!args.projectId) return formatContent({ error: "projectId is required" });
 
     try {
-      const found = await findRowByKey("Projects", "projectId", args.projectId);
+      // Use the LAST matching row as the canonical state — duplicate rows are
+      // common and the list dedup also keeps the last one. Using findRowByKey
+      // (first) could read a deleted/stale row and propagate its status into after.
+      const allFound = await findRowsByKey("Projects", "projectId", args.projectId);
+      const found = allFound.length > 0 ? allFound[allFound.length - 1] : null;
       if (!found) return formatContent({ error: `Project not found: ${args.projectId}` });
 
       const before = { ...found.data };
@@ -319,7 +323,9 @@ export function createGoalsTools({ spreadsheetId, sheets, storeChangeset }) {
     if (!args.projectId) return formatContent({ error: "projectId is required" });
 
     try {
-      const found = await findRowByKey("Projects", "projectId", args.projectId);
+      // Use the last matching row (same reason as runProposeUpdateProject).
+      const allFound = await findRowsByKey("Projects", "projectId", args.projectId);
+      const found = allFound.length > 0 ? allFound[allFound.length - 1] : null;
       if (!found) return formatContent({ error: `Project not found: ${args.projectId}` });
 
       const before = { ...found.data };
