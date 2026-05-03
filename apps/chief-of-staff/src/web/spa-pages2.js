@@ -197,16 +197,27 @@ async function renderProjectsProjectView(root) {
     return;
   }
 
-  // Group projects by goalId. Goals render in the order returned by the API
-  // (the tool already sorts by quarter/priority); orphans go in a "No goal"
-  // bucket at the bottom.
+  // Split active from done/inactive so the page leads with what still needs
+  // attention. "active" mirrors goals.js isOpen() — empty counts as active
+  // for legacy rows.
+  const activeStatuses = new Set(["", "open", "active", "in_progress", "pending", "todo"]);
+  const activeProjects = [];
+  const inactiveProjects = [];
+  for (const p of projects) {
+    if (activeStatuses.has(String(p.status || "").toLowerCase())) activeProjects.push(p);
+    else inactiveProjects.push(p);
+  }
+
+  // Group active projects by goalId. Goals render in the order returned by
+  // the API (the tool already sorts by quarter/priority); orphans go in a
+  // "No goal" bucket at the bottom.
   const goals = goalsData.goals || [];
   const goalOrder = goals.map((g) => g.goalId);
   const goalById = Object.fromEntries(goals.map((g) => [g.goalId, g]));
   const buckets = new Map();
   for (const id of goalOrder) buckets.set(id, []);
   buckets.set("", []); // No-goal bucket — always last
-  for (const p of projects) {
+  for (const p of activeProjects) {
     const key = p.goalId && buckets.has(p.goalId) ? p.goalId
               : p.goalId ? p.goalId // unknown/closed goal id we didn't index
               : "";
@@ -231,6 +242,18 @@ async function renderProjectsProjectView(root) {
     ));
     const grid = el("div", { class: "grid gap-3" });
     for (const p of ps) grid.appendChild(projectCard(p));
+    section.appendChild(grid);
+    root.appendChild(section);
+  }
+
+  if (inactiveProjects.length) {
+    const section = el("section", { class: "space-y-2 pt-6 mt-6 border-t border-slate-200" });
+    section.appendChild(el("div", { class: "flex items-baseline gap-3" },
+      el("h2", { class: "text-sm uppercase tracking-wide text-slate-500 font-medium" }, "Done & inactive"),
+      el("span", { class: "text-xs text-slate-400" }, inactiveProjects.length + " project" + (inactiveProjects.length === 1 ? "" : "s")),
+    ));
+    const grid = el("div", { class: "grid gap-3 opacity-75" });
+    for (const p of inactiveProjects) grid.appendChild(projectCard(p));
     section.appendChild(grid);
     root.appendChild(section);
   }
