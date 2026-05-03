@@ -514,6 +514,32 @@ export async function handleApiRequest(request, ctx) {
       return jsonResponse({ ok: true, result });
     }
   }
+  {
+    const m = path.match(/^\/api\/projects\/([^/]+)\/merge$/);
+    if (m && method === "POST") {
+      const body = await readJson();
+      const sourceId = m[1];
+      const targetId = body.targetProjectId;
+      if (!targetId) return jsonResponse({ error: "targetProjectId required" }, 400);
+      if (sourceId === targetId) return jsonResponse({ error: "source and target must differ" }, 400);
+
+      const allTasks = await readAll(sheets, "Tasks");
+      const sourceTasks = allTasks.filter((t) => String(t.projectId || "") === sourceId);
+
+      for (const t of sourceTasks) {
+        await proposeAndCommit(tools, "propose_update_task", {
+          taskKey: t.taskKey,
+          patch: { projectId: targetId },
+          reason: "moved by project merge",
+        });
+      }
+      await proposeAndCommit(tools, "propose_delete_project", {
+        projectId: sourceId,
+        reason: body.reason || "merged into " + targetId,
+      });
+      return jsonResponse({ ok: true, tasksMoved: sourceTasks.length });
+    }
+  }
   if (method === "POST" && path === "/api/projects") {
     const body = await readJson();
     const result = await proposeAndCommit(tools, "propose_create_project", {
