@@ -112,10 +112,15 @@ export async function commitProjectAdds({ sheets, projects }) {
 
 export async function commitProjectUpdates({ sheets, updates }) {
   for (const upd of updates || []) {
-    const found = await sheets.findRowByKey("Projects", "projectId", upd.projectId);
-    if (!found) continue;
+    // Use findRowsByKey (plural) so duplicate rows for the same projectId all
+    // get updated — findRowByKey only hits the first row, leaving later
+    // duplicates stale and making changes appear not to stick.
+    const rows = await sheets.findRowsByKey("Projects", "projectId", upd.projectId);
+    if (!rows || rows.length === 0) continue;
     const after = { ...upd.after, updatedAt: nowIso() };
-    await sheets.updateRow("Projects", found.rowNum, rowFromObject(after, PROJECT_COLUMNS));
+    for (const found of rows) {
+      await sheets.updateRow("Projects", found.rowNum, rowFromObject(after, PROJECT_COLUMNS));
+    }
   }
 }
 
@@ -125,11 +130,14 @@ export async function commitProjectUpdates({ sheets, updates }) {
 // values endpoint, and downstream Tasks may still reference the projectId.
 export async function commitProjectDeletes({ sheets, deletes }) {
   for (const del of deletes || []) {
-    const found = await sheets.findRowByKey("Projects", "projectId", del.projectId);
-    if (!found) continue;
+    // Use findRowsByKey (plural) — same reason as commitProjectUpdates.
+    const rows = await sheets.findRowsByKey("Projects", "projectId", del.projectId);
+    if (!rows || rows.length === 0) continue;
     const ts = nowIso();
-    const after = { ...found.data, status: "deleted", lastTouchedAt: ts, updatedAt: ts };
-    await sheets.updateRow("Projects", found.rowNum, rowFromObject(after, PROJECT_COLUMNS));
+    for (const found of rows) {
+      const after = { ...found.data, status: "deleted", lastTouchedAt: ts, updatedAt: ts };
+      await sheets.updateRow("Projects", found.rowNum, rowFromObject(after, PROJECT_COLUMNS));
+    }
   }
 }
 
