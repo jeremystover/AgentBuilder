@@ -146,6 +146,8 @@ async function registerAgent(args: Args): Promise<void> {
       examples: [],
       nonGoals: [],
     },
+    crons: [],
+    secrets: [],
     version: '0.0.1',
   };
   await store.upsertAgent(entry);
@@ -165,9 +167,13 @@ async function main() {
   console.log(`  2. pnpm --filter @agentbuilder/app-${args.id} typecheck`);
   console.log(`  3. Fill in apps/${args.id}/SKILL.md (non-goals, tools, routing)`);
   console.log(`  4. pnpm --filter @agentbuilder/app-${args.id} dev`);
+  console.log(`  5. As you add features, keep the registry in sync:`);
+  console.log(`       - tools[], toolDescriptions{}  → describe each tool`);
+  console.log(`       - secrets[]                    → every name passed to \`wrangler secret put\``);
+  console.log(`       - crons[]                      → matching schedule + trigger names if you add scheduled() (see AGENTS.md rule 11)`);
   if (!args.d1Database) {
     console.log(
-      `  5. When you add D1 to wrangler.toml, set d1_database in ${relative(REPO_ROOT, workflow)}`,
+      `  6. When you add D1 to wrangler.toml, set d1_database in ${relative(REPO_ROOT, workflow)}`,
     );
   }
 }

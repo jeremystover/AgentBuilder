@@ -43,6 +43,7 @@ export interface AgentEntry {
     nonGoals: string[];
   };
   crons?: CronEntry[];
+  secrets?: string[];
   version: string;
   lastDeployed?: string;
 }

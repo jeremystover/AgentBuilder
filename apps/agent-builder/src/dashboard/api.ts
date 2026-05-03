@@ -73,6 +73,7 @@ function agentSummary(a: import('./registry-data').AgentEntry) {
     cloudflare: a.cloudflare,
     routing: a.routing,
     crons: a.crons ?? [],
+    secrets: a.secrets ?? [],
   };
 }
 

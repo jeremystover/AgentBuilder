@@ -64,6 +64,12 @@ export const AgentEntrySchema = z.object({
   /** Cron triggers this agent runs on. Empty if the agent has no scheduled work. */
   crons: z.array(CronEntrySchema).default([]),
 
+  /**
+   * Names of secrets this agent expects (set via `wrangler secret put`).
+   * Display-only metadata for the dashboard — values never live here.
+   */
+  secrets: z.array(z.string()).default([]),
+
   version: z.string().default('0.0.1'),
   lastEval: z.string().optional(),
   lastDeployed: z.string().optional(),

@@ -284,8 +284,18 @@ function agentCard(a) {
       ])
     : null;
 
+  const secrets = (a.secrets && a.secrets.length)
+    ? el("details", { class: "mt-2" }, [
+        el("summary", { class: "text-xs uppercase tracking-wide text-slate-500 hover:text-slate-800" }, "Secrets (" + a.secrets.length + ")"),
+        el("div", { class: "mt-2 flex flex-wrap gap-1" }, a.secrets.map((s) => el("code", {
+          class: "pill bg-slate-100 text-slate-700 mono",
+          title: "wrangler secret put " + s + " --name " + (a.cloudflare && a.cloudflare.workerName || a.id),
+        }, s))),
+      ])
+    : null;
+
   return el("div", { class: "bg-white rounded-lg ring-1 ring-slate-200 p-4" }, [
-    headerRow, purpose, tools, meta, crons,
+    headerRow, purpose, tools, meta, crons, secrets,
   ].filter(Boolean));
 }
 
