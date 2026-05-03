@@ -12,13 +12,15 @@
  * parses that JSON to drive scaffolding.
  */
 
-import { type ChatMessage, runToolLoop } from '@agentbuilder/llm';
+import { type ChatMessage, CORE_BEHAVIORAL_PREAMBLE, runToolLoop } from '@agentbuilder/llm';
 import type { LLMClient } from '@agentbuilder/llm';
 import type { MemoryRegistryStore } from '@agentbuilder/registry';
 import { buildArchitectTools } from '../tools/architect-tools.js';
 import type { PersonaResult } from '../types.js';
 
-const ARCHITECT_SYSTEM = `You are the Architect persona inside AgentBuilder, a meta-agent that designs and manages a fleet of specialized agents deployed on Cloudflare Workers.
+const ARCHITECT_SYSTEM = `${CORE_BEHAVIORAL_PREAMBLE}
+
+You are the Architect persona inside AgentBuilder, a meta-agent that designs and manages a fleet of specialized agents deployed on Cloudflare Workers.
 
 # Your job on every turn
 

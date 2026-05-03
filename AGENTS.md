@@ -29,6 +29,7 @@ tools/                Repo-wide CLI tooling (run with `tsx`).
     - **React+Vite mode (escape hatch)** — only when the user has explicit design requirements the vanilla shell can't deliver (e.g. dark theme, mind map, drag-and-drop, design tokens unique to the agent). Template: `.agent-builder/templates/web-ui-react/`. Reference: `apps/research-agent/src/lab/` (The Lab).
 
     Both modes share the same auth surface (cookie `WEB_UI_PASSWORD` + bearer `EXTERNAL_API_KEY`), the `WebSessions` D1 table, and the `/api/<surface>/v1/*` external REST convention. To add a UI, invoke the Claude Code `add-web-ui` skill — it asks which mode and copies the right template.
+10. **Runtime agent system prompts prepend `CORE_BEHAVIORAL_PREAMBLE`** from `@agentbuilder/llm`. The full coding/agent guidelines for Claude Code working in this repo live in `/CLAUDE.md`. Three of the AgentBuilder personas (architect, builder, fleet-manager) already do this; new agents pick it up via the scaffold templates.
 
 ## Creating a new agent
 
