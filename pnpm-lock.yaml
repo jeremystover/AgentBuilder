@@ -298,6 +298,37 @@ importers:
         specifier: ^4.83.0
         version: 4.83.0(@cloudflare/workers-types@4.20260413.1)
 
+  apps/shopping-price-tracker:
+    dependencies:
+      '@agentbuilder/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@agentbuilder/llm':
+        specifier: workspace:*
+        version: link:../../packages/llm
+      '@agentbuilder/web-ui-kit':
+        specifier: workspace:*
+        version: link:../../packages/web-ui-kit
+      '@anthropic-ai/sdk':
+        specifier: ^0.88.0
+        version: 0.88.0(zod@3.25.76)
+      agents:
+        specifier: ^0.0.95
+        version: 0.0.95(@cloudflare/workers-types@4.20260413.1)(react@19.2.5)
+      zod:
+        specifier: ^3.23.8
+        version: 3.25.76
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20250410.0
+        version: 4.20260413.1
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      wrangler:
+        specifier: ^3.90.0
+        version: 3.114.17(@cloudflare/workers-types@4.20260413.1)
+
   apps/termination-documentation:
     dependencies:
       '@agentbuilder/auth-google':
