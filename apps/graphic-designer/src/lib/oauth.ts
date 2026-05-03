@@ -2,7 +2,7 @@
  * Google OAuth bootstrap.
  *
  * One-time setup to populate the token vault for a user:
- *   GET /api/auth/google/start?userId=defaultwrangler secret put GOOGLE_OAUTH_CLIENT_ID
+ *   GET /api/auth/google/start?userId=default
  *     -> redirects to Google consent screen
  *   GET /api/auth/google/callback?code=...&state=<userId>
  *     -> exchanges code for tokens, stores via GoogleClient
@@ -18,7 +18,7 @@ const SCOPES = [
   'https://www.googleapis.com/auth/drive',
   'https://www.googleapis.com/auth/presentations',
   'https://www.googleapis.com/auth/documents.readonly',
-].join(' '); 
+].join(' ');
 
 function redirectUri(request: Request): string {
   const url = new URL(request.url);
@@ -29,7 +29,7 @@ export async function handleOAuthStart(request: Request, env: Env): Promise<Resp
   const url = new URL(request.url);
   const userId = url.searchParams.get('userId') ?? 'default';
 
-  const clientId = (env as unknown as Record<string, string>).GOOGLE_OAUTH_CLIENT_ID;
+  const clientId = env.GOOGLE_OAUTH_CLIENT_ID;
   if (!clientId) {
     return Response.json({ error: 'GOOGLE_OAUTH_CLIENT_ID not configured' }, { status: 500 });
   }
@@ -56,8 +56,8 @@ export async function handleOAuthCallback(request: Request, env: Env): Promise<R
     return Response.json({ error: 'Missing authorization code' }, { status: 400 });
   }
 
-  const clientId = (env as unknown as Record<string, string>).GOOGLE_OAUTH_CLIENT_ID;
-  const clientSecret = (env as unknown as Record<string, string>).GOOGLE_OAUTH_CLIENT_SECRET;
+  const clientId = env.GOOGLE_OAUTH_CLIENT_ID;
+  const clientSecret = env.GOOGLE_OAUTH_CLIENT_SECRET;
   if (!clientId || !clientSecret) {
     return Response.json({ error: 'OAuth client not configured' }, { status: 500 });
   }

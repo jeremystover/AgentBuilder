@@ -64,8 +64,8 @@ export class GoogleClient {
   }
 
   private async refreshAccessToken(stored: StoredGoogleToken): Promise<string> {
-    const clientId = (this.env as unknown as Record<string, string>).GOOGLE_OAUTH_CLIENT_ID;
-    const clientSecret = (this.env as unknown as Record<string, string>).GOOGLE_OAUTH_CLIENT_SECRET;
+    const clientId = this.env.GOOGLE_OAUTH_CLIENT_ID;
+    const clientSecret = this.env.GOOGLE_OAUTH_CLIENT_SECRET;
     if (!clientId || !clientSecret) {
       throw new AgentError('GOOGLE_OAUTH_CLIENT_ID / CLIENT_SECRET not set.', { code: 'internal' });
     }

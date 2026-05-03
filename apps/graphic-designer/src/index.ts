@@ -11,6 +11,7 @@
  */
 
 import type { Env } from '../worker-configuration';
+import { handleCanvaOAuthCallback, handleCanvaOAuthStart } from './lib/canva-oauth.js';
 import { handleOAuthCallback, handleOAuthStart } from './lib/oauth.js';
 export { GraphicDesignerDO } from './durable-object.js';
 
@@ -70,30 +71,15 @@ const MCP_TOOLS = [
   {
     name: 'plan_presentation',
     description:
-      'Map a slide outline onto an analyzed template. Accepts JSON array, JSON string, or markdown. For each slide, selects the best-fit layout (intent→layoutObjectId map, with per-template best-fit fallback), allocates text to TITLE/SUBTITLE/BODY slots, and records speaker notes. Persists the plan and returns planId for build_presentation.',
+      'Given a content outline and an analyzed template, propose a slide-by-slide breakdown: story arc, layout per slide, text allocation, image/icon needs, and speaker-notes beats. Returns a reviewable plan for user approval before building.',
     inputSchema: {
       type: 'object',
       properties: {
-        outline: {
-          description:
-            'Slide outline. Either a JSON array of {intent,title,subtitle,body,speakerNotes}, a JSON string of the same, or a markdown document with "---" dividers.',
-          oneOf: [
-            { type: 'string' },
-            { type: 'array', items: { type: 'object' } },
-          ],
-        },
-        templateId: {
-          type: 'string',
-          description: 'Template reference — accepts our tpl_* id or the raw Google Slides presentation ID.',
-        },
+        outline: { type: 'string', description: 'Content outline or key points to present.' },
+        templateId: { type: 'string', description: 'Google Slides template ID (must be analyzed first).' },
         brandId: { type: 'string', description: 'Optional brand_id for style constraints.' },
         audience: { type: 'string', description: 'Who will see this deck (e.g. "investors", "internal team").' },
         goal: { type: 'string', description: 'What the presentation should achieve.' },
-        layoutOverrides: {
-          type: 'object',
-          description: 'Optional per-call override map of intent → layoutObjectId.',
-          additionalProperties: { type: 'string' },
-        },
       },
       required: ['outline', 'templateId'],
       additionalProperties: false,
@@ -102,7 +88,7 @@ const MCP_TOOLS = [
   {
     name: 'build_presentation',
     description:
-      'Execute an approved plan against Google Slides: copy the template, delete its slides, create one slide per plan entry from the chosen layoutObjectId (or a BLANK+centered-textbox for big-number), populate TITLE/SUBTITLE/BODY placeholders, write speaker notes, and return the edit URL.',
+      'Execute an approved presentation plan. Duplicates slides from template, populates text (auto-resize/reposition), sources images/icons via search_media, inserts media, writes speaker notes. Returns a Google Drive URL to the finished deck.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -324,6 +310,77 @@ async function handleMcp(
   return { jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } };
 }
 
+// ── SPA read-only API ────────────────────────────────────────────────────────
+
+async function handleSpaApi(pathname: string, env: Env): Promise<Response> {
+  const userId = 'default';
+
+  if (pathname === '/api/projects') {
+    const rows = await env.DB.prepare(
+      `SELECT id, name, kind, status, output_url, created_at, updated_at
+         FROM projects WHERE user_id = ?1 ORDER BY updated_at DESC LIMIT 50`,
+    ).bind(userId).all();
+    return jsonResponse({ results: rows.results ?? [] });
+  }
+
+  if (pathname === '/api/concepts') {
+    const rows = await env.DB.prepare(
+      `SELECT c.id, c.project_id, c.iteration, c.style, c.prompt, c.image_r2_key, c.preview_url, c.selected, c.created_at
+         FROM logo_concepts c
+         JOIN projects p ON c.project_id = p.id
+        WHERE p.user_id = ?1
+        ORDER BY c.created_at DESC LIMIT 50`,
+    ).bind(userId).all();
+    return jsonResponse({ results: rows.results ?? [] });
+  }
+
+  if (pathname === '/api/brands') {
+    const rows = await env.DB.prepare(
+      `SELECT id, name, palette, typography, voice, created_at FROM brand_guides
+        WHERE user_id = ?1 ORDER BY updated_at DESC LIMIT 20`,
+    ).bind(userId).all();
+    const results = (rows.results ?? []).map((r: Record<string, unknown>) => ({
+      ...r,
+      palette: safeJsonParse(r.palette as string),
+      typography: safeJsonParse(r.typography as string),
+      voice: safeJsonParse(r.voice as string),
+    }));
+    return jsonResponse({ results });
+  }
+
+  if (pathname === '/api/reports') {
+    const rows = await env.DB.prepare(
+      `SELECT id, brand_id, file_id, file_type, score, violations, summary, created_at
+         FROM compliance_reports WHERE user_id = ?1 ORDER BY created_at DESC LIMIT 20`,
+    ).bind(userId).all();
+    const results = (rows.results ?? []).map((r: Record<string, unknown>) => ({
+      ...r,
+      violations: safeJsonParse(r.violations as string),
+    }));
+    return jsonResponse({ results });
+  }
+
+  // R2 proxy for logo concept previews
+  if (pathname.startsWith('/api/r2/')) {
+    const key = pathname.slice('/api/r2/'.length);
+    const obj = await env.BUCKET.get(decodeURIComponent(key));
+    if (!obj) return new Response('Not found', { status: 404 });
+    return new Response(obj.body, {
+      headers: {
+        'content-type': obj.httpMetadata?.contentType ?? 'image/png',
+        'cache-control': 'public, max-age=86400',
+      },
+    });
+  }
+
+  return jsonResponse({ error: 'Not found' }, 404);
+}
+
+function safeJsonParse(s: string | null | undefined): unknown {
+  if (!s) return null;
+  try { return JSON.parse(s); } catch { return null; }
+}
+
 // ── Worker ───────────────────────────────────────────────────────────────────
 
 export default {
@@ -339,6 +396,13 @@ export default {
     }
     if (url.pathname === '/api/auth/google/callback') {
       return handleOAuthCallback(request, env);
+    }
+
+    if (url.pathname === '/api/auth/canva/start') {
+      return handleCanvaOAuthStart(request, env);
+    }
+    if (url.pathname === '/api/auth/canva/callback') {
+      return handleCanvaOAuthCallback(request, env);
     }
 
     if (url.pathname === '/mcp' && request.method === 'POST') {
@@ -360,6 +424,11 @@ export default {
         const errMsg = err instanceof Error ? err.message : String(err);
         return jsonResponse({ jsonrpc: '2.0', id: msg.id ?? null, error: { code: -32000, message: errMsg } });
       }
+    }
+
+    // SPA read-only API endpoints (bypass DO)
+    if (request.method === 'GET' && url.pathname.startsWith('/api/')) {
+      return handleSpaApi(url.pathname, env);
     }
 
     if (url.pathname.startsWith('/api/')) {

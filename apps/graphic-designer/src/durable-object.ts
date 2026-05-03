@@ -4,6 +4,27 @@ import { LLMClient } from '@agentbuilder/llm';
 import type { Env } from '../worker-configuration';
 import { analyzeTemplate, type AnalyzeTemplateArgs } from './tools/analyze-template.js';
 import {
+  buildAndDeploySite,
+  type BuildAndDeploySiteArgs,
+} from './tools/build-and-deploy-site.js';
+import {
+  buildPresentation,
+  type BuildPresentationArgs,
+} from './tools/build-presentation.js';
+import { canvaExport, type CanvaExportArgs } from './tools/canva-export.js';
+import {
+  checkBrandCompliance,
+  type CheckBrandComplianceArgs,
+} from './tools/check-brand-compliance.js';
+import {
+  finalizeLogoPackage,
+  type FinalizeLogoPackageArgs,
+} from './tools/finalize-logo-package.js';
+import {
+  generateLogoConcepts,
+  type GenerateLogoConceptsArgs,
+} from './tools/generate-logo-concepts.js';
+import {
   manageBrandAssets,
   type ManageBrandAssetsArgs,
 } from './tools/manage-brand-assets.js';
@@ -11,10 +32,8 @@ import {
   planPresentation,
   type PlanPresentationArgs,
 } from './tools/plan-presentation.js';
-import {
-  buildPresentation,
-  type BuildPresentationArgs,
-} from './tools/build-presentation.js';
+import { planSite, type PlanSiteArgs } from './tools/plan-site.js';
+import { searchMedia, type SearchMediaArgs } from './tools/search-media.js';
 
 const SYSTEM_PROMPT = `You are Graphic Designer, a creative design agent.
 
@@ -80,17 +99,63 @@ export class GraphicDesignerDO extends DurableObject<Env> {
     req: ChatRequest,
     logger: ReturnType<typeof createLogger>,
   ): Promise<Response> {
-    logger.info('chat.turn');
+    const sessionId = req.sessionId ?? crypto.randomUUID();
+    logger.info('chat.turn', { sessionId });
+
+    const history = await this.loadChatHistory(sessionId);
+    const messages = [...history, { role: 'user' as const, content: req.message }];
+
     const res = await this.llm.complete({
       tier: 'default',
       system: SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: req.message }],
+      messages,
     });
+
+    await this.appendChatMessages(sessionId, [
+      { role: 'user', content: req.message },
+      { role: 'assistant', content: res.text },
+    ]);
+
     return Response.json({
       reply: res.text,
-      sessionId: req.sessionId,
+      sessionId,
       usage: res.usage,
     });
+  }
+
+  private async loadChatHistory(
+    sessionId: string,
+  ): Promise<Array<{ role: 'user' | 'assistant'; content: string }>> {
+    const rows = await this.env.DB.prepare(
+      `SELECT role, content FROM chat_messages
+        WHERE session_id = ?1
+        ORDER BY created_at ASC
+        LIMIT 40`,
+    )
+      .bind(sessionId)
+      .all<{ role: string; content: string }>();
+    return (rows.results ?? [])
+      .filter((r): r is { role: 'user' | 'assistant'; content: string } =>
+        r.role === 'user' || r.role === 'assistant',
+      );
+  }
+
+  private async appendChatMessages(
+    sessionId: string,
+    turns: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>,
+  ): Promise<void> {
+    const now = Date.now();
+    const stmt = this.env.DB.prepare(
+      `INSERT INTO chat_messages (id, session_id, role, content, created_at)
+       VALUES (?1, ?2, ?3, ?4, ?5)`,
+    );
+    for (let i = 0; i < turns.length; i++) {
+      const turn = turns[i];
+      if (!turn) continue;
+      await stmt
+        .bind(`msg_${crypto.randomUUID()}`, sessionId, turn.role, turn.content, now + i)
+        .run();
+    }
   }
 
   private async handleToolCall(
@@ -123,6 +188,14 @@ export class GraphicDesignerDO extends DurableObject<Env> {
           return Response.json({ ...result, sessionId: req.sessionId });
         }
 
+        case 'search_media': {
+          const result = await searchMedia(
+            this.env,
+            req.args as unknown as SearchMediaArgs,
+          );
+          return Response.json({ ...result, sessionId: req.sessionId });
+        }
+
         case 'plan_presentation': {
           const result = await planPresentation(
             this.env,
@@ -139,20 +212,55 @@ export class GraphicDesignerDO extends DurableObject<Env> {
           return Response.json({ ...result, sessionId: req.sessionId });
         }
 
-        case 'search_media':
-        case 'check_brand_compliance':
-        case 'plan_site':
-        case 'build_and_deploy_site':
-        case 'generate_logo_concepts':
-        case 'finalize_logo_package':
-        case 'canva_export':
-          return Response.json({
-            ok: false,
-            status: 'not_implemented',
-            tool: req.tool,
-            message: `Tool "${req.tool}" is registered but not yet implemented. Coming in Slice 3-4.`,
-            sessionId: req.sessionId,
+        case 'generate_logo_concepts': {
+          const args = req.args as unknown as GenerateLogoConceptsArgs;
+          // Default to the current DO session if caller didn't pass one.
+          const result = await generateLogoConcepts(this.env, {
+            ...args,
+            sessionId: args.sessionId ?? req.sessionId,
           });
+          return Response.json({ ...result, sessionId: req.sessionId });
+        }
+
+        case 'finalize_logo_package': {
+          const result = await finalizeLogoPackage(
+            this.env,
+            req.args as unknown as FinalizeLogoPackageArgs,
+          );
+          return Response.json({ ...result, sessionId: req.sessionId });
+        }
+
+        case 'canva_export': {
+          const result = await canvaExport(
+            this.env,
+            req.args as unknown as CanvaExportArgs,
+          );
+          return Response.json({ ...result, sessionId: req.sessionId });
+        }
+
+        case 'plan_site': {
+          const result = await planSite(
+            this.env,
+            req.args as unknown as PlanSiteArgs,
+          );
+          return Response.json({ ...result, sessionId: req.sessionId });
+        }
+
+        case 'build_and_deploy_site': {
+          const result = await buildAndDeploySite(
+            this.env,
+            req.args as unknown as BuildAndDeploySiteArgs,
+          );
+          return Response.json({ ...result, sessionId: req.sessionId });
+        }
+
+        case 'check_brand_compliance': {
+          const result = await checkBrandCompliance(
+            this.env,
+            req.args as unknown as CheckBrandComplianceArgs,
+          );
+          return Response.json({ ...result, sessionId: req.sessionId });
+        }
 
         default:
           return new Response(`Unknown tool: ${req.tool}`, { status: 400 });
