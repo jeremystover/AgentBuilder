@@ -433,12 +433,12 @@ export async function handleApiRequest(request, ctx) {
       goalId: p.goalId,
       stakeholderIds: safeParseJsonArray(p.stakeholdersJson),
     });
-    // Split server-side so the client never needs to guess which bucket a
-    // project belongs in. "done" and "paused" are inactive; everything else
-    // (including blank status on legacy rows) is active.
-    const inactiveStatuses = new Set(["done", "paused"]);
-    const projects = allVisible.filter((p) => !inactiveStatuses.has(String(p.status || "").toLowerCase())).map(toDto);
-    const inactiveProjects = allVisible.filter((p) => inactiveStatuses.has(String(p.status || "").toLowerCase())).map(toDto);
+    // Whitelist of statuses that are still in-flight. Anything else
+    // (done, paused, complete, closed, finished, …) goes to inactiveProjects.
+    // Blank status on legacy rows counts as active.
+    const activeStatuses = new Set(["", "open", "active", "in_progress", "pending", "todo"]);
+    const projects = allVisible.filter((p) => activeStatuses.has(String(p.status || "").toLowerCase())).map(toDto);
+    const inactiveProjects = allVisible.filter((p) => !activeStatuses.has(String(p.status || "").toLowerCase())).map(toDto);
     return jsonResponse({ projects, inactiveProjects });
   }
   {
