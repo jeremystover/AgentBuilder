@@ -422,7 +422,12 @@ export async function handleApiRequest(request, ctx) {
 
   // ── Projects ─────────────────────────────────────────────────────────────
   if (method === "GET" && path === "/api/projects") {
-    const allVisible = (await readAll(sheets, "Projects")).filter(isVisibleProject);
+    // Deduplicate by projectId — keep the last row for each id so that if a
+    // project was accidentally inserted twice, the most-recently-written copy
+    // (which has the latest status) wins.
+    const seen = new Map();
+    for (const p of await readAll(sheets, "Projects")) seen.set(p.projectId, p);
+    const allVisible = [...seen.values()].filter(isVisibleProject);
     const toDto = (p) => ({
       projectId: p.projectId,
       name: p.name,
