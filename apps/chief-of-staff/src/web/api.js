@@ -422,19 +422,24 @@ export async function handleApiRequest(request, ctx) {
 
   // ── Projects ─────────────────────────────────────────────────────────────
   if (method === "GET" && path === "/api/projects") {
-    const projects = (await readAll(sheets, "Projects")).filter(isVisibleProject);
-    return jsonResponse({
-      projects: projects.map((p) => ({
-        projectId: p.projectId,
-        name: p.name,
-        status: p.status,
-        priority: p.priority,
-        healthStatus: p.healthStatus,
-        nextMilestoneAt: p.nextMilestoneAt,
-        goalId: p.goalId,
-        stakeholderIds: safeParseJsonArray(p.stakeholdersJson),
-      })),
+    const allVisible = (await readAll(sheets, "Projects")).filter(isVisibleProject);
+    const toDto = (p) => ({
+      projectId: p.projectId,
+      name: p.name,
+      status: p.status,
+      priority: p.priority,
+      healthStatus: p.healthStatus,
+      nextMilestoneAt: p.nextMilestoneAt,
+      goalId: p.goalId,
+      stakeholderIds: safeParseJsonArray(p.stakeholdersJson),
     });
+    // Split server-side so the client never needs to guess which bucket a
+    // project belongs in. "done" and "paused" are inactive; everything else
+    // (including blank status on legacy rows) is active.
+    const inactiveStatuses = new Set(["done", "paused"]);
+    const projects = allVisible.filter((p) => !inactiveStatuses.has(String(p.status || "").toLowerCase())).map(toDto);
+    const inactiveProjects = allVisible.filter((p) => inactiveStatuses.has(String(p.status || "").toLowerCase())).map(toDto);
+    return jsonResponse({ projects, inactiveProjects });
   }
   {
     const m = path.match(/^\/api\/projects\/([^/]+)$/);

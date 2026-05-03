@@ -191,21 +191,12 @@ async function renderProjectsProjectView(root) {
     "What projects are blocked and why?",
   ]));
 
-  const projects = projData.projects || [];
-  if (!projects.length) {
+  // Server now pre-splits: projects = active, inactiveProjects = done/paused.
+  const activeProjects = projData.projects || [];
+  const inactiveProjects = projData.inactiveProjects || [];
+  if (!activeProjects.length && !inactiveProjects.length) {
     root.appendChild(el("div", { class: "text-sm text-slate-500" }, "No projects yet."));
     return;
-  }
-
-  // Split active from done/inactive so the page leads with what still needs
-  // attention. "active" mirrors goals.js isOpen() — empty counts as active
-  // for legacy rows.
-  const activeStatuses = new Set(["", "open", "active", "in_progress", "pending", "todo"]);
-  const activeProjects = [];
-  const inactiveProjects = [];
-  for (const p of projects) {
-    if (activeStatuses.has(String(p.status || "").toLowerCase())) activeProjects.push(p);
-    else inactiveProjects.push(p);
   }
 
   // Group active projects by goalId. Goals render in the order returned by
@@ -774,7 +765,7 @@ async function openMergeProjectModal(sourceProjectId, sourceName) {
   for (const p of others) sel.appendChild(el("option", { value: p.projectId }, p.name || "(untitled)"));
 
   const warning = el("p", { class: "text-xs text-slate-500" },
-    "All tasks will move to the selected project. \"" + sourceName + "\" will be deleted.");
+    'All tasks will move to the selected project. "' + sourceName + '" will be deleted.');
 
   const card = el("div", { class: "space-y-4" },
     el("h2", { class: "text-xl font-semibold" }, "Merge into another project"),
@@ -789,7 +780,7 @@ async function openMergeProjectModal(sourceProjectId, sourceName) {
         class: "rounded-lg bg-rose-600 text-white px-4 py-2 text-sm font-medium hover:bg-rose-700",
         onclick: async () => {
           if (!sel.value) { toast("Pick a target project", "err"); return; }
-          if (!confirm("Move all tasks from \"" + sourceName + "\" to \"" + (sel.options[sel.selectedIndex]?.text || "") + "\" and delete \"" + sourceName + "\"?")) return;
+          if (!confirm('Move all tasks from "' + sourceName + '" to "' + (sel.options[sel.selectedIndex]?.text || "") + '" and delete "' + sourceName + '"?')) return;
           try {
             const r = await api("/api/projects/" + encodeURIComponent(sourceProjectId) + "/merge", {
               method: "POST",
