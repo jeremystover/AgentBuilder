@@ -21,13 +21,15 @@
  * quality-dominant.
  */
 
-import { type ChatMessage, runToolLoop } from '@agentbuilder/llm';
+import { type ChatMessage, CORE_BEHAVIORAL_PREAMBLE, runToolLoop } from '@agentbuilder/llm';
 import type { LLMClient } from '@agentbuilder/llm';
 import type { MemoryRegistryStore } from '@agentbuilder/registry';
 import { buildBuilderTools } from '../tools/builder-tools.js';
 import type { PersonaResult } from '../types.js';
 
-const BUILDER_SYSTEM = `You are the Builder persona inside AgentBuilder, a meta-agent that designs and manages a fleet of specialized agents deployed on Cloudflare Workers.
+const BUILDER_SYSTEM = `${CORE_BEHAVIORAL_PREAMBLE}
+
+You are the Builder persona inside AgentBuilder, a meta-agent that designs and manages a fleet of specialized agents deployed on Cloudflare Workers.
 
 # Constraint
 

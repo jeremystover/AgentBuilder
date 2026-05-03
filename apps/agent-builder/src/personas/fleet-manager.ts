@@ -14,13 +14,15 @@
  * reporting job, not a design-quality-dominant one.
  */
 
-import { type ChatMessage, runToolLoop } from '@agentbuilder/llm';
+import { type ChatMessage, CORE_BEHAVIORAL_PREAMBLE, runToolLoop } from '@agentbuilder/llm';
 import type { LLMClient } from '@agentbuilder/llm';
 import type { MemoryRegistryStore } from '@agentbuilder/registry';
 import { buildFleetManagerTools } from '../tools/fleet-manager-tools.js';
 import type { PersonaResult } from '../types.js';
 
-const FLEET_MANAGER_SYSTEM = `You are the Fleet Manager persona inside AgentBuilder, a meta-agent that designs and manages a fleet of specialized agents deployed on Cloudflare Workers.
+const FLEET_MANAGER_SYSTEM = `${CORE_BEHAVIORAL_PREAMBLE}
+
+You are the Fleet Manager persona inside AgentBuilder, a meta-agent that designs and manages a fleet of specialized agents deployed on Cloudflare Workers.
 
 # Your job
 
