@@ -159,19 +159,24 @@ async function pageProjects(main) {
   main.appendChild(root);
 }
 
-function projectCard(p) {
+function projectCard(p, opts = {}) {
   const health = (p.healthStatus || "").toLowerCase();
   const dot = health === "off_track" ? "bg-rose-500"
             : health === "at_risk"   ? "bg-amber-500"
             : health === "on_track"  ? "bg-emerald-500"
             : "bg-slate-300";
+  // When the same name is shared by multiple projects, append a short id
+  // suffix so the user can tell them apart (and use Merge to consolidate).
+  const idSuffix = opts.showIdHint && p.projectId
+    ? " · " + String(p.projectId).slice(-4)
+    : "";
   return el("a", {
     href: "#/projects/" + encodeURIComponent(p.projectId),
     class: "block bg-white rounded-xl ring-1 ring-slate-200 hover:ring-indigo-300 p-4 transition",
   },
     el("div", { class: "flex items-center gap-3" },
       el("span", { class: "w-2 h-2 rounded-full " + dot }),
-      el("div", { class: "flex-1 text-base font-medium text-ink" }, p.name || "(untitled)"),
+      el("div", { class: "flex-1 text-base font-medium text-ink" }, (p.name || "(untitled)") + idSuffix),
       el("span", { class: "text-xs text-slate-400" }, p.status || ""),
     ),
     p.nextMilestoneAt ? el("div", { class: "text-xs text-slate-500 mt-1" }, "Next milestone " + fmtDate(p.nextMilestoneAt)) : null,
@@ -198,6 +203,18 @@ async function renderProjectsProjectView(root) {
     root.appendChild(el("div", { class: "text-sm text-slate-500" }, "No projects yet."));
     return;
   }
+
+  // Detect projects that share a display name across the full list (active +
+  // inactive). For those, the card will show a short id suffix so the user
+  // can tell them apart and pick which one to keep via Merge.
+  const nameCounts = new Map();
+  for (const p of [...activeProjects, ...inactiveProjects]) {
+    const key = (p.name || "").trim().toLowerCase();
+    if (!key) continue;
+    nameCounts.set(key, (nameCounts.get(key) || 0) + 1);
+  }
+  const dupeNames = new Set([...nameCounts.entries()].filter(([, n]) => n > 1).map(([k]) => k));
+  const cardOpts = (p) => ({ showIdHint: dupeNames.has((p.name || "").trim().toLowerCase()) });
 
   // Group active projects by goalId. Goals render in the order returned by
   // the API (the tool already sorts by quarter/priority); orphans go in a
@@ -232,7 +249,7 @@ async function renderProjectsProjectView(root) {
       el("span", { class: "text-xs text-slate-400" }, ps.length + " project" + (ps.length === 1 ? "" : "s")),
     ));
     const grid = el("div", { class: "grid gap-3" });
-    for (const p of ps) grid.appendChild(projectCard(p));
+    for (const p of ps) grid.appendChild(projectCard(p, cardOpts(p)));
     section.appendChild(grid);
     root.appendChild(section);
   }
@@ -244,7 +261,7 @@ async function renderProjectsProjectView(root) {
       el("span", { class: "text-xs text-slate-400" }, inactiveProjects.length + " project" + (inactiveProjects.length === 1 ? "" : "s")),
     ));
     const grid = el("div", { class: "grid gap-3 opacity-75" });
-    for (const p of inactiveProjects) grid.appendChild(projectCard(p));
+    for (const p of inactiveProjects) grid.appendChild(projectCard(p, cardOpts(p)));
     section.appendChild(grid);
     root.appendChild(section);
   }

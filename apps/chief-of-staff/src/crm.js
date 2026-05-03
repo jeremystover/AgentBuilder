@@ -225,7 +225,11 @@ export function createCrmTools({ spreadsheetId, sheets }) {
         readSheetAsObjects("Goals").catch(() => []),
       ]);
 
-      const project = projects.find((p) =>
+      // Match the list endpoint's behaviour: if the same projectId has
+      // multiple rows, the latest one wins. findLast keeps detail and list
+      // in sync — otherwise the list (which dedupes to the last row) can
+      // show a project whose detail page 404s on an earlier deleted row.
+      const project = projects.findLast((p) =>
         String(p.projectId || "").toLowerCase() === query ||
         String(p.name || "").toLowerCase().includes(query)
       );
