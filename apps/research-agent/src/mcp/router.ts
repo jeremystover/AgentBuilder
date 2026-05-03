@@ -20,6 +20,7 @@ import { TagContentInput,       tagContent }         from "./tools/tag_content";
 import { UploadFileInput,       uploadFile }         from "./tools/upload_file";
 import { CleanupInput,          cleanup }            from "./tools/cleanup";
 import { ManageWatchesInput,    manageWatches }      from "./tools/manage_watches";
+import { FollowAuthorInput,     followAuthor }       from "./tools/follow_author";
 
 const TOOL_MANIFESTS = [
   {
@@ -218,6 +219,16 @@ const TOOL_MANIFESTS = [
     },
   },
   {
+    name: "follow_author",
+    description: "Given an article id, detect whether it's a Medium piece and add a watch on its author's RSS feed (via medium-watcher). Useful when reading an article and wanting future posts from that author. Returns added | already_watched | not_medium | handle_not_found.",
+    inputSchema: {
+      type: "object", required: ["article_id"], additionalProperties: false,
+      properties: {
+        article_id: { type: "string", format: "uuid" },
+      },
+    },
+  },
+  {
     name: "manage_watches",
     description: "Create, list, get, update, pause, resume, or delete page-monitoring watches. A watch periodically fetches a URL on a 5/15/30/60/240/1440-minute interval and emails notify_email when the match condition (contains / not_contains / regex / hash) triggers.",
     inputSchema: {
@@ -276,6 +287,7 @@ async function dispatchTool(
     case "upload_file":        return uploadFile(UploadFileInput.parse(args), env);
     case "cleanup":            return cleanup(CleanupInput.parse(args), env);
     case "manage_watches":     return manageWatches(ManageWatchesInput.parse(args), env);
+    case "follow_author":      return followAuthor(FollowAuthorInput.parse(args), env);
     default:                   return null;
   }
 }
