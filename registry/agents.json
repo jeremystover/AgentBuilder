@@ -1,6 +1,6 @@
 {
   "$schemaVersion": 1,
-  "updatedAt": "2026-04-27T00:00:00.000Z",
+  "updatedAt": "2026-05-03T13:50:39.532Z",
   "agents": [
     {
       "id": "agent-builder",
@@ -345,8 +345,12 @@
         "workerName": "linkedin-watcher",
         "durableObjects": [],
         "d1": [],
-        "kv": ["linkedin-watcher-state"],
-        "r2": ["linkedin-watcher-content"],
+        "kv": [
+          "linkedin-watcher-state"
+        ],
+        "r2": [
+          "linkedin-watcher-content"
+        ],
         "queues": [],
         "hasAssets": false
       },
@@ -403,8 +407,12 @@
       "cloudflare": {
         "workerName": "medium-watcher",
         "durableObjects": [],
-        "d1": ["medium-watcher-vault"],
-        "kv": ["medium-watcher-state"],
+        "d1": [
+          "medium-watcher-vault"
+        ],
+        "kv": [
+          "medium-watcher-state"
+        ],
         "r2": [],
         "queues": [],
         "hasAssets": false
@@ -464,8 +472,12 @@
       "cloudflare": {
         "workerName": "wired-watcher",
         "durableObjects": [],
-        "d1": ["wired-watcher-vault"],
-        "kv": ["wired-watcher-state"],
+        "d1": [
+          "wired-watcher-vault"
+        ],
+        "kv": [
+          "wired-watcher-state"
+        ],
         "r2": [],
         "queues": [],
         "hasAssets": false
@@ -749,6 +761,75 @@
           "Persistent article ingestion or research-corpus search (that's Research Agent)",
           "Building or modifying other agents (that's Agent Builder)",
           "Employment law outside California / US federal law"
+        ]
+      },
+      "version": "0.0.1"
+    },
+    {
+      "id": "shopping-price-tracker",
+      "name": "Shopping Price Tracker",
+      "purpose": "Tracks daily prices for products and airline tickets via Claude API web_search, eBay Browse API, and a JSON-LD URL-watch scraper. Auto-discovers retailer URLs on intake; emails a daily digest so the user can decide when to buy.",
+      "owner": "jeremystover",
+      "status": "draft",
+      "kind": "app",
+      "skills": [
+        "intake-tracked-item",
+        "intake-tracked-flight",
+        "url-discovery",
+        "daily-price-search",
+        "price-history",
+        "daily-digest-email",
+        "manual-refresh"
+      ],
+      "tools": [
+        "add_tracked_item",
+        "update_tracked_item",
+        "list_tracked_items",
+        "remove_tracked_item",
+        "get_item_history",
+        "run_search_now",
+        "latest_digest",
+        "manage_digest_recipients"
+      ],
+      "mcpServers": [],
+      "sharedPackages": [
+        "@agentbuilder/core",
+        "@agentbuilder/llm",
+        "@agentbuilder/web-ui-kit"
+      ],
+      "oauthScopes": [],
+      "cloudflare": {
+        "workerName": "shopping-price-tracker",
+        "durableObjects": [
+          "ShoppingPriceTrackerDO"
+        ],
+        "d1": [
+          "shopping-price-tracker-db"
+        ],
+        "kv": [],
+        "r2": [],
+        "queues": [],
+        "hasAssets": true
+      },
+      "routing": {
+        "triggerPhrases": [
+          "track this price",
+          "watch this product",
+          "track flights to",
+          "what's the best price for",
+          "show shopping digest"
+        ],
+        "examples": [
+          "Track Sony WH-1000XM5 headphones with a $280 target",
+          "Watch flights JFK to LIS, depart May 15-22, return June 1-8, max $700",
+          "What's the latest digest?"
+        ],
+        "nonGoals": [
+          "Auto-purchasing items or executing checkout",
+          "Ingesting purchase history (that's CFO's amazon-import)",
+          "General page-content monitoring (that's Research Agent's manage_watches)",
+          "Calendar, tasks, goals, or stakeholder management (that's Chief of Staff)",
+          "Building or modifying other agents (that's Agent Builder)"
         ]
       },
       "version": "0.0.1"

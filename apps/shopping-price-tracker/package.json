@@ -1,0 +1,27 @@
+{
+  "name": "@agentbuilder/app-shopping-price-tracker",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "build": "wrangler deploy --dry-run --outdir=dist",
+    "typecheck": "tsc --noEmit",
+    "migrate:remote": "wrangler d1 migrations apply shopping-price-tracker-db --remote",
+    "migrate:local": "wrangler d1 migrations apply shopping-price-tracker-db --local"
+  },
+  "dependencies": {
+    "@agentbuilder/core": "workspace:*",
+    "@agentbuilder/llm": "workspace:*",
+    "@agentbuilder/web-ui-kit": "workspace:*",
+    "@anthropic-ai/sdk": "^0.88.0",
+    "agents": "^0.0.95",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250410.0",
+    "typescript": "^5.6.3",
+    "wrangler": "^3.90.0"
+  }
+}
