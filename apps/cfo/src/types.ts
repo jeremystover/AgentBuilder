@@ -5,6 +5,7 @@
  */
 export interface Env {
   DB: D1Database;
+  AGENTBUILDER_CORE_DB?: D1Database;
   BUCKET: R2Bucket;
   ASSETS: Fetcher;
   TELLER_APPLICATION_ID?: string;

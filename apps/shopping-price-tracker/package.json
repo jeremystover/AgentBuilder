@@ -14,6 +14,7 @@
   "dependencies": {
     "@agentbuilder/core": "workspace:*",
     "@agentbuilder/llm": "workspace:*",
+    "@agentbuilder/observability": "workspace:*",
     "@agentbuilder/web-ui-kit": "workspace:*",
     "@anthropic-ai/sdk": "^0.88.0",
     "agents": "^0.0.95",

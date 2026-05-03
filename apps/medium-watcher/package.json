@@ -12,7 +12,8 @@
   "dependencies": {
     "@agentbuilder/credential-vault": "workspace:*",
     "@agentbuilder/crypto": "workspace:*",
-    "@agentbuilder/extract-article": "workspace:*"
+    "@agentbuilder/extract-article": "workspace:*",
+    "@agentbuilder/observability": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250410.0",

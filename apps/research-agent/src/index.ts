@@ -16,6 +16,7 @@
  *   email       → ingest URLs from forwarded emails
  */
 
+import { runCron }                          from "@agentbuilder/observability";
 import type { Env }                        from "./types";
 import { checkAuth, authErrorResponse }    from "./auth";
 import { handleMcpRequest }                from "./mcp/router";
@@ -369,26 +370,29 @@ function proxyToDO(env: Env, request: Request, pathname: string): Promise<Respon
 }
 
 async function handleScheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-  console.log(`[cron] trigger: ${controller.cron} at ${new Date(controller.scheduledTime).toISOString()}`);
   if (controller.cron === "*/30 * * * *") {
-    ctx.waitUntil((async () => {
-      try {
-        const { runPollBluesky } = await import("./cron/poll_bluesky");
-        await runPollBluesky(env, ctx);
-      } catch (e) {
-        console.error("[cron/poll_bluesky] failed:", e);
-      }
-    })());
+    ctx.waitUntil(
+      runCron(
+        env,
+        { agentId: "research-agent", trigger: "poll-bluesky", cron: controller.cron },
+        async () => {
+          const { runPollBluesky } = await import("./cron/poll_bluesky");
+          return await runPollBluesky(env, ctx);
+        },
+      ),
+    );
   }
   if (controller.cron === "*/5 * * * *") {
-    ctx.waitUntil((async () => {
-      try {
-        const { runCheckWatches } = await import("./cron/check_watches");
-        await runCheckWatches(env, ctx);
-      } catch (e) {
-        console.error("[cron/check_watches] failed:", e);
-      }
-    })());
+    ctx.waitUntil(
+      runCron(
+        env,
+        { agentId: "research-agent", trigger: "check-watches", cron: controller.cron },
+        async () => {
+          const { runCheckWatches } = await import("./cron/check_watches");
+          return await runCheckWatches(env, ctx);
+        },
+      ),
+    );
   }
 }
 

@@ -14,6 +14,7 @@
     "@agentbuilder/core": "workspace:*",
     "@agentbuilder/llm": "workspace:*",
     "@agentbuilder/registry": "workspace:*",
+    "@agentbuilder/web-ui-kit": "workspace:*",
     "agents": "^0.0.95"
   },
   "devDependencies": {

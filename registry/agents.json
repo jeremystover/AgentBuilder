@@ -1,6 +1,6 @@
 {
   "$schemaVersion": 1,
-  "updatedAt": "2026-05-03T13:50:39.532Z",
+  "updatedAt": "2026-05-03T15:00:00.000Z",
   "agents": [
     {
       "id": "agent-builder",
@@ -65,7 +65,15 @@
           "Handling production traffic for consumer apps"
         ]
       },
-      "version": "0.0.1"
+      "version": "0.0.1",
+      "secrets": [
+        "ANTHROPIC_API_KEY",
+        "GITHUB_APP_PRIVATE_KEY",
+        "GOOGLE_OAUTH_CLIENT_SECRET",
+        "WEB_UI_PASSWORD",
+        "EXTERNAL_API_KEY",
+        "MCP_HTTP_KEY"
+      ]
     },
     {
       "id": "chief-of-staff",
@@ -150,7 +158,50 @@
         ]
       },
       "version": "4.0.0",
-      "lastDeployed": "2026-04-13T00:00:00.000Z"
+      "lastDeployed": "2026-04-13T00:00:00.000Z",
+      "crons": [
+        {
+          "schedule": "*/10 * * * *",
+          "trigger": "ingest-and-zoom",
+          "description": "Every 10 minutes — pull new Gmail / Calendar / Drive items into IntakeQueue and poll Zoom for new recordings."
+        },
+        {
+          "schedule": "0 6 * * *",
+          "trigger": "state-export",
+          "description": "6am daily — regenerate Current_State.md on Drive so the goals/projects/tasks tree is browsable."
+        },
+        {
+          "schedule": "0 7 * * *",
+          "trigger": "morning-brief",
+          "description": "7am daily — draft the morning brief (calendar, tasks, follow-ups) into Drive."
+        },
+        {
+          "schedule": "0 9 * * 1",
+          "trigger": "commitment-nudges",
+          "description": "9am Monday — generate commitment nudge drafts for stakeholders the user owes a follow-up."
+        }
+      ],
+      "secrets": [
+        "ANTHROPIC_API_KEY",
+        "GOOGLE_OAUTH_CLIENT_ID",
+        "GOOGLE_OAUTH_CLIENT_SECRET",
+        "GOOGLE_OAUTH_REFRESH_TOKEN",
+        "GOOGLE_OAUTH_GONG_CLIENT_ID",
+        "GOOGLE_OAUTH_GONG_CLIENT_SECRET",
+        "GOOGLE_OAUTH_GONG_REFRESH_TOKEN",
+        "GOOGLE_SERVICE_ACCOUNT_JSON",
+        "PPP_SHEETS_SPREADSHEET_ID",
+        "BLUESKY_HANDLE",
+        "BLUESKY_APP_PASSWORD",
+        "BLUESKY_PDS",
+        "ZOOM_ACCOUNT_ID",
+        "ZOOM_CLIENT_ID",
+        "ZOOM_CLIENT_SECRET",
+        "WEB_UI_PASSWORD",
+        "EXTERNAL_API_KEY",
+        "MCP_HTTP_KEY",
+        "INTERNAL_CRON_KEY"
+      ]
     },
     {
       "id": "cfo",
@@ -242,7 +293,30 @@
         ]
       },
       "version": "0.1.0",
-      "lastDeployed": "2026-04-13T00:00:00.000Z"
+      "lastDeployed": "2026-04-13T00:00:00.000Z",
+      "crons": [
+        {
+          "schedule": "0 9 * * *",
+          "trigger": "nightly-sync",
+          "description": "Nightly Teller transaction sync (~05:00 ET) — pulls and stages new transactions for review."
+        },
+        {
+          "schedule": "*/30 * * * *",
+          "trigger": "sms-dispatch",
+          "description": "Every 30 min — SMS dispatcher; self-checks Pacific local time + per-person preferred slots so 47 of 48 daily fires are no-ops."
+        }
+      ],
+      "secrets": [
+        "ANTHROPIC_API_KEY",
+        "TELLER_APPLICATION_ID",
+        "MCP_HTTP_KEY",
+        "WEB_UI_PASSWORD",
+        "EXTERNAL_API_KEY",
+        "WEB_UI_USER_ID",
+        "TWILIO_ACCOUNT_SID",
+        "TWILIO_AUTH_TOKEN",
+        "TWILIO_FROM"
+      ]
     },
     {
       "id": "guest-booking",
@@ -317,7 +391,12 @@
           "Dynamic pricing — this agent audits price consistency, it does not set prices"
         ]
       },
-      "version": "0.0.1"
+      "version": "0.0.1",
+      "secrets": [
+        "ANTHROPIC_API_KEY",
+        "MCP_HTTP_KEY",
+        "GUESTY_API_KEY"
+      ]
     },
     {
       "id": "linkedin-watcher",
@@ -375,7 +454,19 @@
           "Building or modifying other agents (that's Agent Builder)"
         ]
       },
-      "version": "0.0.1"
+      "version": "0.0.1",
+      "crons": [
+        {
+          "schedule": "0 14 * * *",
+          "trigger": "daily-poll",
+          "description": "Daily at 7am Pacific — poll watched LinkedIn profiles via Proxycurl, dedupe, hand off new posts to Research Agent."
+        }
+      ],
+      "secrets": [
+        "PROXYCURL_API_KEY",
+        "INTERNAL_SECRET",
+        "WATCHER_API_KEY"
+      ]
     },
     {
       "id": "medium-watcher",
@@ -439,7 +530,19 @@
           "Building or modifying other agents (that's Agent Builder)"
         ]
       },
-      "version": "0.0.1"
+      "version": "0.0.1",
+      "crons": [
+        {
+          "schedule": "0 14 * * *",
+          "trigger": "daily-poll",
+          "description": "Daily at 7am Pacific — poll Medium member RSS, fetch each new article with subscriber cookie, hand off to Research Agent."
+        }
+      ],
+      "secrets": [
+        "WATCHER_API_KEY",
+        "INTERNAL_SECRET",
+        "KEK_BASE64"
+      ]
     },
     {
       "id": "wired-watcher",
@@ -504,7 +607,19 @@
           "Building or modifying other agents (that's Agent Builder)"
         ]
       },
-      "version": "0.0.1"
+      "version": "0.0.1",
+      "crons": [
+        {
+          "schedule": "30 14 * * *",
+          "trigger": "daily-poll",
+          "description": "Daily at 7:30am Pacific — poll Wired RSS, fetch each new article with subscriber cookie, hand off to Research Agent."
+        }
+      ],
+      "secrets": [
+        "WATCHER_API_KEY",
+        "INTERNAL_SECRET",
+        "KEK_BASE64"
+      ]
     },
     {
       "id": "research-agent",
@@ -583,7 +698,31 @@
           "Real-time web search — this agent searches ingested content only"
         ]
       },
-      "version": "0.0.1"
+      "version": "0.0.1",
+      "crons": [
+        {
+          "schedule": "*/5 * * * *",
+          "trigger": "check-watches",
+          "description": "Every 5 minutes — re-check page-monitoring watches and notify on diffs."
+        },
+        {
+          "schedule": "*/30 * * * *",
+          "trigger": "poll-bluesky",
+          "description": "Every 30 minutes — poll Bluesky source feeds and ingest new posts into the knowledge base."
+        }
+      ],
+      "secrets": [
+        "ANTHROPIC_API_KEY",
+        "MCP_BEARER_TOKEN",
+        "BLUESKY_IDENTIFIER",
+        "BLUESKY_APP_PASSWORD",
+        "INTERNAL_SECRET",
+        "WATCH_NOTIFY_FROM",
+        "NEWSLETTER_SENDERS",
+        "WEB_UI_PASSWORD",
+        "EXTERNAL_API_KEY",
+        "CHIEF_OF_STAFF_MCP_KEY"
+      ]
     },
     {
       "id": "graphic-designer",
@@ -676,7 +815,18 @@
           "Guest booking or property management (that's Guest Booking)"
         ]
       },
-      "version": "0.0.1"
+      "version": "0.0.1",
+      "secrets": [
+        "ANTHROPIC_API_KEY",
+        "MCP_HTTP_KEY",
+        "OPENAI_API_KEY",
+        "UNSPLASH_ACCESS_KEY",
+        "PEXELS_API_KEY",
+        "CANVA_API_KEY",
+        "GOOGLE_TOKEN_VAULT_KEK",
+        "GOOGLE_OAUTH_CLIENT_ID",
+        "GOOGLE_OAUTH_CLIENT_SECRET"
+      ]
     },
     {
       "id": "termination-documentation",
@@ -763,7 +913,15 @@
           "Employment law outside California / US federal law"
         ]
       },
-      "version": "0.0.1"
+      "version": "0.0.1",
+      "secrets": [
+        "MCP_HTTP_KEY",
+        "ANTHROPIC_API_KEY",
+        "GOOGLE_TOKEN_VAULT_KEK",
+        "GOOGLE_OAUTH_CLIENT_ID",
+        "GOOGLE_OAUTH_CLIENT_SECRET",
+        "OAUTH_STATE_SECRET"
+      ]
     },
     {
       "id": "shopping-price-tracker",
@@ -832,7 +990,26 @@
           "Building or modifying other agents (that's Agent Builder)"
         ]
       },
-      "version": "0.0.1"
+      "version": "0.0.1",
+      "crons": [
+        {
+          "schedule": "0 12 * * *",
+          "trigger": "daily-digest",
+          "description": "Daily at 12:00 UTC (08:00 ET during EDT) — search every tracked item, build the digest, send the digest email."
+        },
+        {
+          "schedule": "0 */4 * * *",
+          "trigger": "priority-refresh",
+          "description": "Every 4 hours — re-search only priority='high' items so urgent prices stay fresh; never sends email."
+        }
+      ],
+      "secrets": [
+        "ANTHROPIC_API_KEY",
+        "EBAY_APP_ID",
+        "MCP_HTTP_KEY",
+        "WEB_UI_PASSWORD",
+        "EXTERNAL_API_KEY"
+      ]
     }
   ]
 }

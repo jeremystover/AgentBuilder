@@ -31,6 +31,15 @@ tools/                Repo-wide CLI tooling (run with `tsx`).
     Both modes share the same auth surface (cookie `WEB_UI_PASSWORD` + bearer `EXTERNAL_API_KEY`), the `WebSessions` D1 table, and the `/api/<surface>/v1/*` external REST convention. To add a UI, invoke the Claude Code `add-web-ui` skill — it asks which mode and copies the right template.
 10. **Runtime agent system prompts prepend `CORE_BEHAVIORAL_PREAMBLE`** from `@agentbuilder/llm`. The full coding/agent guidelines for Claude Code working in this repo live in `/CLAUDE.md`. Three of the AgentBuilder personas (architect, builder, fleet-manager) already do this; new agents pick it up via the scaffold templates.
 
+11. **Every `scheduled()` handler runs through `@agentbuilder/observability`'s `runCron`.** The wrapper writes one row per invocation to `cron_runs` in the shared `agentbuilder-core` D1, plus a `cron_errors` row on failure. The `/dashboard` UI on `agent-builder` reads those tables, so this is what keeps "is this cron running? did it succeed?" answerable. Concretely, every agent with a cron MUST:
+
+    - Add `@agentbuilder/observability` to `dependencies` and bind `agentbuilder-core` as `AGENTBUILDER_CORE_DB` in `wrangler.toml` (alongside the agent's own DB if any).
+    - Call `runCron(env, { agentId, trigger, cron }, handler)` from inside `scheduled()` for every cron expression. `agentId` MUST match the registry id; `trigger` is a stable kebab-case name (e.g. `morning-brief`, `daily-poll`) — the dashboard groups by `(agentId, trigger)`.
+    - Register every cron in the registry: `agents[].crons[] = { schedule, trigger, description }`. Schedules and triggers must match the wrangler.toml + scheduled() handler exactly, or the dashboard will show an orphan job.
+    - Register every secret in `agents[].secrets[]`. Names only — values stay in Cloudflare Secrets Store. The dashboard surfaces this list so the operator knows what to `wrangler secret put` before deploying.
+
+    The `chief-of-staff` and `cfo` agents are reference implementations. New agents pick this up automatically via the scaffold template.
+
 ## Creating a new agent
 
 ```bash
@@ -48,6 +57,47 @@ created automatically in draft status; flip to `active` when it's deployed.
 `create-agent` also writes `.github/workflows/deploy-my-agent.yml`, which
 runs D1 migrations and `wrangler deploy` on push to `main`. See the
 "Continuous deployment" section of the README for required secrets.
+
+Before merging, fill in these registry fields on the new entry so the
+dashboard renders the agent properly:
+
+- `tools[]` — names; optionally `toolDescriptions: { [name]: "..." }` for one-liners.
+- `secrets[]` — every secret the worker reads from `env.X`. Names only; the dashboard shows them so an operator knows what to `wrangler secret put` before deploying.
+- `crons[]` — one entry per scheduled trigger, with `{ schedule, trigger, description }`. Schedules MUST match `wrangler.toml`; triggers MUST match the kebab-case name passed to `runCron(env, { trigger }, ...)`. Skip if the agent has no `[triggers]` section.
+- `cloudflare.d1[]` — populated automatically; if you add a new D1 binding, also wire it into `apps/agent-builder/wrangler.toml` under `DB_<AGENT>` so the D1 Browser tab can list its tables.
+
+## Adding a scheduled job
+
+If your agent grows a new cron (or a new agent gains its first cron):
+
+1. Add the expression to `wrangler.toml` under `[triggers].crons`.
+2. Add `@agentbuilder/observability` to `package.json` dependencies if absent.
+3. Bind the shared D1 in `wrangler.toml`:
+   ```toml
+   [[d1_databases]]
+   binding = "AGENTBUILDER_CORE_DB"
+   database_name = "agentbuilder-core"
+   database_id = "51a422d2-e9ea-46e8-b6c8-233229434eca"
+   ```
+   And add `AGENTBUILDER_CORE_DB?: D1Database` to the agent's `Env` interface.
+4. In `scheduled()`, dispatch each cron expression through `runCron`:
+   ```ts
+   import { runCron } from "@agentbuilder/observability";
+
+   async scheduled(controller, env, ctx) {
+     if (controller.cron === "0 7 * * *") {
+       ctx.waitUntil(runCron(
+         env,
+         { agentId: "my-agent", trigger: "morning-brief", cron: controller.cron },
+         () => generateMorningBrief(env),
+       ));
+     }
+   }
+   ```
+   `runCron` catches the handler's exceptions, writes a `cron_runs` row, and (on failure) a `cron_errors` row — never re-throws, so siblings keep running.
+5. Register the cron in the registry (`crons[]` entry on the agent).
+
+After deploying, `/dashboard` → Scheduled jobs will show last/next run, success rate, and full history for the new trigger.
 
 ## Modifying shared packages
 

@@ -24,6 +24,7 @@
  *     add one then.
  */
 
+import { runCron } from '@agentbuilder/observability';
 import type { Env } from './types';
 import { jsonError } from './types';
 
@@ -427,22 +428,24 @@ export default {
   //                        time + per-person preferred slots, so 47 of
   //                        the 48 daily fires are no-ops).
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    console.log('[scheduled] cron fired', { cron: event.cron, scheduledTime: event.scheduledTime });
-
     if (event.cron === '0 9 * * *') {
       ctx.waitUntil(
-        runNightlyTellerSync(env).catch((err) => {
-          console.error('[scheduled] nightly sync failed', err);
-        }),
+        runCron(
+          env,
+          { agentId: 'cfo', trigger: 'nightly-sync', cron: event.cron },
+          () => runNightlyTellerSync(env),
+        ),
       );
       return;
     }
 
     if (event.cron === '*/30 * * * *') {
       ctx.waitUntil(
-        runDispatch(env)
-          .then((s) => console.log('[scheduled] sms dispatch', s))
-          .catch((err) => console.error('[scheduled] sms dispatch failed', err)),
+        runCron(
+          env,
+          { agentId: 'cfo', trigger: 'sms-dispatch', cron: event.cron },
+          () => runDispatch(env),
+        ),
       );
       return;
     }

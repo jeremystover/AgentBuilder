@@ -17,6 +17,7 @@
  *                             ingest into research-agent.
  */
 
+import { runCron } from "@agentbuilder/observability";
 import type { Env } from "./types";
 import { handleRequest } from "./api";
 import { runWatcher } from "./scheduler";
@@ -27,20 +28,12 @@ export default {
     env: Env,
     ctx: ExecutionContext,
   ): Promise<void> {
-    console.log(`[cron] trigger: ${controller.cron} at ${new Date(controller.scheduledTime).toISOString()}`);
     ctx.waitUntil(
-      (async () => {
-        try {
-          const result = await runWatcher(env);
-          console.log(
-            `[cron] complete: processed=${result.processed} paywalled=${result.paywalled} ` +
-            `errors=${result.errors.length} cookieMissing=${result.cookieMissing}`,
-          );
-          if (result.errors.length) console.warn(`[cron] errors: ${result.errors.join("; ")}`);
-        } catch (err) {
-          console.error("[cron] unhandled:", err);
-        }
-      })(),
+      runCron(
+        env,
+        { agentId: "medium-watcher", trigger: "daily-poll", cron: controller.cron },
+        () => runWatcher(env),
+      ),
     );
   },
 

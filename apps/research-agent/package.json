@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@agentbuilder/llm": "workspace:*",
+    "@agentbuilder/observability": "workspace:*",
     "@agentbuilder/web-ui-kit": "workspace:*",
     "zod": "^3.23.8"
   },

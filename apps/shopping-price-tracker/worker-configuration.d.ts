@@ -8,6 +8,7 @@ export interface Env {
   ASSETS: Fetcher;
   AGENT_DO: DurableObjectNamespace;
   DB: D1Database;
+  AGENTBUILDER_CORE_DB?: D1Database;
   SEND_EMAIL?: SendEmailBinding;
 
   ENVIRONMENT?: string;

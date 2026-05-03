@@ -18,6 +18,13 @@ id = "68e155c2980c4aa488d50081aa86b2e7"
 binding = "LINKEDIN_CONTENT"
 bucket_name = "linkedin-watcher-content"
 
+# Shared fleet-wide D1 — observability tables (cron_runs, cron_errors).
+# Read by the AgentBuilder dashboard.
+[[d1_databases]]
+binding = "AGENTBUILDER_CORE_DB"
+database_name = "agentbuilder-core"
+database_id = "51a422d2-e9ea-46e8-b6c8-233229434eca"
+
 [vars]
 RESEARCH_AGENT_URL = "https://research-agent.jsstover.workers.dev"
 ENVIRONMENT        = "production"
