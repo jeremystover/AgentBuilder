@@ -52,7 +52,7 @@ The `/credentials` surface is shared via `mountCredentialsApi` from `@agentbuild
 ## Secrets
 - `WATCHER_API_KEY` — bearer token for this worker's REST API
 - `INTERNAL_SECRET` — must match research-agent's `INTERNAL_SECRET`
-- `KEK_BASE64`     — base64 of 32 random bytes; used as the AES-256-GCM KEK for the vault. Generate with `pnpm cred genkey`.
+- `KEK_BASE64`     — base64 of 32 random bytes; used as the AES-256-GCM KEK for the vault. Generate with `openssl rand -base64 32` (or `pnpm --silent cred genkey`).
 
 ## First-time setup
 
@@ -62,13 +62,14 @@ wrangler kv namespace create MEDIUM_STATE
 wrangler d1 create medium-watcher-vault
 # → copy both ids into wrangler.toml
 
-# 2. Schema
-wrangler d1 execute medium-watcher-vault --file=./migrations/0001_init.sql
+# 2. Schema (the --remote flag is important — without it you migrate the
+#    local miniflare D1 instead of the deployed one)
+wrangler d1 execute medium-watcher-vault --remote --file=./migrations/0001_init.sql
 
 # 3. Secrets
-pnpm cred genkey | head -1 | xargs -I{} wrangler secret put KEK_BASE64
-wrangler secret put WATCHER_API_KEY    # any random string
-wrangler secret put INTERNAL_SECRET    # must match research-agent
+openssl rand -base64 32 | wrangler secret put KEK_BASE64 --name medium-watcher
+wrangler secret put WATCHER_API_KEY --name medium-watcher    # any random string
+wrangler secret put INTERNAL_SECRET --name medium-watcher    # must match research-agent
 
 # 4. Deploy
 wrangler deploy
