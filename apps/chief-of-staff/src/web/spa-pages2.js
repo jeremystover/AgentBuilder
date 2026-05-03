@@ -127,10 +127,16 @@ async function pageProjects(main) {
   function renderHeader() {
     headerHost.innerHTML = "";
     const headerRight = tab === "projects"
-      ? el("button", {
-          class: "text-sm text-slate-500 hover:text-ink",
-          onclick: () => openCreateProjectModal({ onCreated: () => refreshContent() }),
-        }, "+ New project")
+      ? el("div", { class: "flex items-center gap-4" },
+          el("button", {
+            class: "text-sm text-slate-500 hover:text-ink",
+            onclick: () => openMergeDuplicatesModal(refreshContent),
+          }, "Merge duplicates"),
+          el("button", {
+            class: "text-sm text-slate-500 hover:text-ink",
+            onclick: () => openCreateProjectModal({ onCreated: () => refreshContent() }),
+          }, "+ New project"),
+        )
       : el("button", {
           class: "text-sm text-slate-500 hover:text-ink",
           onclick: async () => {
@@ -771,6 +777,51 @@ async function pageProjectDetail(main, projectId) {
   } catch (err) { /* surface elsewhere */ }
 
   main.appendChild(root);
+}
+
+async function openMergeDuplicatesModal(onDone) {
+  // Dry-run first to show the user what will be merged.
+  let preview;
+  try {
+    preview = await api("/api/projects/merge-duplicates?dry=1", { method: "POST" });
+  } catch (err) { toast(err.message, "err"); return; }
+
+  if (!preview.groups || preview.groups.length === 0) {
+    toast("No duplicate project names found", "ok");
+    return;
+  }
+
+  const listItems = preview.groups.map((g) =>
+    el("li", { class: "text-sm text-slate-700" },
+      el("span", { class: "font-medium" }, g.name),
+      el("span", { class: "text-slate-400" }, ' — keeps most-recently-updated, deletes ' + g.dupeIds.length + ' duplicate' + (g.dupeIds.length === 1 ? '' : 's')),
+    )
+  );
+
+  const card = el("div", { class: "space-y-4" },
+    el("h2", { class: "text-xl font-semibold" }, "Merge duplicate projects"),
+    el("p", { class: "text-sm text-slate-500" },
+      'Found ' + preview.totalDupes + ' duplicate' + (preview.totalDupes === 1 ? '' : 's') + ' across ' + preview.groups.length + ' project name' + (preview.groups.length === 1 ? '' : 's') + '. Tasks will be moved to the most-recently-updated copy.'),
+    el("ul", { class: "space-y-1 pl-1 list-disc list-inside" }, ...listItems),
+    el("div", { class: "flex justify-end gap-3" },
+      el("button", {
+        class: "text-sm text-slate-500 hover:text-ink px-3 py-2",
+        onclick: () => modal.close(),
+      }, "Cancel"),
+      el("button", {
+        class: "rounded-lg bg-rose-600 text-white px-4 py-2 text-sm font-medium hover:bg-rose-700",
+        onclick: async () => {
+          try {
+            const r = await api("/api/projects/merge-duplicates", { method: "POST" });
+            modal.close();
+            toast(r.totalDupes + ' duplicate' + (r.totalDupes === 1 ? '' : 's') + ' merged, ' + r.totalTasksMoved + ' task' + (r.totalTasksMoved === 1 ? '' : 's') + ' moved', "ok");
+            if (onDone) await onDone();
+          } catch (err) { toast(err.message, "err"); }
+        },
+      }, "Merge all duplicates"),
+    ),
+  );
+  const modal = openModal(card);
 }
 
 async function openMergeProjectModal(sourceProjectId, sourceName) {

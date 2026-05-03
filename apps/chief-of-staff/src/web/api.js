@@ -550,6 +550,60 @@ export async function handleApiRequest(request, ctx) {
       return jsonResponse({ ok: true, tasksMoved: sourceTasks.length });
     }
   }
+  if (method === "POST" && path === "/api/projects/merge-duplicates") {
+    const url = new URL(request.url);
+    const dryRun = url.searchParams.get("dry") === "1";
+
+    // Read all rows, deduplicate by projectId keeping the last row (same
+    // logic as GET /api/projects so both views agree on which row is canonical).
+    const seen = new Map();
+    for (const p of await readAll(sheets, "Projects")) seen.set(p.projectId, p);
+    const allVisible = [...seen.values()].filter(isVisibleProject);
+
+    // Group by normalised name.
+    const byName = new Map();
+    for (const p of allVisible) {
+      const key = String(p.name || "").trim().toLowerCase();
+      if (!key) continue;
+      if (!byName.has(key)) byName.set(key, []);
+      byName.get(key).push(p);
+    }
+
+    // For each group of >1, keep the most-recently-updated; merge the rest.
+    const groups = [];
+    for (const ps of byName.values()) {
+      if (ps.length < 2) continue;
+      ps.sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
+      const [keep, ...dupes] = ps;
+      groups.push({ name: keep.name, keepId: keep.projectId, dupeIds: dupes.map((d) => d.projectId) });
+    }
+
+    if (dryRun || groups.length === 0) {
+      return jsonResponse({ dry: true, groups, totalDupes: groups.reduce((s, g) => s + g.dupeIds.length, 0) });
+    }
+
+    // Execute: move tasks from each dupe into the keeper, then delete the dupe.
+    const allTasks = await readAll(sheets, "Tasks");
+    let totalTasksMoved = 0;
+    for (const g of groups) {
+      for (const dupeId of g.dupeIds) {
+        const tasks = allTasks.filter((t) => String(t.projectId || "") === dupeId);
+        for (const t of tasks) {
+          await proposeAndCommit(tools, "propose_update_task", {
+            taskKey: t.taskKey,
+            patch: { projectId: g.keepId },
+            reason: "moved by auto-merge duplicates",
+          });
+        }
+        totalTasksMoved += tasks.length;
+        await proposeAndCommit(tools, "propose_delete_project", {
+          projectId: dupeId,
+          reason: 'auto-merged duplicate of "' + g.name + '"',
+        });
+      }
+    }
+    return jsonResponse({ ok: true, groups, totalDupes: groups.reduce((s, g) => s + g.dupeIds.length, 0), totalTasksMoved });
+  }
   if (method === "POST" && path === "/api/projects") {
     const body = await readJson();
     const result = await proposeAndCommit(tools, "propose_create_project", {
