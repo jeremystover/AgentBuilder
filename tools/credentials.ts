@@ -115,10 +115,11 @@ async function callAgent(
 function genkey(): void {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
-  const b64 = Buffer.from(bytes).toString('base64');
-  console.log(b64);
-  console.error('# Pipe this to your worker, e.g.:');
-  console.error('#   pnpm cred genkey | head -1 | xargs -I{} wrangler secret put KEK_BASE64');
+  // Stdout is the key only — nothing else, so callers can pipe into
+  // `wrangler secret put` without grep/head gymnastics. Note that pnpm
+  // adds its own preamble unless invoked with --silent; the docs use
+  // `openssl rand -base64 32` instead, which has no such issue.
+  process.stdout.write(`${Buffer.from(bytes).toString('base64')}\n`);
 }
 
 async function cmdList(positional: string[], flags: Map<string, string>): Promise<void> {

@@ -83,6 +83,12 @@ pnpm cred delete <agent> <account> <provider> <kind>
 
 Values are read from stdin so cookies don't land in shell history.
 
+> **A note on `genkey` and pnpm.** The `genkey` script writes only the
+> base64 key on stdout, but `pnpm` prepends its own lifecycle preamble
+> when running scripts. To pipe straight into `wrangler secret put`, use
+> either `pnpm --silent cred genkey` or — what the SKILL.md install
+> snippets do — `openssl rand -base64 32`, which is dependency-free.
+
 ## Per-source
 
 ### Charter — email mode
