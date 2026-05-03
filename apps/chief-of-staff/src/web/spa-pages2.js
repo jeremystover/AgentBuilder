@@ -555,9 +555,10 @@ function openCreateProjectModal({ onChanged, onCreated } = {}) {
 
 // ── Page: Project detail (360 view) ────────────────────────────────────────
 async function pageProjectDetail(main, projectId) {
-  const [data, peopleData] = await Promise.all([
+  const [data, peopleData, goalsData] = await Promise.all([
     api("/api/projects/" + encodeURIComponent(projectId)),
     api("/api/people"),
+    api("/api/goals?includeClosed=1").catch(() => ({ goals: [] })),
   ]);
   main.innerHTML = "";
   const root = el("div", { class: "max-w-3xl mx-auto px-10 py-10 space-y-8" });
@@ -585,6 +586,27 @@ async function pageProjectDetail(main, projectId) {
       }, isDone ? "Reopen project" : "Mark done"),
     ),
   ));
+  // Goal assignment row
+  const allGoals = goalsData.goals || [];
+  let currentGoal = data.goal || null;
+  const goalLabelEl = el("span", { class: "text-sm text-slate-600" },
+    currentGoal ? (currentGoal.title || "(untitled goal)") + (currentGoal.quarter ? " · " + currentGoal.quarter : "") : "No goal",
+  );
+  const goalRow = el("div", { class: "flex items-baseline gap-2 -mt-4" },
+    el("span", { class: "text-xs text-slate-400 uppercase tracking-wide" }, "Goal"),
+    goalLabelEl,
+    el("button", {
+      class: "text-xs text-slate-400 hover:text-indigo-600",
+      onclick: () => openChangeProjectGoalModal(projectId, allGoals, currentGoal, (newGoal) => {
+        currentGoal = newGoal;
+        goalLabelEl.textContent = newGoal
+          ? (newGoal.title || "(untitled goal)") + (newGoal.quarter ? " · " + newGoal.quarter : "")
+          : "No goal";
+      }),
+    }, "change"),
+  );
+  root.appendChild(goalRow);
+
   if (window.chatPromptBubbles) root.appendChild(window.chatPromptBubbles([
     "What's the latest on this project?",
     "What are the risks?",
@@ -737,6 +759,39 @@ async function pageProjectDetail(main, projectId) {
   } catch (err) { /* surface elsewhere */ }
 
   main.appendChild(root);
+}
+
+function openChangeProjectGoalModal(projectId, allGoals, currentGoal, onChanged) {
+  const sel = el("select", { class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 bg-white" });
+  sel.appendChild(el("option", { value: "" }, "— No goal —"));
+  for (const g of allGoals) {
+    const label = (g.title || "(untitled)") + (g.quarter ? " · " + g.quarter : "");
+    const opt = el("option", { value: g.goalId }, label);
+    if (currentGoal && g.goalId === currentGoal.goalId) opt.selected = true;
+    sel.appendChild(opt);
+  }
+  const card = el("div", { class: "space-y-4" },
+    el("h2", { class: "text-xl font-semibold" }, "Set goal"),
+    sel,
+    el("div", { class: "flex justify-end" },
+      el("button", {
+        class: "rounded-lg bg-ink text-white px-4 py-2 text-sm font-medium hover:bg-slate-700",
+        onclick: async () => {
+          try {
+            await api("/api/projects/" + encodeURIComponent(projectId), {
+              method: "PATCH",
+              body: { patch: { goalId: sel.value || "" }, reason: "goal reassigned via web UI" },
+            });
+            const newGoal = allGoals.find((g) => g.goalId === sel.value) || null;
+            modal.close();
+            toast("Goal updated", "ok");
+            onChanged?.(newGoal);
+          } catch (err) { toast(err.message, "err"); }
+        },
+      }, "Save"),
+    ),
+  );
+  const modal = openModal(card);
 }
 
 function openAddStakeholderToProjectModal(projectId, allPeople, onAdded) {
