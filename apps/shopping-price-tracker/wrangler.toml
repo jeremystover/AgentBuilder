@@ -44,6 +44,11 @@ crons = ["0 12 * * *", "0 */4 * * *"]
 [vars]
 ENVIRONMENT = "production"
 DIGEST_FROM = "jsstover@gmail.com"
+# FB Marketplace (secondhandmcp.com) — comma-separated default cities for
+# per-item searches. 05491 ≈ Vergennes, VT; 94112 = San Francisco. A
+# tracked item with fb_locations set overrides this default.
+FB_DEFAULT_LOCATIONS = "vergennes,san francisco"
+FB_MCP_URL = "https://secondhandmcp.com/mcp"
 
 # Secrets (set via wrangler secret put):
 #   wrangler secret put MCP_HTTP_KEY        — bearer token for /mcp
@@ -51,3 +56,4 @@ DIGEST_FROM = "jsstover@gmail.com"
 #   wrangler secret put EXTERNAL_API_KEY    — bearer token for /api/v1/*
 #   wrangler secret put ANTHROPIC_API_KEY   — digest summaries + web_search
 #   wrangler secret put EBAY_APP_ID         — eBay Browse API
+#   wrangler secret put FB_MCP_TOKEN        — bearer for secondhandmcp.com (optional)

@@ -32,9 +32,12 @@ web UI at `/app` for browsing tracked items and full price history.
 
 ## Tools (8)
 - `add_tracked_item` — start tracking a product or flight. Auto-discovers
-  retailer URLs for products via `web_search`.
+  retailer URLs for products via `web_search`. Optional `fb_locations`
+  (array of city names) restricts FB Marketplace search to those cities;
+  omit to use `FB_DEFAULT_LOCATIONS`.
 - `update_tracked_item` — patch fields (target price, priority, status,
-  flight constraints, etc.).
+  flight constraints, `fb_locations`, etc.). Pass `fb_locations: null` to
+  revert to the env default.
 - `list_tracked_items` — list with optional `status` / `kind` /
   `priority` filters; includes the latest observation per item.
 - `remove_tracked_item` — archive (default) or hard-delete with
@@ -56,6 +59,10 @@ web UI at `/app` for browsing tracked items and full price history.
   every refresh.
 - **eBay Browse API** — free, requires `EBAY_APP_ID`. Catches used /
   auction listings the web search rarely surfaces.
+- **Facebook Marketplace** — via the secondhandmcp.com MCP server. FB is
+  location-based, so we fan out one call per city in `fb_locations` (or
+  `FB_DEFAULT_LOCATIONS` env var if unset). Defaults are `vergennes` and
+  `san francisco`. Optional `FB_MCP_TOKEN` bearer.
 
 ## Email digest
 - One email per day at 12:00 UTC, prefixed `[Shopping]`. Each item has

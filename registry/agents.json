@@ -926,7 +926,7 @@
     {
       "id": "shopping-price-tracker",
       "name": "Shopping Price Tracker",
-      "purpose": "Tracks daily prices for products and airline tickets via Claude API web_search, eBay Browse API, and a JSON-LD URL-watch scraper. Auto-discovers retailer URLs on intake; emails a daily digest so the user can decide when to buy.",
+      "purpose": "Tracks daily prices for products and airline tickets via Claude API web_search, eBay Browse API, a JSON-LD URL-watch scraper, and Facebook Marketplace via secondhandmcp.com. Auto-discovers retailer URLs on intake; emails a daily digest so the user can decide when to buy.",
       "owner": "jeremystover",
       "status": "draft",
       "kind": "app",
@@ -1006,6 +1006,7 @@
       "secrets": [
         "ANTHROPIC_API_KEY",
         "EBAY_APP_ID",
+        "FB_MCP_TOKEN",
         "MCP_HTTP_KEY",
         "WEB_UI_PASSWORD",
         "EXTERNAL_API_KEY"

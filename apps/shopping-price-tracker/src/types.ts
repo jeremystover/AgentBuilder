@@ -14,6 +14,7 @@ export interface TrackedItem {
   query_strings: string[];
   retailers: string[];
   watch_urls: string[];
+  fb_locations: string[] | null;
   target_price_cents: number | null;
   max_price_cents: number | null;
   currency: string;

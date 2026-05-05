@@ -19,4 +19,7 @@ export interface Env {
   EXTERNAL_API_KEY?: string;
   ANTHROPIC_API_KEY?: string;
   EBAY_APP_ID?: string;
+  FB_MCP_URL?: string;
+  FB_MCP_TOKEN?: string;
+  FB_DEFAULT_LOCATIONS?: string;
 }

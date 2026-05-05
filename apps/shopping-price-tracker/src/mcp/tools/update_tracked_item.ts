@@ -11,6 +11,7 @@ export const UpdateTrackedItemInput = z.object({
   query_strings: z.array(z.string()).max(10).optional(),
   retailers: z.array(z.string()).max(20).optional(),
   watch_urls: z.array(z.string().url()).max(20).optional(),
+  fb_locations: z.array(z.string().min(1).max(60)).max(5).nullable().optional(),
   target_price_usd: z.number().nonnegative().nullable().optional(),
   max_price_usd: z.number().nonnegative().nullable().optional(),
   notes: z.string().max(2000).optional(),
@@ -59,6 +60,7 @@ export async function updateTrackedItem(input: UpdateTrackedItemInput, env: Env)
   if (input.query_strings !== undefined) patch.query_strings = input.query_strings;
   if (input.retailers !== undefined) patch.retailers = input.retailers;
   if (input.watch_urls !== undefined) patch.watch_urls = input.watch_urls;
+  if (input.fb_locations !== undefined) patch.fb_locations = input.fb_locations;
   if (input.target_price_usd !== undefined)
     patch.target_price_cents = input.target_price_usd === null ? null : dollarsToCents(input.target_price_usd);
   if (input.max_price_usd !== undefined)
