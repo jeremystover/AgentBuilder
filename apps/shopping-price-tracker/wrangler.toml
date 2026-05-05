@@ -44,6 +44,9 @@ crons = ["0 12 * * *", "0 */4 * * *"]
 [vars]
 ENVIRONMENT = "production"
 DIGEST_FROM = "jsstover@gmail.com"
+# CRAIGSLIST_CITY — subdomain for the per-city RSS feed (e.g. "sfbay",
+# "newyork", "losangeles"). Leave unset to disable Craigslist searches.
+# CRAIGSLIST_CITY = "sfbay"
 
 # Secrets (set via wrangler secret put):
 #   wrangler secret put MCP_HTTP_KEY        — bearer token for /mcp

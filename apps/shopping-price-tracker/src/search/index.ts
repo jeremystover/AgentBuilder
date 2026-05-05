@@ -12,6 +12,7 @@ import { nowIso } from "../lib/time";
 import type { Env, PriceObservation, TrackedItem } from "../types";
 import { searchClaudeWeb } from "./claude_web";
 import { searchClaudeFlights } from "./claude_flights";
+import { searchCraigslist } from "./craigslist";
 import { searchEbay } from "./ebay";
 import { searchUrlWatch } from "./url_watch";
 import type { Listing } from "./types";
@@ -30,6 +31,7 @@ export async function runSearchForItem(env: Env, item: TrackedItem): Promise<Ite
     adapters.push(safe(searchClaudeWeb(item, env), errors, "claude_web"));
     adapters.push(safe(searchUrlWatch(item, env), errors, "url_watch"));
     adapters.push(safe(searchEbay(item, env), errors, "ebay"));
+    adapters.push(safe(searchCraigslist(item, env), errors, "craigslist"));
   } else if (item.kind === "flight") {
     const fc = await flightQueries.findByItem(env.DB, item.id);
     if (fc) {

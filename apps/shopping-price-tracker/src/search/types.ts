@@ -1,6 +1,12 @@
 import type { FlightConstraints, TrackedItem } from "../types";
 
-export type ListingSource = "claude_web" | "ebay" | "url_watch" | "amazon_paapi" | "amadeus";
+export type ListingSource =
+  | "claude_web"
+  | "ebay"
+  | "url_watch"
+  | "craigslist"
+  | "amazon_paapi"
+  | "amadeus";
 
 export interface Listing {
   source: ListingSource;

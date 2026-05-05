@@ -19,4 +19,5 @@ export interface Env {
   EXTERNAL_API_KEY?: string;
   ANTHROPIC_API_KEY?: string;
   EBAY_APP_ID?: string;
+  CRAIGSLIST_CITY?: string;
 }
