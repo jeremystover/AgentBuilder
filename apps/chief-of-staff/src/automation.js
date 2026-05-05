@@ -29,7 +29,7 @@ function generateId(prefix) {
 
 function isOpen(status) {
   const s = String(status || "").toLowerCase();
-  return !s || s === "open" || s === "in_progress" || s === "pending" || s === "todo";
+  return !s || s === "open" || s === "in_progress" || s === "pending" || s === "todo" || s === "waiting";
 }
 
 function formatDate(isoStr) {
@@ -46,6 +46,57 @@ function formatTime(isoStr) {
 
 function daysOverdue(dueDateIso) {
   return Math.round((Date.now() - new Date(dueDateIso).getTime()) / 86400000);
+}
+
+// Render a short " on <whom>" / " on blocker" suffix for a waiting task so
+// the brief reads naturally (e.g. "Follow up with finance (waiting on Sara)").
+// Returns "" when there's no specific subject to surface.
+export function formatWaitContext(t) {
+  const reason = String(t.waitReason || "").toLowerCase();
+  if (reason === "person" || reason === "assigned") {
+    const who = t.waitOnName || t.waitOnStakeholderId;
+    return who ? ` on ${who}` : "";
+  }
+  if (reason === "dependency" && t.blockedByTaskKey) return ` on ${t.blockedByTaskKey}`;
+  if (reason === "external-event") return " on external event";
+  if (reason === "time-block") return " for a time block";
+  if (reason === "date" && t.expectedBy) return ` until ${formatDate(t.expectedBy)}`;
+  return "";
+}
+
+// Filter the Tasks list to those whose waiting-resurface trigger has fired
+// by `now`: expectedBy passed, snooze elapsed (nextCheckAt), or a fresh
+// inbound signal (lastSignalAt newer than the row's last update). Exported
+// so the same filter the morning brief uses can be reused by other surfaces
+// (web UI tab, tests) without duplicating the trigger semantics.
+export function filterWaitingReady(tasks, now = new Date()) {
+  const cutoff = now;
+  return (tasks || []).filter((t) => {
+    if (String(t.status || "").toLowerCase() !== "waiting") return false;
+    const exp = t.expectedBy && new Date(t.expectedBy) <= cutoff;
+    const chk = t.nextCheckAt && new Date(t.nextCheckAt) <= cutoff;
+    const sig = t.lastSignalAt
+      && (!t.updatedAt || new Date(t.lastSignalAt) >= new Date(t.updatedAt));
+    return exp || chk || sig;
+  });
+}
+
+// Explain *why* a waiting task is being resurfaced today. Picks the most
+// specific trigger that fired so the user can act fast without opening the
+// task: a fresh inbound signal beats a passed expected-by date.
+export function waitingTrigger(t, now) {
+  if (t.lastSignalAt && (!t.updatedAt || new Date(t.lastSignalAt) >= new Date(t.updatedAt))) {
+    const days = Math.round((now.getTime() - new Date(t.lastSignalAt).getTime()) / 86400000);
+    if (days <= 0) return "new signal today";
+    return `new signal ${days} day${days !== 1 ? "s" : ""} ago`;
+  }
+  if (t.expectedBy && new Date(t.expectedBy) <= now) {
+    const overdue = Math.round((now.getTime() - new Date(t.expectedBy).getTime()) / 86400000);
+    if (overdue <= 0) return `expected by ${formatDate(t.expectedBy)}`;
+    return `expected ${overdue} day${overdue !== 1 ? "s" : ""} ago`;
+  }
+  if (t.nextCheckAt && new Date(t.nextCheckAt) <= now) return "snooze elapsed";
+  return "ready to revisit";
 }
 
 // ── Morning brief ─────────────────────────────────────────────────────────────
@@ -82,6 +133,18 @@ export async function generateMorningBrief({ sheets, ufetch, spreadsheetId }) {
       const pb = priOrder[String(b.priority || "").toLowerCase()] ?? 3;
       if (pa !== pb) return pa - pb;
       return String(a.dueAt).localeCompare(String(b.dueAt));
+    })
+    .slice(0, 15);
+
+  // Waiting tasks whose resurface trigger has fired by end-of-day. Keeps
+  // waiting tasks visible in the user's main flow without spamming them
+  // every day. Trigger semantics live in filterWaitingReady so the web UI
+  // and tests can reuse them without duplicating logic.
+  const waitingReady = filterWaitingReady(tasks, new Date(endOfDay))
+    .sort((a, b) => {
+      const ax = a.expectedBy || a.nextCheckAt || "";
+      const bx = b.expectedBy || b.nextCheckAt || "";
+      return String(ax).localeCompare(String(bx));
     })
     .slice(0, 15);
 
@@ -131,11 +194,25 @@ export async function generateMorningBrief({ sheets, ufetch, spreadsheetId }) {
     lines.push(`## Tasks due today or overdue (${urgentTasks.length})`);
     for (const t of urgentTasks) {
       const pri = t.priority ? `[${String(t.priority).toUpperCase()}] ` : "";
-      const dueDate = new Date(t.dueAt);
       const isToday = t.dueAt.slice(0, 10) === todayStr;
       const overdue = daysOverdue(t.dueAt);
       const dueLabel = isToday ? "due today" : `${overdue} day${overdue !== 1 ? "s" : ""} overdue`;
-      lines.push(`• ${pri}${t.title || t.subject} — ${dueLabel}  [${t.taskKey}]`);
+      const waitTag = String(t.status || "").toLowerCase() === "waiting"
+        ? ` (waiting${formatWaitContext(t)})`
+        : "";
+      lines.push(`• ${pri}${t.title || t.subject} — ${dueLabel}${waitTag}  [${t.taskKey}]`);
+    }
+    lines.push("");
+  }
+
+  // Waiting — ready to revisit section. Listed separately from urgentTasks
+  // so the user immediately sees which waits the system thinks are ripe,
+  // and why ("Sara replied", "expected by Mar 12 — overdue", etc).
+  if (waitingReady.length > 0) {
+    lines.push(`## Waiting — ready to revisit (${waitingReady.length})`);
+    for (const t of waitingReady) {
+      const why = waitingTrigger(t, now);
+      lines.push(`• ${t.title || t.subject}${formatWaitContext(t)} — ${why}  [${t.taskKey}]`);
     }
     lines.push("");
   }

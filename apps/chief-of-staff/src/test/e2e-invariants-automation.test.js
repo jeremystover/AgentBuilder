@@ -23,6 +23,9 @@ function createMemorySheets(seed = {}) {
   const taskColumns = [
     "taskKey", "source", "subject", "title", "from", "date", "startTime", "endTime", "status", "priority", "notes",
     "rawJson", "updatedAt", "ownerType", "ownerId", "dueAt", "projectId", "confidence", "origin",
+    // Waiting fields (migration 0009).
+    "waitReason", "waitDetail", "expectedBy", "nextCheckAt", "lastSnoozedAt", "lastSignalAt",
+    "waitOnStakeholderId", "waitOnName", "waitChannel", "blockedByTaskKey", "commitmentId",
   ];
   const taskSourceColumns = ["sourceId", "taskKey", "sourceType", "sourceRef", "sourceUri", "excerpt", "confidence", "createdAt"];
   const commitmentColumns = [

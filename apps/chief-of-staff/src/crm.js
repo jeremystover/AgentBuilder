@@ -132,7 +132,7 @@ export function createCrmTools({ spreadsheetId, sheets }) {
       // Open tasks connected to this person
       const openTasks = tasks.filter((t) => {
         const status = String(t.status || "").toLowerCase();
-        if (!(!status || status === "open" || status === "in_progress" || status === "pending")) return false;
+        if (!(!status || status === "open" || status === "in_progress" || status === "pending" || status === "waiting")) return false;
         return String(t.ownerId || "").toLowerCase().includes(query);
       }).slice(0, 10).map((t) => ({
         taskKey: t.taskKey,
@@ -243,7 +243,7 @@ export function createCrmTools({ spreadsheetId, sheets }) {
       const openTasks = tasks
         .filter((t) => {
           const status = String(t.status || "").toLowerCase();
-          if (!(!status || status === "open" || status === "in_progress" || status === "pending")) return false;
+          if (!(!status || status === "open" || status === "in_progress" || status === "pending" || status === "waiting")) return false;
           return String(t.projectId || "").toLowerCase() === projectId;
         })
         .sort((a, b) => {

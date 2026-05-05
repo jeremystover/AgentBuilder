@@ -53,7 +53,7 @@ function generateId(prefix) {
 
 function isOpen(status) {
   const s = String(status || "").toLowerCase();
-  return !s || s === "open" || s === "active" || s === "in_progress" || s === "pending" || s === "todo";
+  return !s || s === "open" || s === "active" || s === "in_progress" || s === "pending" || s === "todo" || s === "waiting";
 }
 
 function parseJsonArray(v) {
