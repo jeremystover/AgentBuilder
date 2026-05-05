@@ -384,8 +384,16 @@ async function renderProjectsTaskView(root, refresh) {
     const overdue = isOverdue(t.dueAt);
     const dueClass = overdue ? "text-rose-600 font-medium" : "text-slate-600";
     const statusLabel = String(t.status || "open");
+    const isWaiting = statusLabel.toLowerCase() === "waiting";
     const statusClass = statusLabel.toLowerCase() === "done" ? "text-emerald-600" : "text-slate-600";
     const isDone = statusLabel.toLowerCase() === "done";
+    // Waiting tasks stay visible in the main list (per design — visibility
+    // by badge, not hide-and-resurface). The pill below carries the wait
+    // reason + who/what so the user can scan a row without opening it.
+    const waitOn = t.waitOnName || t.waitOnStakeholderId || t.blockedByTaskKey || "";
+    const waitTooltip = isWaiting
+      ? \`waiting (\${t.waitReason || "?"})\${waitOn ? " on " + waitOn : ""}\${t.expectedBy ? " · expected " + fmtDate(t.expectedBy) : ""}\`
+      : "";
 
     const tr = el("tr", {
       class: "border-b border-slate-100 last:border-0 hover:bg-slate-50 cursor-pointer",
@@ -524,7 +532,14 @@ async function renderProjectsTaskView(root, refresh) {
         : el("span", { class: "text-xs text-slate-400" }, "—"),
     ));
     tr.appendChild(el("td", { class: "px-3 py-2 text-sm " + dueClass }, due || "—"));
-    tr.appendChild(el("td", { class: "px-3 py-2 text-sm " + statusClass }, statusLabel));
+    tr.appendChild(el("td", { class: "px-3 py-2 text-sm " + statusClass },
+      isWaiting
+        ? el("span", {
+            class: "text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 ring-1 ring-amber-200",
+            title: waitTooltip,
+          }, waitOn ? \`waiting · \${waitOn}\` : "waiting")
+        : statusLabel,
+    ));
     tr.appendChild(el("td", { class: "px-3 py-2 align-middle text-right" }, deleteBtn));
     tbody.appendChild(tr);
   }

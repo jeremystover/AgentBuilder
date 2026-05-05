@@ -49,6 +49,73 @@ async function writeConfigValue(sheets, key, value) {
   }
 }
 
+// ── Waiting-task signal stamper ──────────────────────────────────────────────
+// When an inbound email arrives from a stakeholder we're waiting on, stamp
+// `lastSignalAt` on the matching Tasks rows so the next morning brief
+// surfaces them in the "Waiting — ready to revisit" section. Stamp-only —
+// auto-resume is intentionally manual so the user stays in the loop.
+//
+// Matching happens by stakeholderId (resolved via Stakeholders.email) or by
+// substring on waitOnName when the task records a freeform name. Both paths
+// are case-insensitive and tolerant of "Display Name <email@x.com>" headers.
+
+function extractEmailAddress(fromHeader) {
+  if (!fromHeader) return "";
+  const m = String(fromHeader).match(/<([^>]+)>/);
+  return (m ? m[1] : String(fromHeader)).trim().toLowerCase();
+}
+
+async function stampWaitingTaskSignals({ sheets, fromHeaders }) {
+  if (!fromHeaders || fromHeaders.length === 0) return 0;
+
+  let waitingTasks = [];
+  let stakeholders = [];
+  try {
+    waitingTasks = (await sheets.readSheetAsObjects("Tasks"))
+      .filter((t) => String(t.status || "").toLowerCase() === "waiting"
+        && (t.waitOnStakeholderId || t.waitOnName));
+  } catch { /* table may not exist yet */ }
+  if (waitingTasks.length === 0) return 0;
+  try {
+    stakeholders = await sheets.readSheetAsObjects("Stakeholders");
+  } catch { /* optional */ }
+
+  const stakeholderEmail = new Map(
+    stakeholders.map((s) => [String(s.stakeholderId || ""), String(s.email || "").toLowerCase()])
+  );
+
+  const inboundEmails = fromHeaders.map(extractEmailAddress).filter(Boolean);
+  const inboundLower = fromHeaders.map((h) => String(h).toLowerCase());
+
+  let stamped = 0;
+  for (const t of waitingTasks) {
+    let hit = false;
+    if (t.waitOnStakeholderId) {
+      const wantEmail = stakeholderEmail.get(String(t.waitOnStakeholderId));
+      if (wantEmail && inboundEmails.includes(wantEmail)) hit = true;
+    }
+    if (!hit && t.waitOnName) {
+      const name = String(t.waitOnName).toLowerCase();
+      if (name.length >= 3 && inboundLower.some((h) => h.includes(name))) hit = true;
+    }
+    if (!hit) continue;
+
+    try {
+      const found = await sheets.findRowByKey("Tasks", "taskKey", t.taskKey);
+      if (!found) continue;
+      // Object-form updateRow does a partial UPDATE on D1, so we don't
+      // need to round-trip every column. The Sheets adapter and the test
+      // memory mock both treat the object form the same way.
+      await sheets.updateRow("Tasks", found.rowNum, {
+        ...found.data,
+        lastSignalAt: nowIso(),
+      });
+      stamped++;
+    } catch { /* don't let signal-stamping block ingest */ }
+  }
+  return stamped;
+}
+
 // ── IntakeQueue writer ───────────────────────────────────────────────────────
 
 async function writeIntakeRow(sheets, { kind, summary, payloadJson, sourceRef = "", existingRefs = null }) {
@@ -159,7 +226,16 @@ async function ingestGmail({ gmail, sheets, sinceMs, account = DEFAULT_ACCOUNT }
     // Email filtering failure should not block ingest
   }
 
-  return { ingested: count, flagged, source: "gmail", account };
+  // Stamp lastSignalAt on waiting tasks whose stakeholder just wrote in.
+  let signalsStamped = 0;
+  try {
+    signalsStamped = await stampWaitingTaskSignals({
+      sheets,
+      fromHeaders: emails.map((e) => e.from).filter(Boolean),
+    });
+  } catch { /* don't let signal-stamping break ingest */ }
+
+  return { ingested: count, flagged, signalsStamped, source: "gmail", account };
 }
 
 // ── Calendar ingestion ───────────────────────────────────────────────────────

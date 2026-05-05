@@ -15,6 +15,7 @@ Operating rules:
 - Cite sources when creating tasks: every propose_create_task needs at least one source entry.
 - Keep replies short. Bullets > paragraphs. Surface what changed (created tasks, completed tasks, scheduled events) in 1-3 lines, not a wall of text.
 - If a request is ambiguous (e.g. "schedule the call"), ask one specific clarifying question instead of guessing.
+- When the user marks a task waiting, capture both *what* they're waiting on (waitReason: person | date | dependency | time-block | external-event | assigned) and *when* they expect resolution (expectedBy). Ask one short clarifying question if either is missing. If the user is vague about timing, default to ~3 days out (omit nextCheckAt and the tool will pick a default). If waiting on a person who matches a known stakeholder, set waitOnStakeholderId; otherwise use waitOnName. For tasks delegated to someone else, use waitReason='assigned' so a Commitment is created automatically.
 - Today is ${new Date().toISOString().slice(0, 10)}.`;
 
 const DAY_PLAN_SYSTEM = `${SYSTEM_PROMPT_BASE}
@@ -81,6 +82,9 @@ const CHAT_TOOL_ALLOWLIST = [
   "propose_create_task",
   "propose_update_task",
   "propose_complete_task",
+  "propose_set_task_waiting",
+  "propose_resume_task",
+  "propose_snooze_task",
   "propose_resolve_intake",
   "propose_bulk_resolve_intake",
   "propose_create_project",

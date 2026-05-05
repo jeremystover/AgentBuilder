@@ -25,6 +25,12 @@ export const SHEET_SCHEMAS = {
     "taskKey", "source", "subject", "title", "from", "date", "startTime",
     "endTime", "status", "priority", "notes", "rawJson", "updatedAt",
     "ownerType", "ownerId", "dueAt", "projectId", "confidence", "origin",
+    // Waiting-status fields (migration 0009) — populated when status='waiting'.
+    // See propose_set_task_waiting in tools.js for the capture semantics and
+    // generateMorningBrief in automation.js for the resurfacing logic.
+    "waitReason", "waitDetail", "expectedBy", "nextCheckAt",
+    "lastSnoozedAt", "lastSignalAt", "waitOnStakeholderId",
+    "waitOnName", "waitChannel", "blockedByTaskKey", "commitmentId",
   ],
 
   TaskSources: [

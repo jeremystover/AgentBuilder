@@ -270,7 +270,7 @@ export function createTools({ spreadsheetId, sheets }) {
 
   function isOpen(status) {
     const s = String(status || "").toLowerCase();
-    return !s || s === "open" || s === "in_progress" || s === "pending" || s === "todo";
+    return !s || s === "open" || s === "in_progress" || s === "pending" || s === "todo" || s === "waiting";
   }
 
   function daysBetween(a, b) {
@@ -883,6 +883,263 @@ export function createTools({ spreadsheetId, sheets }) {
       },
     },
 
+    // ── propose_set_task_waiting ──────────────────────────────────────────
+    // Mark a task as "waiting" — the user is tracking it but can't act on
+    // it right now. Captures both *what* we're waiting on (waitReason) and
+    // *when* we expect resolution (expectedBy / nextCheckAt). The morning
+    // brief uses these to resurface the task at the right moment instead of
+    // letting it go stale.
+    //
+    // assigned-to-other waits also stage a sibling Commitments row in the
+    // same changeset and link it via Tasks.commitmentId — the existing
+    // Mon-9am commitment-nudge cron then handles delegation follow-up.
+    propose_set_task_waiting: {
+      description:
+        "Propose marking a task as waiting on a person, date, dependency, time-block, " +
+        "external event, or a person we delegated it to. Captures structured wait fields " +
+        "so the morning brief can resurface the task when the trigger fires (date passes, " +
+        "stakeholder responds, blocker completes). Returns a changesetId — call commit_changeset to apply. " +
+        "For waitReason='assigned', a sibling Commitment is also created in the same changeset.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          taskKey: { type: "string" },
+          waitReason: {
+            type: "string",
+            enum: ["person", "date", "dependency", "time-block", "external-event", "assigned"],
+            description:
+              "What kind of wait this is. " +
+              "person=email/call/response from someone; " +
+              "date=a calendar date must arrive; " +
+              "dependency=blocked by another task; " +
+              "time-block=waiting for time/focus; " +
+              "external-event=release ships/vendor responds/etc; " +
+              "assigned=delegated to someone else (also creates a Commitment).",
+          },
+          expectedBy: { type: "string", description: "ISO 8601 — when we expect resolution. Required for date / external-event; recommended for person / assigned." },
+          nextCheckAt: { type: "string", description: "ISO 8601 — when to surface this in the morning brief. Defaults to expectedBy or today+3d." },
+          waitOnStakeholderId: { type: "string", description: "For waitReason='person': link to a Stakeholders row." },
+          waitOnName: { type: "string", description: "For waitReason='person' when no Stakeholders row exists." },
+          waitChannel: { type: "string", enum: ["email", "call", "meeting", "other"], description: "How we expect to hear back." },
+          blockedByTaskKey: { type: "string", description: "For waitReason='dependency': the taskKey of the blocker." },
+          assigneeStakeholderId: { type: "string", description: "For waitReason='assigned': the Stakeholders row of the assignee." },
+          assigneeName: { type: "string", description: "For waitReason='assigned' when no Stakeholders row exists." },
+          waitDetail: { type: "object", description: "Reason-specific extras (e.g. preferredBlock for time-block, freeform trigger for external-event)." },
+          reason: { type: "string", description: "Why this task is being marked waiting (free text — used in the audit trail)." },
+          sources: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                sourceType: { type: "string" },
+                sourceRef: { type: "string" },
+                excerpt: { type: "string" },
+              },
+              required: ["sourceType", "sourceRef"],
+            },
+          },
+        },
+        required: ["taskKey", "waitReason"],
+        additionalProperties: false,
+      },
+      run: async (args = {}) => {
+        const { taskKey, waitReason } = args;
+        if (!spreadsheetId) return formatContent({ error: "PPP_SHEETS_SPREADSHEET_ID not set" });
+
+        try {
+          const found = await findRowByKey("Tasks", "taskKey", taskKey);
+          if (!found) return formatContent({ error: `Task not found: ${taskKey}` });
+
+          // Default nextCheckAt: expectedBy if provided, else today+3d.
+          const defaultCheck = args.expectedBy
+            || new Date(Date.now() + 3 * 86400000).toISOString();
+
+          const before = { ...found.data };
+          const after = {
+            ...before,
+            status: "waiting",
+            waitReason,
+            waitDetail: args.waitDetail ? JSON.stringify(args.waitDetail) : (before.waitDetail || ""),
+            expectedBy: args.expectedBy || before.expectedBy || "",
+            nextCheckAt: args.nextCheckAt || defaultCheck,
+            waitOnStakeholderId: args.waitOnStakeholderId || (waitReason === "assigned" ? args.assigneeStakeholderId || "" : ""),
+            waitOnName: args.waitOnName || (waitReason === "assigned" ? args.assigneeName || "" : ""),
+            waitChannel: args.waitChannel || "",
+            blockedByTaskKey: args.blockedByTaskKey || "",
+            // commitmentId is set below for assigned waits.
+            commitmentId: before.commitmentId || "",
+            // Clear any prior snooze cycle when (re-)entering a wait.
+            lastSnoozedAt: "",
+            updatedAt: nowIso(),
+          };
+
+          const taskSourceRows = (args.sources || []).map((s) => ({
+            sourceId: generateId("src"),
+            taskKey,
+            sourceType: s.sourceType,
+            sourceRef: s.sourceRef,
+            excerpt: s.excerpt || "",
+            confidence: 1.0,
+          }));
+
+          // assigned: stage a sibling Commitments row in the same changeset
+          // and stamp Tasks.commitmentId so the wait is bidirectionally
+          // linked to the delegation. Resurfacing then piggybacks on the
+          // existing commitment-nudge cron (Mon 9am) — no new code path.
+          let adds = [];
+          if (waitReason === "assigned") {
+            const commitmentId = generateId("cmt");
+            const ownerId = args.assigneeName
+              || (args.assigneeStakeholderId ? `stakeholder:${args.assigneeStakeholderId}` : "")
+              || args.waitOnName
+              || "";
+            adds.push({
+              __kind: "commitment",
+              commitmentId,
+              ownerType: "other",
+              ownerId,
+              description: before.title || before.subject || `task ${taskKey}`,
+              dueAt: args.expectedBy || "",
+              status: "open",
+              sourceType: (args.sources && args.sources[0]?.sourceType) || "task_delegation",
+              sourceRef: (args.sources && args.sources[0]?.sourceRef) || taskKey,
+              excerpt: (args.sources && args.sources[0]?.excerpt) || `Delegated from task ${taskKey}`,
+              projectId: before.projectId || "",
+              stakeholderId: args.assigneeStakeholderId || "",
+              lastNudgedAt: "",
+              createdAt: nowIso(),
+              updatedAt: nowIso(),
+            });
+            after.commitmentId = commitmentId;
+          }
+
+          const cs = await storeChangeset(
+            "tasks",
+            adds,
+            [{ taskKey, before, after, reason: args.reason || `set waiting (${waitReason})`, newSources: taskSourceRows }],
+            [],
+          );
+
+          return formatContent({
+            changesetId: cs.changesetId,
+            expiresAt: cs.expiresAt,
+            preview: {
+              action: "set_task_waiting",
+              taskKey,
+              waitReason,
+              before,
+              after,
+              linkedCommitmentId: after.commitmentId || null,
+            },
+            instruction: "Review the preview. Call commit_changeset({changesetId}) to apply.",
+          });
+        } catch (e) {
+          return formatContent({ error: e.message });
+        }
+      },
+    },
+
+    // ── propose_resume_task ───────────────────────────────────────────────
+    // Clear all wait fields and flip status back to open. Use when the
+    // trigger that motivated the wait has resolved (stakeholder replied,
+    // blocker completed, date arrived) and the task is actionable again.
+    propose_resume_task: {
+      description:
+        "Propose resuming a waiting task — clear wait fields and set status='open'. " +
+        "Use when the wait has resolved (stakeholder replied, blocker completed, etc).",
+      inputSchema: {
+        type: "object",
+        properties: {
+          taskKey: { type: "string" },
+          reason: { type: "string", description: "Why we're resuming (free text — audit trail)." },
+        },
+        required: ["taskKey"],
+        additionalProperties: false,
+      },
+      run: async (args = {}) => {
+        return TOOLS.propose_update_task.run({
+          taskKey: args.taskKey,
+          patch: {
+            status: "open",
+            waitReason: "",
+            waitDetail: "",
+            expectedBy: "",
+            nextCheckAt: "",
+            lastSnoozedAt: "",
+            lastSignalAt: "",
+            waitOnStakeholderId: "",
+            waitOnName: "",
+            waitChannel: "",
+            blockedByTaskKey: "",
+            // Note: commitmentId stays linked even after resume — the
+            // Commitment may still be open and worth tracking; resolving
+            // it is a separate user action.
+          },
+          sources: [],
+          reason: args.reason || "resumed (wait resolved)",
+        });
+      },
+    },
+
+    // ── propose_snooze_task ───────────────────────────────────────────────
+    // Push a waiting task's nextCheckAt forward. Without `until`, applies a
+    // 3 → 7 → 14 day backoff using lastSnoozedAt — mirrors the Commitments
+    // lastNudgedAt pattern so the user isn't poked about the same waiting
+    // item every single morning.
+    propose_snooze_task: {
+      description:
+        "Propose snoozing a waiting task — bump nextCheckAt forward. " +
+        "Without `until`, applies a 3→7→14 day backoff based on lastSnoozedAt.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          taskKey: { type: "string" },
+          until: { type: "string", description: "ISO 8601 — explicit next-check timestamp. If omitted, applies the 3→7→14 day backoff." },
+          reason: { type: "string", description: "Why we're snoozing (free text — audit trail)." },
+        },
+        required: ["taskKey"],
+        additionalProperties: false,
+      },
+      run: async (args = {}) => {
+        if (!spreadsheetId) return formatContent({ error: "PPP_SHEETS_SPREADSHEET_ID not set" });
+        try {
+          const found = await findRowByKey("Tasks", "taskKey", args.taskKey);
+          if (!found) return formatContent({ error: `Task not found: ${args.taskKey}` });
+
+          let nextCheckAt;
+          if (args.until) {
+            nextCheckAt = args.until;
+          } else {
+            // Backoff ladder: 3 → 7 → 14 days. We measure "how long since
+            // the last snooze" so a user who keeps re-snoozing escalates
+            // (the system stops bothering them about the same thing every
+            // few days), but a long quiet period resets to 3.
+            const last = found.data.lastSnoozedAt;
+            const lastMs = last ? new Date(last).getTime() : 0;
+            const since = lastMs ? Date.now() - lastMs : Infinity;
+            let days;
+            if (!lastMs) days = 3;
+            else if (since < 5 * 86400000) days = 7;
+            else if (since < 14 * 86400000) days = 14;
+            else days = 3; // long quiet period — reset
+            nextCheckAt = new Date(Date.now() + days * 86400000).toISOString();
+          }
+
+          return TOOLS.propose_update_task.run({
+            taskKey: args.taskKey,
+            patch: {
+              nextCheckAt,
+              lastSnoozedAt: nowIso(),
+            },
+            sources: [],
+            reason: args.reason || `snoozed until ${nextCheckAt}`,
+          });
+        } catch (e) {
+          return formatContent({ error: e.message });
+        }
+      },
+    },
+
     // ── propose_create_commitment ─────────────────────────────────────────
     propose_create_commitment: {
       description:
@@ -1102,6 +1359,19 @@ export function createTools({ spreadsheetId, sheets }) {
         try {
           if (cs.kind === "tasks") {
             for (const add of cs.adds || []) {
+              // assigned-wait flow stages a sibling Commitment in the same
+              // changeset (tagged __kind:'commitment') so the Tasks update
+              // and the new Commitment commit atomically. Route those into
+              // the Commitments table; everything else is a task add.
+              if (add && add.__kind === "commitment") {
+                await appendRows("Commitments", [[
+                  add.commitmentId, add.ownerType, add.ownerId, add.description,
+                  add.dueAt, add.status, add.sourceType, add.sourceRef, add.excerpt,
+                  add.projectId, add.stakeholderId, add.lastNudgedAt, add.createdAt, add.updatedAt,
+                ]]);
+                results.push({ action: "created_commitment", commitmentId: add.commitmentId });
+                continue;
+              }
               const { task, taskSources } = add;
               await appendRows("Tasks", [[
                 task.taskKey, task.source || "", task.subject || "", task.title || "",
@@ -1110,6 +1380,13 @@ export function createTools({ spreadsheetId, sheets }) {
                 JSON.stringify(task), task.updatedAt || nowIso(),
                 task.ownerType || "me", task.ownerId || "", task.dueAt || "",
                 task.projectId || "", String(task.confidence || ""), task.origin || "manual",
+                // Waiting fields (migration 0009). Trail the original 19 fields
+                // so existing positional writes keep working; new columns
+                // default to "" when the task isn't waiting.
+                task.waitReason || "", task.waitDetail || "", task.expectedBy || "",
+                task.nextCheckAt || "", task.lastSnoozedAt || "", task.lastSignalAt || "",
+                task.waitOnStakeholderId || "", task.waitOnName || "", task.waitChannel || "",
+                task.blockedByTaskKey || "", task.commitmentId || "",
               ]]);
               for (const s of taskSources || []) {
                 await appendRows("TaskSources", [[
@@ -1131,6 +1408,12 @@ export function createTools({ spreadsheetId, sheets }) {
                   JSON.stringify(after), nowIso(),
                   after.ownerType || "", after.ownerId || "", after.dueAt || "",
                   after.projectId || "", String(after.confidence || ""), after.origin || "",
+                  // Waiting fields — preserved on every task update so a generic
+                  // edit (e.g. priority change) doesn't clear an active wait.
+                  after.waitReason || "", after.waitDetail || "", after.expectedBy || "",
+                  after.nextCheckAt || "", after.lastSnoozedAt || "", after.lastSignalAt || "",
+                  after.waitOnStakeholderId || "", after.waitOnName || "", after.waitChannel || "",
+                  after.blockedByTaskKey || "", after.commitmentId || "",
                 ]);
                 for (const s of upd.newSources || []) {
                   await appendRows("TaskSources", [[
@@ -1139,6 +1422,44 @@ export function createTools({ spreadsheetId, sheets }) {
                   ]]);
                 }
                 results.push({ action: "updated_task", taskKey: upd.taskKey });
+              }
+            }
+
+            // Dependency auto-stamp: if any updated task transitioned to done,
+            // surface its blocked dependents in the next morning brief by
+            // stamping nextCheckAt=today on every waiting task that lists it
+            // as blockedByTaskKey. Stamp-only; the user resumes manually so
+            // they stay in control of the next action.
+            const completed = (cs.updates || []).filter((u) => {
+              const a = String(u.after?.status || "").toLowerCase();
+              const b = String(u.before?.status || "").toLowerCase();
+              return a === "done" && b !== "done";
+            });
+            if (completed.length > 0) {
+              const allTasks = await readSheetAsObjects("Tasks").catch(() => []);
+              for (const upd of completed) {
+                const dependents = allTasks.filter((t) =>
+                  String(t.blockedByTaskKey || "") === upd.taskKey &&
+                  String(t.status || "").toLowerCase() === "waiting"
+                );
+                for (const dep of dependents) {
+                  const found = await findRowByKey("Tasks", "taskKey", dep.taskKey);
+                  if (!found) continue;
+                  const depAfter = { ...found.data, nextCheckAt: nowIso(), updatedAt: nowIso() };
+                  await updateRow("Tasks", found.rowNum, [
+                    depAfter.taskKey, depAfter.source || "", depAfter.subject || "", depAfter.title || "",
+                    depAfter.from || "", depAfter.date || "", depAfter.startTime || "", depAfter.endTime || "",
+                    depAfter.status || "", depAfter.priority || "", depAfter.notes || "",
+                    JSON.stringify(depAfter), nowIso(),
+                    depAfter.ownerType || "", depAfter.ownerId || "", depAfter.dueAt || "",
+                    depAfter.projectId || "", String(depAfter.confidence || ""), depAfter.origin || "",
+                    depAfter.waitReason || "", depAfter.waitDetail || "", depAfter.expectedBy || "",
+                    depAfter.nextCheckAt || "", depAfter.lastSnoozedAt || "", depAfter.lastSignalAt || "",
+                    depAfter.waitOnStakeholderId || "", depAfter.waitOnName || "", depAfter.waitChannel || "",
+                    depAfter.blockedByTaskKey || "", depAfter.commitmentId || "",
+                  ]);
+                  results.push({ action: "stamped_dependent", taskKey: depAfter.taskKey, blockerCompleted: upd.taskKey });
+                }
               }
             }
 
