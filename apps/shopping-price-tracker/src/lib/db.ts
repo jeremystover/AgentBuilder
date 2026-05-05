@@ -18,6 +18,7 @@ interface ItemRow {
   query_strings: string;
   retailers: string;
   watch_urls: string;
+  fb_locations: string | null;
   target_price_cents: number | null;
   max_price_cents: number | null;
   currency: string;
@@ -86,6 +87,7 @@ function rowToItem(row: ItemRow): TrackedItem {
     query_strings: parseStringArray(row.query_strings),
     retailers: parseStringArray(row.retailers),
     watch_urls: parseStringArray(row.watch_urls),
+    fb_locations: row.fb_locations === null ? null : parseStringArray(row.fb_locations),
     target_price_cents: row.target_price_cents,
     max_price_cents: row.max_price_cents,
     currency: row.currency,
@@ -149,8 +151,8 @@ export const itemQueries = {
     await db
       .prepare(
         `INSERT INTO tracked_items (id, kind, title, description, model_number, query_strings, retailers, watch_urls,
-            target_price_cents, max_price_cents, currency, notes, priority, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            fb_locations, target_price_cents, max_price_cents, currency, notes, priority, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         item.id,
@@ -161,6 +163,7 @@ export const itemQueries = {
         JSON.stringify(item.query_strings),
         JSON.stringify(item.retailers),
         JSON.stringify(item.watch_urls),
+        item.fb_locations === null ? null : JSON.stringify(item.fb_locations),
         item.target_price_cents,
         item.max_price_cents,
         item.currency,
@@ -221,6 +224,12 @@ export const itemQueries = {
       query_strings: patch.query_strings ? JSON.stringify(patch.query_strings) : undefined,
       retailers: patch.retailers ? JSON.stringify(patch.retailers) : undefined,
       watch_urls: patch.watch_urls ? JSON.stringify(patch.watch_urls) : undefined,
+      fb_locations:
+        patch.fb_locations === undefined
+          ? undefined
+          : patch.fb_locations === null
+            ? null
+            : JSON.stringify(patch.fb_locations),
       target_price_cents: patch.target_price_cents,
       max_price_cents: patch.max_price_cents,
       currency: patch.currency,
