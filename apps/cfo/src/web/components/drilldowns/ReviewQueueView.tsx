@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronUp, Sparkles, RefreshCw, Loader2 } from "lucide-react";
+import { ArrowLeftRight, ChevronDown, ChevronUp, Sparkles, RefreshCw, Loader2 } from "lucide-react";
 import { txAmountColor } from "../../utils/txColor";
 import { toast } from "sonner";
 import {
@@ -481,6 +481,14 @@ function ReviewDrawer({
         <div className="flex items-center justify-between gap-2">
           <Button onClick={() => void onResolve(item.id, { action: "skip" })} disabled={busy}>Skip</Button>
           <div className="flex gap-2">
+            <Button
+              variant="ghost"
+              onClick={() => void onResolve(item.id, { action: "classify", category_tax: "transfer" })}
+              disabled={busy}
+              title="Mark as a transfer between accounts — excluded from taxes and budget"
+            >
+              <ArrowLeftRight className="w-4 h-4" /> Transfer
+            </Button>
             <Button variant="ghost" onClick={onClose}>Cancel</Button>
             <Button
               variant="success"

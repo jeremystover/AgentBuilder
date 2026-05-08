@@ -104,9 +104,9 @@ export interface Rule {
 }
 
 export interface AIClassification {
-  entity: Entity;
+  entity?: Entity;
   category_tax: string;
-  category_budget: string;
+  category_budget?: string;
   confidence: number;
   reason_codes: string[];
   review_required: boolean;

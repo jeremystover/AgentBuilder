@@ -29,6 +29,7 @@ export async function handleScheduleC(request: Request, env: Env): Promise<Respo
      WHERE t.user_id = ? AND c.entity = ?
        AND t.posted_date BETWEEN ? AND ?
        AND c.review_required = 0
+       AND c.category_tax != 'transfer'
      GROUP BY c.category_tax
      ORDER BY coa.form_line`,
   ).bind(userId, coaSlug, userId, entity, dateFrom, dateTo).all<{
