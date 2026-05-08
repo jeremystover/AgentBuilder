@@ -8,7 +8,7 @@ import {
 import { useReviewQueue } from "../../hooks/useReviewQueue";
 import { resolveReview, bulkResolveReview, runClassification } from "../../api";
 import type { ReviewItem, ReviewStatus, ResolveAction } from "../../types";
-import { CATEGORY_OPTIONS, ENTITY_OPTIONS } from "../../catalog";
+import { CATEGORY_OPTIONS, ENTITY_OPTIONS, TRANSFER_OPTION } from "../../catalog";
 
 const PAGE_SIZE = 50;
 
@@ -137,7 +137,7 @@ export function ReviewQueueView() {
         status,
         filter_category_tax: categoryFilter || undefined,
         ...(action === "classify" ? {
-          entity: bulkEntity,
+          entity: bulkCategory === "transfer" ? undefined : bulkEntity,
           category_tax: bulkCategory || undefined,
         } : {}),
       });
@@ -318,22 +318,31 @@ export function ReviewQueueView() {
           </Button>
           <div className="h-6 border-l border-border mx-1" />
           <div>
-            <label className="block text-[11px] text-text-muted mb-0.5">Bulk entity</label>
-            <Select value={bulkEntity} onChange={(e) => setBulkEntity(e.target.value)}>
-              {ENTITY_OPTIONS.map(({ slug, label }) => (
-                <option key={slug} value={slug}>{label}</option>
-              ))}
-            </Select>
-          </div>
-          <div>
             <label className="block text-[11px] text-text-muted mb-0.5">Bulk category</label>
-            <Select value={bulkCategory} onChange={(e) => setBulkCategory(e.target.value)}>
+            <Select
+              value={bulkCategory}
+              onChange={(e) => {
+                setBulkCategory(e.target.value);
+                if (e.target.value === "transfer") setBulkEntity("");
+              }}
+            >
               <option value="">— select —</option>
+              <option value={TRANSFER_OPTION.slug}>{TRANSFER_OPTION.label}</option>
               {CATEGORY_OPTIONS.map(({ slug, label }) => (
                 <option key={slug} value={slug}>{label}</option>
               ))}
             </Select>
           </div>
+          {bulkCategory !== "transfer" && (
+            <div>
+              <label className="block text-[11px] text-text-muted mb-0.5">Bulk entity</label>
+              <Select value={bulkEntity || "elyse_coaching"} onChange={(e) => setBulkEntity(e.target.value)}>
+                {ENTITY_OPTIONS.map(({ slug, label }) => (
+                  <option key={slug} value={slug}>{label}</option>
+                ))}
+              </Select>
+            </div>
+          )}
           <Button variant="primary" disabled={status !== "pending" || busy || !bulkCategory || (!selectedAllFiltered && selectedCount === 0)} onClick={() => onBulk("classify")}>
             Reclassify selected
           </Button>
