@@ -212,3 +212,64 @@ export interface TransactionListResponse {
   limit: number;
   offset: number;
 }
+
+// ── Imports ──────────────────────────────────────────────────────────────
+
+export type ImportSource = "plaid" | "teller" | "csv" | "manual" | "amazon";
+export type ImportStatus = "pending" | "running" | "completed" | "failed";
+
+export interface ImportRecord {
+  id: string;
+  user_id: string;
+  source: ImportSource;
+  account_id: string | null;
+  status: ImportStatus;
+  date_from: string | null;
+  date_to: string | null;
+  transactions_found: number;
+  transactions_imported: number;
+  error_message: string | null;
+  created_at: string;
+  completed_at: string | null;
+  account_name: string | null;
+}
+
+export interface CsvImportResult {
+  import_id: string;
+  format: string;
+  rows_parsed: number;
+  transactions_imported: number;
+  duplicates_skipped: number;
+  errors: string[];
+  message: string;
+}
+
+export interface AmazonImportResult {
+  import_id: string;
+  rows_parsed: number;
+  amazon_orders_imported: number;
+  rows_skipped: number;
+  transactions_matched: number;
+  transactions_unmatched: number;
+  transactions_reclassified: number;
+  message: string;
+}
+
+export interface TillerImportResult {
+  import_id: string;
+  total_rows: number;
+  transactions_imported: number;
+  duplicates_skipped: number;
+  non_transaction_skipped: number;
+  unmapped_categories: string[];
+  learned_rules_created: number;
+  ambiguous_rule_groups_skipped: number;
+  message: string;
+}
+
+export interface DeleteImportsResult {
+  transactions_deleted: number;
+  imports_deleted?: number;
+  import_deleted?: boolean;
+  locked_transactions_skipped: number;
+}

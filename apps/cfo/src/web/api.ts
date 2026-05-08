@@ -7,6 +7,7 @@ import type {
   ReviewListResponse, ReviewItem, ResolveAction, BulkResolveInput,
   Account, BankConfig,
   Transaction, TransactionListResponse, TransactionDetail, TransactionSplit, EntitySlug,
+  ImportRecord, CsvImportResult, AmazonImportResult, TillerImportResult, DeleteImportsResult,
 } from "./types";
 
 async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
@@ -17,6 +18,28 @@ async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
       "content-type": "application/json",
       ...(opts.headers || {}),
     },
+  });
+  if (res.status === 401) {
+    location.href = "/login";
+    throw new Error("unauthorized");
+  }
+  const ct = res.headers.get("content-type") || "";
+  const data = ct.includes("json") ? await res.json() : await res.text();
+  if (!res.ok) {
+    const msg = (data && typeof data === "object" && "error" in data)
+      ? String((data as Record<string, unknown>).error)
+      : `HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+  return data as T;
+}
+
+// Multipart form upload — let the browser set the content-type with boundary.
+async function uploadForm<T>(path: string, form: FormData): Promise<T> {
+  const res = await fetch(path, {
+    method: "POST",
+    body: form,
+    credentials: "same-origin",
   });
   if (res.status === 401) {
     location.href = "/login";
@@ -228,6 +251,46 @@ export async function splitTransaction(id: string, splits: SplitItem[]): Promise
 
 export async function deleteTransaction(id: string): Promise<{ deleted: true; transaction_id: string }> {
   return request(`/transactions/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+// ── Imports ───────────────────────────────────────────────────────────────
+
+export async function listImports(): Promise<{ imports: ImportRecord[] }> {
+  return request<{ imports: ImportRecord[] }>("/imports");
+}
+
+export interface CsvImportInput {
+  file: File;
+  format?: "auto" | "generic" | "venmo" | "chase" | "amex" | "bofa";
+  account_id?: string;
+}
+
+export async function importCsv(input: CsvImportInput): Promise<CsvImportResult> {
+  const form = new FormData();
+  form.append("file", input.file);
+  if (input.format) form.append("format", input.format);
+  if (input.account_id) form.append("account_id", input.account_id);
+  return uploadForm<CsvImportResult>("/imports/csv", form);
+}
+
+export async function importAmazon(file: File): Promise<AmazonImportResult> {
+  const form = new FormData();
+  form.append("file", file);
+  return uploadForm<AmazonImportResult>("/imports/amazon", form);
+}
+
+export async function importTiller(file: File): Promise<TillerImportResult> {
+  const form = new FormData();
+  form.append("file", file);
+  return uploadForm<TillerImportResult>("/imports/tiller", form);
+}
+
+export async function deleteImport(id: string): Promise<DeleteImportsResult> {
+  return request<DeleteImportsResult>(`/imports/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function deleteAllImports(): Promise<DeleteImportsResult> {
+  return request<DeleteImportsResult>(`/imports`, { method: "DELETE" });
 }
 
 // ── Chat (SSE) ────────────────────────────────────────────────────────────
