@@ -273,3 +273,80 @@ export interface DeleteImportsResult {
   import_deleted?: boolean;
   locked_transactions_skipped: number;
 }
+
+// ── Rules ────────────────────────────────────────────────────────────────
+
+export type RuleMatchField = "merchant_name" | "description" | "account_id" | "amount";
+export type RuleMatchOperator = "contains" | "equals" | "starts_with" | "ends_with" | "regex";
+
+export interface Rule {
+  id: string;
+  user_id: string;
+  name: string;
+  match_field: RuleMatchField;
+  match_operator: RuleMatchOperator;
+  match_value: string;
+  entity: EntitySlug;
+  category_tax: string | null;
+  category_budget: string | null;
+  priority: number;
+  is_active: number;
+  created_at: string;
+}
+
+export interface AutoCatImportResult {
+  total_rows: number;
+  rules_created: number;
+  skipped: number;
+  skipped_transfers: number;
+  warnings: string[];
+  message: string;
+}
+
+// ── Budget ───────────────────────────────────────────────────────────────
+
+export type BudgetCadence = "weekly" | "monthly" | "annual";
+export type BudgetPreset =
+  | "this_week" | "this_month" | "last_month"
+  | "ytd" | "trailing_30d" | "trailing_90d";
+export type BudgetStatusTone = "no_target" | "over" | "near" | "under";
+
+export interface BudgetCategory {
+  id: string;
+  slug: string;
+  name: string;
+  parent_slug: string | null;
+  is_active: number;
+  created_at: string;
+}
+
+export interface BudgetTarget {
+  id: string;
+  category_slug: string;
+  cadence: BudgetCadence;
+  amount: number;
+  effective_from: string;
+  effective_to: string | null;
+  notes: string | null;
+  category_name: string | null;
+}
+
+export interface BudgetStatusLine {
+  category_slug: string;
+  category_name: string;
+  target: {
+    native_amount: number;
+    native_cadence: BudgetCadence;
+    prorated_amount: number;
+  } | null;
+  spent: number;
+  tx_count: number;
+  remaining: number | null;
+  percent_used: number | null;
+  status: BudgetStatusTone;
+}
+
+export interface BudgetStatusResponse {
+  period: { start: string; end: string; days: number; label: string };
+  categories: BudgetStatusLine[];
+}
