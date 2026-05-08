@@ -1,9 +1,9 @@
-import { useCallback, useMemo, useState } from "react";
-import { Sparkles, RefreshCw, Loader2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ChevronDown, ChevronUp, Sparkles, RefreshCw, Loader2 } from "lucide-react";
 import { txAmountColor } from "../../utils/txColor";
 import { toast } from "sonner";
 import {
-  Button, Card, Badge, Select, Drawer, PageHeader, EmptyState, fmtUsd, humanizeSlug,
+  Button, Card, Badge, Input, Select, Drawer, PageHeader, EmptyState, fmtUsd, humanizeSlug,
 } from "../ui";
 import { useReviewQueue } from "../../hooks/useReviewQueue";
 import { resolveReview, bulkResolveReview, runClassification } from "../../api";
@@ -14,13 +14,54 @@ const PAGE_SIZE = 50;
 
 type CategoryFilter = "" | "__uncategorized__" | string; // tax category slug
 
+function SortTh({ col, label, sortBy, sortDir, onSort, className = "" }: {
+  col: string; label: string; sortBy: string; sortDir: "asc" | "desc";
+  onSort: (col: string) => void; className?: string;
+}) {
+  const active = sortBy === col;
+  const Icon = active && sortDir === "asc" ? ChevronUp : ChevronDown;
+  return (
+    <th
+      className={`cursor-pointer select-none hover:text-text-primary transition-colors ${className}`}
+      onClick={() => onSort(col)}
+    >
+      <span className="inline-flex items-center gap-0.5">
+        {label}
+        <Icon className={`w-3 h-3 ${active ? "opacity-100" : "opacity-25"}`} />
+      </span>
+    </th>
+  );
+}
+
 export function ReviewQueueView() {
   const [status, setStatus] = useState<ReviewStatus>("pending");
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("");
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [sortBy, setSortBy] = useState("created_at");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 400);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  const onSort = (col: string) => {
+    if (sortBy === col) {
+      setSortDir((d) => d === "asc" ? "desc" : "asc");
+    } else {
+      setSortBy(col);
+      setSortDir("desc");
+    }
+    setOffset(0);
+  };
 
   const { data, offset, setOffset, loading, error, refresh } = useReviewQueue({
     status,
     category_tax: categoryFilter || null,
+    q: debouncedSearch || undefined,
+    sort_by: sortBy,
+    sort_dir: sortDir,
     pageSize: PAGE_SIZE,
   });
   const items = data?.items ?? [];
@@ -224,6 +265,16 @@ export function ReviewQueueView() {
               ))}
             </Select>
           </div>
+          <div className="flex-1 min-w-[180px]">
+            <label className="block text-xs text-text-muted mb-1">Search</label>
+            <Input
+              type="text"
+              placeholder="merchant or description"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full"
+            />
+          </div>
         </div>
       </Card>
 
@@ -305,10 +356,10 @@ export function ReviewQueueView() {
                     onChange={(e) => toggleAllVisible(e.target.checked)}
                   />
                 </th>
-                <th className="py-2">Date</th>
-                <th>Merchant</th>
-                <th>Amount</th>
-                <th>Account</th>
+                <SortTh col="posted_date"   label="Date"     sortBy={sortBy} sortDir={sortDir} onSort={onSort} className="py-2" />
+                <SortTh col="merchant_name" label="Merchant" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+                <SortTh col="amount"        label="Amount"   sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+                <SortTh col="account_name"  label="Account"  sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
                 <th>Suggested</th>
                 <th>Conf.</th>
                 <th className="pr-4">Actions</th>

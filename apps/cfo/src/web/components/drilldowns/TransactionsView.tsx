@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeftRight, Lock, RefreshCw, Trash2 } from "lucide-react";
+import { ArrowLeftRight, ChevronDown, ChevronUp, Lock, RefreshCw, Trash2 } from "lucide-react";
 import { txAmountColor } from "../../utils/txColor";
 import { toast } from "sonner";
 import {
@@ -14,6 +14,25 @@ import type {
 import { CATEGORY_OPTIONS, ENTITY_OPTIONS } from "../../catalog";
 
 const PAGE_SIZE = 100;
+
+function SortTh({ col, label, sortBy, sortDir, onSort, className = "" }: {
+  col: string; label: string; sortBy: string; sortDir: "asc" | "desc";
+  onSort: (col: string) => void; className?: string;
+}) {
+  const active = sortBy === col;
+  const Icon = active && sortDir === "asc" ? ChevronUp : ChevronDown;
+  return (
+    <th
+      className={`cursor-pointer select-none hover:text-text-primary transition-colors ${className}`}
+      onClick={() => onSort(col)}
+    >
+      <span className="inline-flex items-center gap-0.5">
+        {label}
+        <Icon className={`w-3 h-3 ${active ? "opacity-100" : "opacity-25"}`} />
+      </span>
+    </th>
+  );
+}
 
 interface FiltersState {
   date_from: string;
@@ -39,6 +58,14 @@ export function TransactionsView() {
   const { accounts } = useAccounts();
   const [filters, setFilters] = useState<FiltersState>(EMPTY_FILTERS);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [sortBy, setSortBy] = useState("posted_date");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 400);
+    return () => clearTimeout(t);
+  }, [search]);
 
   const apiFilters = useMemo(() => ({
     date_from: filters.date_from || undefined,
@@ -48,7 +75,10 @@ export function TransactionsView() {
     category_tax: filters.category_tax || undefined,
     review_required: filters.review_only ? true : undefined,
     unclassified: filters.unclassified_only || undefined,
-  }), [filters]);
+    q: debouncedSearch || undefined,
+    sort_by: sortBy,
+    sort_dir: sortDir,
+  }), [filters, debouncedSearch, sortBy, sortDir]);
 
   const { data, offset, setOffset, loading, error, refresh } = useTransactions({
     filters: apiFilters,
@@ -57,16 +87,6 @@ export function TransactionsView() {
 
   const transactions = data?.transactions ?? [];
   const total = data?.total ?? 0;
-
-  // Free-text search filters the loaded page client-side (server doesn't support it yet).
-  const visible = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return transactions;
-    return transactions.filter((t) =>
-      (t.merchant_name ?? "").toLowerCase().includes(q) ||
-      (t.description ?? "").toLowerCase().includes(q),
-    );
-  }, [transactions, search]);
 
   const [openId, setOpenId] = useState<string | null>(null);
 
@@ -77,6 +97,16 @@ export function TransactionsView() {
   const clearFilters = () => {
     setFilters(EMPTY_FILTERS);
     setSearch("");
+  };
+
+  const onSort = (col: string) => {
+    if (sortBy === col) {
+      setSortDir((d) => d === "asc" ? "desc" : "asc");
+    } else {
+      setSortBy(col);
+      setSortDir("desc");
+    }
+    setOffset(0);
   };
 
   const hasFilters =
@@ -193,11 +223,6 @@ export function TransactionsView() {
             />
             Unclassified
           </label>
-          {search && visible.length !== transactions.length && (
-            <span className="ml-auto">
-              Search matches {visible.length} of {transactions.length} on this page
-            </span>
-          )}
         </div>
       </Card>
 
@@ -212,20 +237,20 @@ export function TransactionsView() {
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-xs text-text-muted uppercase tracking-wide border-b border-border bg-bg-elevated">
-                <th className="pl-4 py-2">Date</th>
-                <th>Merchant</th>
-                <th>Account</th>
-                <th className="text-right">Amount</th>
+                <SortTh col="posted_date"   label="Date"     sortBy={sortBy} sortDir={sortDir} onSort={onSort} className="pl-4 py-2" />
+                <SortTh col="merchant_name" label="Merchant" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+                <SortTh col="account_name"  label="Account"  sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+                <SortTh col="amount"        label="Amount"   sortBy={sortBy} sortDir={sortDir} onSort={onSort} className="text-right" />
                 <th>Entity</th>
-                <th>Category</th>
+                <SortTh col="category_tax"  label="Category" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
                 <th>Method</th>
                 <th className="pr-4">Conf.</th>
               </tr>
             </thead>
             <tbody>
-              {visible.length === 0 ? (
+              {transactions.length === 0 ? (
                 <tr><td colSpan={8}><EmptyState>{loading ? "Loading…" : "No transactions match these filters."}</EmptyState></td></tr>
-              ) : visible.map((t) => (
+              ) : transactions.map((t) => (
                 <TransactionRow key={t.id} tx={t} onOpen={() => setOpenId(t.id)} />
               ))}
             </tbody>

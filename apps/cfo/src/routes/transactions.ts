@@ -22,6 +22,24 @@ export async function handleListTransactions(request: Request, env: Env): Promis
   if (p.get('review_required')) { conditions.push('c.review_required = ?'); vals.push(p.get('review_required') === 'true' ? 1 : 0); }
   if (p.get('unclassified') === 'true') { conditions.push('c.id IS NULL'); }
 
+  const q = p.get('q')?.trim();
+  if (q) {
+    conditions.push('(LOWER(t.description) LIKE ? OR LOWER(t.merchant_name) LIKE ?)');
+    const pattern = `%${q.toLowerCase()}%`;
+    vals.push(pattern, pattern);
+  }
+
+  const SORT_COLS: Record<string, string> = {
+    posted_date:   't.posted_date',
+    amount:        't.amount',
+    description:   't.description',
+    merchant_name: 't.merchant_name',
+    account_name:  'a.name',
+    category_tax:  'c.category_tax',
+  };
+  const sortCol = SORT_COLS[p.get('sort_by') ?? ''] ?? 't.posted_date';
+  const sortDir = p.get('sort_dir') === 'asc' ? 'ASC' : 'DESC';
+
   const limit  = Math.min(parseInt(p.get('limit')  ?? '100'), 500);
   const offset = parseInt(p.get('offset') ?? '0');
 
@@ -36,7 +54,7 @@ export async function handleListTransactions(request: Request, env: Env): Promis
        LEFT JOIN classifications c ON c.transaction_id = t.id
        LEFT JOIN accounts a ON a.id = t.account_id
        WHERE ${where}
-       ORDER BY t.posted_date DESC
+       ORDER BY ${sortCol} ${sortDir}
        LIMIT ? OFFSET ?`,
     ).bind(...vals, limit, offset).all(),
     env.DB.prepare(
