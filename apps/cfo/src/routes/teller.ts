@@ -7,7 +7,6 @@ import {
   type TellerEnrollmentPayload,
   type TellerTransaction,
 } from '../lib/teller';
-import { ensureUnclassifiedReviewQueue } from '../lib/review-queue';
 
 interface TellerSyncSummary {
   transactions_imported: number;
@@ -17,7 +16,6 @@ interface TellerSyncSummary {
   message: string;
 }
 
-type TellerSyncResult = 'added' | 'updated' | 'duplicate';
 
 function isoDate(value: Date): string {
   return value.toISOString().slice(0, 10);
@@ -33,134 +31,135 @@ function todayIsoDate(): string {
   return isoDate(new Date());
 }
 
-async function upsertTellerTransaction(
+async function syncAccountTransactions(
   env: Env,
-  input: {
-    userId: string;
-    accountId: string;
-    providerAccountId: string;
-    importId: string;
-    transaction: TellerTransaction;
-  },
-): Promise<TellerSyncResult> {
-  const { userId, accountId, providerAccountId, importId, transaction } = input;
-  const amount = Number(transaction.amount);
-  if (Number.isNaN(amount)) {
-    throw new Error(`Could not parse Teller transaction amount "${transaction.amount}" for ${transaction.id}`);
-  }
+  userId: string,
+  accountId: string,
+  providerAccountId: string,
+  importId: string,
+  transactions: TellerTransaction[],
+): Promise<{ added: number; dupes: number }> {
+  if (transactions.length === 0) return { added: 0, dupes: 0 };
 
-  const description = transaction.description;
-  const descriptionClean = cleanDescription(description);
-  const merchantName = transaction.details?.counterparty?.name ?? null;
-  const category = transaction.details?.category ?? null;
-  const dedupHash = await computeDedupHash(
-    providerAccountId,
-    transaction.date,
-    amount,
-    description,
+  // Pre-fetch all existing teller tx IDs for this account (1 query instead of N)
+  const existingRows = await env.DB.prepare(
+    `SELECT id, teller_transaction_id FROM transactions
+     WHERE account_id = ? AND teller_transaction_id IS NOT NULL`,
+  ).bind(accountId).all<{ id: string; teller_transaction_id: string }>();
+  const existingMap = new Map(existingRows.results.map(r => [r.teller_transaction_id, r.id]));
+
+  // Pre-fetch all pending transactions for this account (1 query instead of N)
+  const pendingRows = await env.DB.prepare(
+    `SELECT id, amount, description_clean, posted_date FROM transactions
+     WHERE account_id = ? AND is_pending = 1 AND teller_transaction_id IS NOT NULL`,
+  ).bind(accountId).all<{ id: string; amount: number; description_clean: string; posted_date: string }>();
+  const pendingList = [...pendingRows.results];
+
+  // Compute all dedup hashes in parallel
+  const amounts = transactions.map(tx => {
+    const n = Number(tx.amount);
+    if (Number.isNaN(n)) throw new Error(`Bad amount "${tx.amount}" for ${tx.id}`);
+    return n;
+  });
+  const hashes = await Promise.all(
+    transactions.map((tx, i) => computeDedupHash(providerAccountId, tx.date, amounts[i], tx.description)),
   );
 
-  const existingById = await env.DB.prepare(
-    'SELECT id FROM transactions WHERE teller_transaction_id = ?',
-  ).bind(transaction.id).first<{ id: string }>();
+  const BATCH = 100;
+  const updateStatements: D1PreparedStatement[] = [];
+  const insertStatements: D1PreparedStatement[] = [];
+  const insertMeta: Array<{ txId: string; isPosted: boolean }> = [];
 
-  if (existingById) {
-    await env.DB.prepare(
-      `UPDATE transactions
-       SET account_id=?, import_id=?, posted_date=?, amount=?, currency='USD',
-           merchant_name=?, description=?, description_clean=?, category_plaid=?,
-           is_pending=?, dedup_hash=?
-       WHERE id=?`,
-    ).bind(
-      accountId,
-      importId,
-      transaction.date,
-      amount,
-      merchantName,
-      description,
-      descriptionClean,
-      category,
-      transaction.status === 'pending' ? 1 : 0,
-      dedupHash,
-      existingById.id,
-    ).run();
-    await ensureUnclassifiedReviewQueue(env, existingById.id, userId);
-    return 'updated';
+  for (let i = 0; i < transactions.length; i++) {
+    const tx = transactions[i];
+    const amount = amounts[i];
+    const dedupHash = hashes[i];
+    const descClean = cleanDescription(tx.description);
+    const merchant = tx.details?.counterparty?.name ?? null;
+    const category = tx.details?.category ?? null;
+    const isPending = tx.status === 'pending' ? 1 : 0;
+
+    const existingId = existingMap.get(tx.id);
+    if (existingId) {
+      updateStatements.push(env.DB.prepare(
+        `UPDATE transactions
+         SET account_id=?, import_id=?, posted_date=?, amount=?, currency='USD',
+             merchant_name=?, description=?, description_clean=?, category_plaid=?,
+             is_pending=?, dedup_hash=?
+         WHERE id=?`,
+      ).bind(accountId, importId, tx.date, amount, merchant, tx.description, descClean, category, isPending, dedupHash, existingId));
+      continue;
+    }
+
+    // Pending → posted promotion (match in-memory)
+    if (tx.status === 'posted') {
+      const lo = shiftIsoDate(tx.date, -10);
+      const hi = shiftIsoDate(tx.date, 10);
+      const matchIdx = pendingList.findIndex(
+        p => p.amount === amount && p.description_clean === descClean && p.posted_date >= lo && p.posted_date <= hi,
+      );
+      if (matchIdx !== -1) {
+        const match = pendingList[matchIdx];
+        pendingList.splice(matchIdx, 1);
+        updateStatements.push(env.DB.prepare(
+          `UPDATE transactions
+           SET import_id=?, teller_transaction_id=?, posted_date=?, amount=?, currency='USD',
+               merchant_name=?, description=?, description_clean=?, category_plaid=?,
+               is_pending=0, dedup_hash=?
+           WHERE id=?`,
+        ).bind(importId, tx.id, tx.date, amount, merchant, tx.description, descClean, category, dedupHash, match.id));
+        continue;
+      }
+    }
+
+    // New transaction
+    const txId = crypto.randomUUID();
+    insertStatements.push(env.DB.prepare(
+      `INSERT OR IGNORE INTO transactions
+         (id, user_id, account_id, import_id, teller_transaction_id,
+          posted_date, amount, currency, merchant_name, description,
+          description_clean, category_plaid, is_pending, dedup_hash)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?, ?, ?, ?)`,
+    ).bind(txId, userId, accountId, importId, tx.id, tx.date, amount, merchant, tx.description, descClean, category, isPending, dedupHash));
+    insertMeta.push({ txId, isPosted: tx.status === 'posted' });
   }
 
-  if (transaction.status === 'posted') {
-    const pendingMatch = await env.DB.prepare(
-      `SELECT id
-       FROM transactions
-       WHERE account_id = ?
-         AND teller_transaction_id IS NOT NULL
-         AND is_pending = 1
-         AND amount = ?
-         AND description_clean = ?
-         AND posted_date BETWEEN ? AND ?
-       ORDER BY posted_date DESC
-       LIMIT 1`,
-    ).bind(
-      accountId,
-      amount,
-      descriptionClean,
-      shiftIsoDate(transaction.date, -10),
-      shiftIsoDate(transaction.date, 10),
-    ).first<{ id: string }>();
+  // Batch updates (fire-and-forget result)
+  for (let i = 0; i < updateStatements.length; i += BATCH) {
+    await env.DB.batch(updateStatements.slice(i, i + BATCH));
+  }
 
-    if (pendingMatch) {
-      await env.DB.prepare(
-        `UPDATE transactions
-         SET import_id=?, teller_transaction_id=?, posted_date=?, amount=?, currency='USD',
-             merchant_name=?, description=?, description_clean=?, category_plaid=?,
-             is_pending=0, dedup_hash=?
-         WHERE id=?`,
-      ).bind(
-        importId,
-        transaction.id,
-        transaction.date,
-        amount,
-        merchantName,
-        description,
-        descriptionClean,
-        category,
-        dedupHash,
-        pendingMatch.id,
-      ).run();
-      await ensureUnclassifiedReviewQueue(env, pendingMatch.id, userId);
-      return 'updated';
+  // Batch inserts — check results to build review queue entries only for rows that landed
+  let added = 0;
+  let dupes = 0;
+  const reviewStatements: D1PreparedStatement[] = [];
+  for (let i = 0; i < insertStatements.length; i += BATCH) {
+    const results = await env.DB.batch(insertStatements.slice(i, i + BATCH));
+    for (let j = 0; j < results.length; j++) {
+      const meta = insertMeta[i + j];
+      if (results[j].meta.changes > 0) {
+        if (meta.isPosted) {
+          added++;
+          reviewStatements.push(env.DB.prepare(
+            `INSERT OR IGNORE INTO review_queue
+               (id, transaction_id, user_id, reason, confidence, details, needs_input)
+             VALUES (?, ?, ?, 'unclassified', NULL,
+               'No rule match or saved classification exists for this transaction yet.',
+               'A clearer merchant name, notes, or a manual classification for a similar transaction would help future matches.')`,
+          ).bind(crypto.randomUUID(), meta.txId, userId));
+        }
+      } else {
+        dupes++;
+      }
     }
   }
 
-  const txId = crypto.randomUUID();
-  const result = await env.DB.prepare(
-    `INSERT OR IGNORE INTO transactions
-       (id, user_id, account_id, import_id, teller_transaction_id,
-        posted_date, amount, currency, merchant_name, description,
-        description_clean, category_plaid, is_pending, dedup_hash)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?, ?, ?, ?)`,
-  ).bind(
-    txId,
-    userId,
-    accountId,
-    importId,
-    transaction.id,
-    transaction.date,
-    amount,
-    merchantName,
-    description,
-    descriptionClean,
-    category,
-    transaction.status === 'pending' ? 1 : 0,
-    dedupHash,
-  ).run();
-
-  if (result.meta.changes > 0) {
-    await ensureUnclassifiedReviewQueue(env, txId, userId);
-    return 'added';
+  // Batch review queue inserts
+  for (let i = 0; i < reviewStatements.length; i += BATCH) {
+    await env.DB.batch(reviewStatements.slice(i, i + BATCH));
   }
 
-  return 'duplicate';
+  return { added, dupes };
 }
 
 async function removeMissingPendingTransactions(
@@ -170,8 +169,6 @@ async function removeMissingPendingTransactions(
   endDate: string,
   seenTransactionIds: Set<string>,
 ): Promise<void> {
-  // When no start date is given we still clean up all pending rows for this
-  // account that weren't returned by the latest sync (they were cancelled).
   const existingPending = startDate
     ? await env.DB.prepare(
         `SELECT id, teller_transaction_id
@@ -189,11 +186,16 @@ async function removeMissingPendingTransactions(
            AND is_pending = 1`,
       ).bind(accountId).all<{ id: string; teller_transaction_id: string | null }>();
 
-  for (const row of existingPending.results) {
-    if (!row.teller_transaction_id || seenTransactionIds.has(row.teller_transaction_id)) continue;
-    await env.DB.prepare(
-      'DELETE FROM transactions WHERE id = ?',
-    ).bind(row.id).run();
+  const toDelete = existingPending.results.filter(
+    r => r.teller_transaction_id && !seenTransactionIds.has(r.teller_transaction_id),
+  );
+  if (toDelete.length === 0) return;
+
+  const BATCH = 100;
+  for (let i = 0; i < toDelete.length; i += BATCH) {
+    await env.DB.batch(
+      toDelete.slice(i, i + BATCH).map(r => env.DB.prepare('DELETE FROM transactions WHERE id = ?').bind(r.id)),
+    );
   }
 }
 
@@ -368,20 +370,10 @@ export async function syncTellerTransactionsForUser(
         );
         found += transactions.length;
 
-        const seenTransactionIds = new Set<string>();
-        for (const transaction of transactions) {
-          seenTransactionIds.add(transaction.id);
-          const result = await upsertTellerTransaction(env, {
-            userId,
-            accountId: account.id,
-            providerAccountId: account.teller_account_id,
-            importId,
-            transaction,
-          });
-
-          if (result === 'added') added++;
-          if (result === 'duplicate') dupes++;
-        }
+        const seenTransactionIds = new Set(transactions.map(t => t.id));
+        const result = await syncAccountTransactions(env, userId, account.id, account.teller_account_id, importId, transactions);
+        added += result.added;
+        dupes += result.dupes;
 
         await removeMissingPendingTransactions(
           env,
