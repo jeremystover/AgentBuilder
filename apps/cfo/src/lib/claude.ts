@@ -38,11 +38,11 @@ const CLASSIFICATION_TOOL = {
       entity: {
         type: 'string',
         enum: ['elyse_coaching', 'jeremy_coaching', 'airbnb_activity', 'family_personal'],
-        description: 'Which business entity or personal category this transaction belongs to',
+        description: 'Which business entity this transaction belongs to. Omit (do not include) when category_tax is "transfer".',
       },
       category_tax: {
         type: 'string',
-        description: 'Tax schedule category code (e.g. advertising, supplies, rental_income)',
+        description: 'Tax schedule category code (e.g. advertising, supplies, rental_income). Use "transfer" for any movement of money between owned accounts — credit card payments, bank-to-bank transfers, Venmo/Zelle settlements between personal accounts, etc. Transfers are excluded from taxes and budget.',
       },
       category_budget: {
         type: 'string',
@@ -64,7 +64,7 @@ const CLASSIFICATION_TOOL = {
         description: 'True when confidence < 0.90 or the transaction is ambiguous/mixed-purpose',
       },
     },
-    required: ['entity', 'category_tax', 'category_budget', 'confidence', 'reason_codes', 'review_required'],
+    required: ['category_tax', 'confidence', 'reason_codes', 'review_required'],
   },
 };
 
@@ -102,7 +102,7 @@ const SYSTEM_PROMPT = `You are an expert US tax and accounting classification ag
   * Whitford House income usually deposits into Wells Fargo 3204 and includes Airbnb, Booking.com, Square Inc., mobile deposits, ATM check deposits, and guest booking descriptions
   * Whitford House expenses are usually paid from Wells Fargo 3204, Chase Sapphire 9026, or Jeremy's Venmo
   * Jeremy's Venmo often pays Whitford expenses; if the Venmo balance was empty and the payment pulled from Wells Fargo 3204, still treat it as Whitford House activity
-  * Transfers and credit card payments between owned accounts must be treated as transfers/internal moves, not income or expense
+  * Transfers and credit card payments between owned accounts MUST use category_tax="transfer" and NO entity. This includes: credit card payments, bank-to-bank ACH transfers, Venmo/Zelle between your own accounts, moving money from checking to savings, etc. These are excluded from taxes and budget entirely.
 - FLAG split-purpose transactions with review_required=true and add "split_candidate" reason code.
 - Reason codes must be short, machine-readable, and explain the key signal used.
 

@@ -277,7 +277,7 @@ export async function handleRunClassification(request: Request, env: Env): Promi
          (id, transaction_id, entity, category_tax, category_budget, confidence, method, reason_codes, review_required, classified_by)
        VALUES (?, ?, ?, ?, ?, ?, 'ai', ?, ?, 'system')`,
     ).bind(
-      classId, txId, result.entity, result.category_tax, result.category_budget,
+      classId, txId, result.entity ?? null, result.category_tax, result.category_budget ?? null,
       result.confidence, JSON.stringify(result.reason_codes), result.review_required ? 1 : 0,
     ).run();
 
@@ -286,7 +286,7 @@ export async function handleRunClassification(request: Request, env: Env): Promi
       await upsertReviewQueue(
         env, txId, userId,
         result.confidence < 0.7 ? 'low_confidence' : 'low_confidence',
-        result.entity, result.category_tax, result.confidence,
+        result.entity ?? null, result.category_tax, result.confidence,
         reviewContext.details, reviewContext.needsInput,
       );
       aiQueued++;
@@ -356,7 +356,7 @@ export async function handleClassifySingle(request: Request, env: Env, txId: str
        (id, transaction_id, entity, category_tax, category_budget, confidence, method, reason_codes, review_required, classified_by)
      VALUES (?, ?, ?, ?, ?, ?, 'ai', ?, ?, 'system')`,
   ).bind(
-    crypto.randomUUID(), txId, result.entity, result.category_tax, result.category_budget,
+    crypto.randomUUID(), txId, result.entity ?? null, result.category_tax, result.category_budget ?? null,
     result.confidence, JSON.stringify(result.reason_codes), result.review_required ? 1 : 0,
   ).run();
 
@@ -367,7 +367,7 @@ export async function handleClassifySingle(request: Request, env: Env, txId: str
       txId,
       userId,
       'low_confidence',
-      result.entity,
+      result.entity ?? null,
       result.category_tax,
       result.confidence,
       reviewContext.details,

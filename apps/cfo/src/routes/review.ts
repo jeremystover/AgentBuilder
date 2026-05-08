@@ -144,7 +144,8 @@ async function resolveReviewItem(
   if (item.status !== 'pending') throw new Error('Review item must be reopened before it can be changed');
 
   if (action === 'classify') {
-    if (!entity || !category_tax) throw new Error('entity and category_tax required for classify action');
+    const isTransfer = category_tax === 'transfer';
+    if (!isTransfer && (!entity || !category_tax)) throw new Error('entity and category_tax required for classify action');
     if (item.is_locked) throw new Error('This transaction is locked in a filing snapshot');
 
     const existing = await env.DB.prepare(
@@ -171,13 +172,15 @@ async function resolveReviewItem(
          category_budget=excluded.category_budget, confidence=1.0,
          method='manual', review_required=0, classified_by='user',
          classified_at=datetime('now')`,
-    ).bind(crypto.randomUUID(), item.transaction_id, entity, category_tax, category_budget ?? null).run();
+    ).bind(crypto.randomUUID(), item.transaction_id, entity ?? null, category_tax, category_budget ?? null).run();
 
-    await maybeLearnRuleFromManualClassification(env, userId, item.transaction_id, {
-      entity,
-      category_tax,
-      category_budget: category_budget ?? null,
-    });
+    if (entity) {
+      await maybeLearnRuleFromManualClassification(env, userId, item.transaction_id, {
+        entity,
+        category_tax,
+        category_budget: category_budget ?? null,
+      });
+    }
   }
 
   if (action === 'accept') {
