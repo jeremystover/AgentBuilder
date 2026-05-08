@@ -15,6 +15,18 @@ export async function handleListReview(request: Request, env: Env): Promise<Resp
   const limit  = Math.min(parseInt(url.searchParams.get('limit')  ?? '50'), 200);
   const offset = parseInt(url.searchParams.get('offset') ?? '0');
 
+  const q = url.searchParams.get('q')?.trim();
+  const SORT_COLS: Record<string, string> = {
+    posted_date:   't.posted_date',
+    amount:        't.amount',
+    description:   't.description',
+    merchant_name: 't.merchant_name',
+    account_name:  'a.name',
+    created_at:    'rq.created_at',
+  };
+  const sortCol = SORT_COLS[url.searchParams.get('sort_by') ?? ''] ?? 'rq.created_at';
+  const sortDir = url.searchParams.get('sort_dir') === 'asc' ? 'ASC' : 'DESC';
+
   const conditions = ['rq.user_id = ?', 'rq.status = ?'];
   const values: unknown[] = [userId, status];
 
@@ -23,6 +35,12 @@ export async function handleListReview(request: Request, env: Env): Promise<Resp
   } else if (categoryTax) {
     conditions.push('COALESCE(rq.suggested_category_tax, c.category_tax) = ?');
     values.push(categoryTax);
+  }
+
+  if (q) {
+    conditions.push('(LOWER(t.description) LIKE ? OR LOWER(t.merchant_name) LIKE ?)');
+    const pattern = `%${q.toLowerCase()}%`;
+    values.push(pattern, pattern);
   }
 
   const fromClause = `FROM review_queue rq
@@ -38,7 +56,7 @@ export async function handleListReview(request: Request, env: Env): Promise<Resp
               c.entity AS current_entity, c.category_tax AS current_category_tax, c.confidence AS current_confidence
        ${fromClause}
        ${whereClause}
-       ORDER BY rq.created_at DESC
+       ORDER BY ${sortCol} ${sortDir}
        LIMIT ? OFFSET ?`,
     ).bind(...values, limit, offset).all(),
     env.DB.prepare(

@@ -78,6 +78,9 @@ export async function getSnapshot(): Promise<Snapshot> {
 export interface ListReviewParams {
   status?: "pending" | "resolved" | "skipped";
   category_tax?: string;
+  q?: string;
+  sort_by?: string;
+  sort_dir?: "asc" | "desc";
   limit?: number;
   offset?: number;
 }
@@ -86,6 +89,9 @@ export async function listReview(params: ListReviewParams = {}): Promise<ReviewL
   const qs = new URLSearchParams();
   if (params.status) qs.set("status", params.status);
   if (params.category_tax) qs.set("category_tax", params.category_tax);
+  if (params.q) qs.set("q", params.q);
+  if (params.sort_by) qs.set("sort_by", params.sort_by);
+  if (params.sort_dir) qs.set("sort_dir", params.sort_dir);
   if (params.limit != null) qs.set("limit", String(params.limit));
   if (params.offset != null) qs.set("offset", String(params.offset));
   return request<ReviewListResponse>(`/review?${qs.toString()}`);
@@ -113,15 +119,19 @@ export async function bulkResolveReview(input: BulkResolveInput): Promise<{ upda
 }
 
 export interface ClassifyRunResult {
-  total?: number;
-  rules?: number;
-  ai?: number;
-  review_required?: number;
+  total_processed?: number;
+  classified_by_rules?: number;
+  classified_by_ai?: number;
+  queued_for_review?: number;
+  ai_errors?: number;
   [k: string]: unknown;
 }
 
-export async function runClassification(): Promise<ClassifyRunResult> {
-  return request(`/classify/run`, { method: "POST", body: JSON.stringify({}) });
+export async function runClassification(transactionIds?: string[]): Promise<ClassifyRunResult> {
+  return request(`/classify/run`, {
+    method: "POST",
+    body: JSON.stringify(transactionIds ? { transaction_ids: transactionIds } : {}),
+  });
 }
 
 export async function getNextReviewItem(): Promise<ReviewItem | { empty: true; message: string }> {
@@ -202,6 +212,9 @@ export interface ListTransactionsParams {
   date_to?: string;
   review_required?: boolean;
   unclassified?: boolean;
+  q?: string;
+  sort_by?: string;
+  sort_dir?: "asc" | "desc";
   limit?: number;
   offset?: number;
 }
@@ -215,6 +228,9 @@ export async function listTransactions(params: ListTransactionsParams = {}): Pro
   if (params.date_to) qs.set("date_to", params.date_to);
   if (params.review_required != null) qs.set("review_required", String(params.review_required));
   if (params.unclassified) qs.set("unclassified", "true");
+  if (params.q) qs.set("q", params.q);
+  if (params.sort_by) qs.set("sort_by", params.sort_by);
+  if (params.sort_dir) qs.set("sort_dir", params.sort_dir);
   if (params.limit != null) qs.set("limit", String(params.limit));
   if (params.offset != null) qs.set("offset", String(params.offset));
   return request<TransactionListResponse>(`/transactions?${qs.toString()}`);
@@ -225,7 +241,7 @@ export async function getTransaction(id: string): Promise<TransactionDetail> {
 }
 
 export interface ClassifyTransactionInput {
-  entity: EntitySlug;
+  entity?: EntitySlug;
   category_tax: string;
   category_budget?: string;
   note?: string;

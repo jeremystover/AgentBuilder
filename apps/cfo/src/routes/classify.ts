@@ -149,6 +149,15 @@ export async function handleRunClassification(request: Request, env: Env): Promi
   const userId = getUserId(request);
   await backfillUnclassifiedReviewQueue(env, userId);
 
+  // Optional: caller may pass a list of transaction IDs to classify only those.
+  let transactionIds: string[] | null = null;
+  try {
+    const body = await request.json() as { transaction_ids?: unknown };
+    if (Array.isArray(body.transaction_ids) && body.transaction_ids.length > 0) {
+      transactionIds = (body.transaction_ids as unknown[]).filter((id): id is string => typeof id === 'string');
+    }
+  } catch { /* empty body is fine */ }
+
   // Load all active rules for this user
   const rulesResult = await env.DB.prepare(
     'SELECT * FROM rules WHERE user_id = ? AND is_active = 1 ORDER BY priority DESC',
@@ -156,9 +165,14 @@ export async function handleRunClassification(request: Request, env: Env): Promi
 
   const rules = rulesResult.results;
 
-  // Fetch all pending items that still effectively need classification.
-  // This includes both truly unclassified transactions and rows whose
-  // current/suggested category is the literal placeholder "Unclassified".
+  // Fetch pending unclassified items. If transaction_ids were supplied, restrict
+  // to those; otherwise fall back to the 500-item default batch.
+  const idClause = transactionIds
+    ? `AND t.id IN (${transactionIds.map(() => '?').join(',')})`
+    : '';
+  const limitClause = transactionIds ? '' : 'LIMIT 500';
+  const baseBinds: unknown[] = transactionIds ? [userId, ...transactionIds] : [userId];
+
   const unclassified = await env.DB.prepare(
     `SELECT t.*, a.name AS account_name, a.mask AS account_mask, a.type AS account_type, a.subtype AS account_subtype, a.owner_tag
      FROM review_queue rq
@@ -173,9 +187,10 @@ export async function handleRunClassification(request: Request, env: Env): Promi
          OR trim(COALESCE(rq.suggested_category_tax, c.category_tax, '')) = ''
          OR lower(trim(COALESCE(rq.suggested_category_tax, c.category_tax, ''))) = 'unclassified'
        )
+       ${idClause}
      ORDER BY rq.created_at ASC
-     LIMIT 500`,
-  ).bind(userId).all<Transaction & {
+     ${limitClause}`,
+  ).bind(...baseBinds).all<Transaction & {
     account_name: string | null;
     account_mask: string | null;
     account_type: string | null;

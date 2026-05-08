@@ -5,6 +5,9 @@ import type { ReviewListResponse, ReviewStatus } from "../types";
 export interface UseReviewQueueOptions {
   status: ReviewStatus;
   category_tax: string | null;
+  q?: string;
+  sort_by?: string;
+  sort_dir?: "asc" | "desc";
   pageSize: number;
 }
 
@@ -15,7 +18,7 @@ export function useReviewQueue(opts: UseReviewQueueOptions) {
   const [error, setError] = useState<string | null>(null);
 
   // Reset to first page when filters change.
-  useEffect(() => { setOffset(0); }, [opts.status, opts.category_tax]);
+  useEffect(() => { setOffset(0); }, [opts.status, opts.category_tax, opts.q, opts.sort_by, opts.sort_dir]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -26,6 +29,9 @@ export function useReviewQueue(opts: UseReviewQueueOptions) {
         limit: opts.pageSize,
         offset,
         ...(opts.category_tax ? { category_tax: opts.category_tax } : {}),
+        ...(opts.q ? { q: opts.q } : {}),
+        ...(opts.sort_by ? { sort_by: opts.sort_by } : {}),
+        ...(opts.sort_dir ? { sort_dir: opts.sort_dir } : {}),
       };
       const res = await listReview(params);
       setData(res);
@@ -39,7 +45,7 @@ export function useReviewQueue(opts: UseReviewQueueOptions) {
     } finally {
       setLoading(false);
     }
-  }, [opts.status, opts.category_tax, opts.pageSize, offset]);
+  }, [opts.status, opts.category_tax, opts.q, opts.sort_by, opts.sort_dir, opts.pageSize, offset]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
