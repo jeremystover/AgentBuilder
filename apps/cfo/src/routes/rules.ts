@@ -9,7 +9,7 @@ const RuleSchema = z.object({
   match_field:    z.enum(['merchant_name', 'description', 'account_id', 'amount']),
   match_operator: z.enum(['contains', 'equals', 'starts_with', 'ends_with', 'regex']),
   match_value:    z.string().min(1),
-  entity:         z.enum(['elyse_coaching', 'jeremy_coaching', 'airbnb_activity', 'family_personal']),
+  entity:         z.enum(['elyse_coaching', 'jeremy_coaching', 'airbnb_activity', 'family_personal']).optional(),
   category_tax:   z.string().optional(),
   category_budget:z.string().optional(),
   priority:       z.number().int().default(0),
@@ -36,7 +36,9 @@ export async function handleCreateRule(request: Request, env: Env): Promise<Resp
   const parsed = RuleSchema.safeParse(body);
   if (!parsed.success) return jsonError(parsed.error.message);
 
-  const { name, match_field, match_operator, match_value, entity, category_tax, category_budget, priority, is_active } = parsed.data;
+  const { name, match_field, match_operator, match_value, category_tax, category_budget, priority, is_active } = parsed.data;
+  const entity = parsed.data.entity ?? (category_tax === 'transfer' ? 'family_personal' : undefined);
+  if (!entity) return jsonError('entity is required for non-transfer rules');
   const id = crypto.randomUUID();
 
   await env.DB.prepare(

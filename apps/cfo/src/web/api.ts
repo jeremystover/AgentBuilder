@@ -325,7 +325,7 @@ export interface RuleInput {
   match_field: RuleMatchField;
   match_operator: RuleMatchOperator;
   match_value: string;
-  entity: EntitySlug;
+  entity?: EntitySlug;
   category_tax?: string;
   category_budget?: string;
   priority?: number;
