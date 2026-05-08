@@ -19,7 +19,7 @@ export interface OptionCategory {
   slug: string;
   label: string;
   kind: "tax" | "budget";
-  group: "schedule_c" | "schedule_e" | "family";
+  group: "schedule_c" | "schedule_e" | "family" | "special";
 }
 
 const SCHEDULE_C: OptionCategory[] = [
@@ -80,6 +80,10 @@ const FAMILY: OptionCategory[] = [
   { slug: "potentially_deductible", label: "Potentially deductible",    kind: "budget", group: "family" },
   { slug: "other_personal",         label: "Other personal",            kind: "budget", group: "family" },
 ];
+
+export const TRANSFER_OPTION: OptionCategory = {
+  slug: "transfer", label: "Transfer (between accounts)", kind: "tax", group: "special",
+};
 
 export const CATEGORY_OPTIONS: OptionCategory[] = [
   ...SCHEDULE_C, ...SCHEDULE_E, ...FAMILY,

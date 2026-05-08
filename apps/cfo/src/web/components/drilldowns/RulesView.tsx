@@ -12,7 +12,7 @@ import {
 import type {
   Rule, RuleMatchField, RuleMatchOperator, EntitySlug, AutoCatImportResult,
 } from "../../types";
-import { CATEGORY_OPTIONS, ENTITY_OPTIONS } from "../../catalog";
+import { CATEGORY_OPTIONS, ENTITY_OPTIONS, TRANSFER_OPTION } from "../../catalog";
 
 const FIELD_OPTIONS: { value: RuleMatchField; label: string }[] = [
   { value: "merchant_name", label: "Merchant" },
@@ -225,7 +225,12 @@ function RuleRow({
         <span className="text-text-muted">{fieldLabel} {opLabel}</span>{" "}
         <span className="text-text-primary font-mono">{rule.match_value}</span>
       </td>
-      <td><Badge tone="info">{humanizeSlug(rule.entity)}</Badge></td>
+      <td>
+        {rule.category_tax === 'transfer'
+          ? <span className="text-text-muted italic text-xs">—</span>
+          : <Badge tone="info">{humanizeSlug(rule.entity)}</Badge>
+        }
+      </td>
       <td className="text-text-primary">
         {rule.category_tax ? humanizeSlug(rule.category_tax) : <span className="text-text-subtle italic">—</span>}
         {rule.category_budget && (
@@ -297,10 +302,12 @@ function RuleEditor({
     }
     setBusy(true);
     try {
+      const isTransfer = draft.category_tax === "transfer";
       const payload: RuleInput = {
         ...draft,
+        entity: isTransfer ? undefined : draft.entity,
         category_tax: draft.category_tax || undefined,
-        category_budget: draft.category_budget || undefined,
+        category_budget: isTransfer ? undefined : (draft.category_budget || undefined),
       };
       if (rule) {
         await updateRule(rule.id, payload);
@@ -376,31 +383,57 @@ function RuleEditor({
           <div className="text-xs text-text-muted mb-1">Then classify as</div>
           <div className="grid grid-cols-2 gap-2">
             <div className="col-span-2">
-              <label className="block text-xs text-text-muted mb-1">Entity</label>
-              <Select value={draft.entity} onChange={(e) => update("entity", e.target.value as EntitySlug)} className="w-full">
-                {ENTITY_OPTIONS.map(({ slug, label }) => (
-                  <option key={slug} value={slug}>{label}</option>
-                ))}
-              </Select>
-            </div>
-            <div>
               <label className="block text-xs text-text-muted mb-1">Tax category</label>
-              <Select value={draft.category_tax ?? ""} onChange={(e) => update("category_tax", e.target.value)} className="w-full">
+              <Select
+                value={draft.category_tax ?? ""}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  update("category_tax", val);
+                  if (val === "transfer") {
+                    update("category_budget", "");
+                  }
+                }}
+                className="w-full"
+              >
                 <option value="">— none —</option>
-                {CATEGORY_OPTIONS.filter((c) => c.kind === "tax").map(({ slug, label }) => (
-                  <option key={slug} value={slug}>{label}</option>
-                ))}
+                <option value={TRANSFER_OPTION.slug}>{TRANSFER_OPTION.label}</option>
+                <optgroup label="Schedule C">
+                  {CATEGORY_OPTIONS.filter((c) => c.kind === "tax" && c.group === "schedule_c").map(({ slug, label }) => (
+                    <option key={slug} value={slug}>{label}</option>
+                  ))}
+                </optgroup>
+                <optgroup label="Schedule E">
+                  {CATEGORY_OPTIONS.filter((c) => c.kind === "tax" && c.group === "schedule_e").map(({ slug, label }) => (
+                    <option key={slug} value={slug}>{label}</option>
+                  ))}
+                </optgroup>
               </Select>
             </div>
-            <div>
-              <label className="block text-xs text-text-muted mb-1">Budget category</label>
-              <Select value={draft.category_budget ?? ""} onChange={(e) => update("category_budget", e.target.value)} className="w-full">
-                <option value="">— none —</option>
-                {CATEGORY_OPTIONS.filter((c) => c.kind === "budget").map(({ slug, label }) => (
-                  <option key={slug} value={slug}>{label}</option>
-                ))}
-              </Select>
-            </div>
+            {draft.category_tax === "transfer" ? (
+              <div className="col-span-2 text-xs text-text-muted bg-bg-elevated rounded px-3 py-2">
+                Transfers are excluded from all tax reports and budgets — no entity or budget category needed.
+              </div>
+            ) : (
+              <>
+                <div className="col-span-2">
+                  <label className="block text-xs text-text-muted mb-1">Entity</label>
+                  <Select value={draft.entity ?? "family_personal"} onChange={(e) => update("entity", e.target.value as EntitySlug)} className="w-full">
+                    {ENTITY_OPTIONS.map(({ slug, label }) => (
+                      <option key={slug} value={slug}>{label}</option>
+                    ))}
+                  </Select>
+                </div>
+                <div>
+                  <label className="block text-xs text-text-muted mb-1">Budget category</label>
+                  <Select value={draft.category_budget ?? ""} onChange={(e) => update("category_budget", e.target.value)} className="w-full">
+                    <option value="">— none —</option>
+                    {CATEGORY_OPTIONS.filter((c) => c.kind === "budget").map(({ slug, label }) => (
+                      <option key={slug} value={slug}>{label}</option>
+                    ))}
+                  </Select>
+                </div>
+              </>
+            )}
           </div>
         </div>
 
