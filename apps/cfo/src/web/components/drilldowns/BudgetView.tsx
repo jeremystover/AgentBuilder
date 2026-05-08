@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Plus, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -7,9 +7,13 @@ import {
 import { useBudget } from "../../hooks/useBudget";
 import {
   upsertBudgetTarget, deleteBudgetTarget, createBudgetCategory,
+  listTransactions, classifyTransaction,
 } from "../../api";
+import { txAmountColor } from "../../utils/txColor";
+import { CATEGORY_OPTIONS } from "../../catalog";
 import type {
   BudgetCadence, BudgetPreset, BudgetStatusLine, BudgetStatusTone, BudgetTarget,
+  Transaction, EntitySlug,
 } from "../../types";
 
 const PRESETS: { value: BudgetPreset; label: string }[] = [
@@ -43,6 +47,7 @@ export function BudgetView() {
   const { status, categories, targets, loading, error, refresh } = useBudget({ status: statusParams });
 
   const [openSlug, setOpenSlug] = useState<string | null>(null);
+  const [openTxSlug, setOpenTxSlug] = useState<string | null>(null);
   const [creatingCategory, setCreatingCategory] = useState(false);
 
   const visible = useMemo(() => {
@@ -180,12 +185,22 @@ export function BudgetView() {
                   key={line.category_slug}
                   line={line}
                   onClick={() => setOpenSlug(line.category_slug)}
+                  onSpentClick={() => setOpenTxSlug(line.category_slug)}
                 />
               ))}
             </tbody>
           </table>
         </div>
       </Card>
+
+      <BudgetTransactionsDrawer
+        slug={openTxSlug}
+        categoryName={openTxSlug ? (status?.categories.find((c) => c.category_slug === openTxSlug)?.category_name ?? openTxSlug) : null}
+        dateFrom={status?.period.start ?? ""}
+        dateTo={status?.period.end ?? ""}
+        onClose={() => setOpenTxSlug(null)}
+        onChanged={refresh}
+      />
 
       <TargetEditor
         slug={openSlug}
@@ -236,7 +251,7 @@ const STATUS_LABEL: Record<BudgetStatusTone, string> = {
   no_target: "No target",
 };
 
-function BudgetRow({ line, onClick }: { line: BudgetStatusLine; onClick(): void }) {
+function BudgetRow({ line, onClick, onSpentClick }: { line: BudgetStatusLine; onClick(): void; onSpentClick(): void }) {
   const pct = line.percent_used ?? 0;
   const barCls =
     line.status === "over" ? "bg-accent-danger" :
@@ -269,7 +284,15 @@ function BudgetRow({ line, onClick }: { line: BudgetStatusLine; onClick(): void 
           <span className="text-text-subtle">—</span>
         )}
       </td>
-      <td className="text-right tabular-nums text-text-primary">{fmtUsd(line.spent)}</td>
+      <td className="text-right tabular-nums">
+        <button
+          className="text-accent-primary hover:underline tabular-nums cursor-pointer"
+          onClick={(e) => { e.stopPropagation(); onSpentClick(); }}
+          title="View transactions"
+        >
+          {fmtUsd(line.spent)}
+        </button>
+      </td>
       <td className={`text-right tabular-nums ${remainingCls}`}>
         {line.remaining == null ? "—" : fmtUsd(line.remaining)}
       </td>
@@ -294,6 +317,103 @@ function BudgetRow({ line, onClick }: { line: BudgetStatusLine; onClick(): void 
         <Badge tone={STATUS_TONE[line.status]}>{STATUS_LABEL[line.status]}</Badge>
       </td>
     </tr>
+  );
+}
+
+// ── Budget transactions drawer ───────────────────────────────────────────────
+
+function BudgetTransactionsDrawer({
+  slug, categoryName, dateFrom, dateTo, onClose, onChanged,
+}: {
+  slug: string | null;
+  categoryName: string | null;
+  dateFrom: string;
+  dateTo: string;
+  onClose(): void;
+  onChanged(): Promise<void>;
+}) {
+  const [txs, setTxs] = useState<Transaction[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [reclassifying, setReclassifying] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!slug || !dateFrom || !dateTo) { setTxs([]); return; }
+    setLoading(true);
+    listTransactions({ category_budget: slug, date_from: dateFrom, date_to: dateTo, limit: 500, sort_by: "posted_date", sort_dir: "desc" })
+      .then((r) => setTxs(r.transactions))
+      .catch((e) => toast.error(e instanceof Error ? e.message : String(e)))
+      .finally(() => setLoading(false));
+  }, [slug, dateFrom, dateTo]);
+
+  const handleReclassify = async (tx: Transaction, newBudgetCategory: string) => {
+    setReclassifying(tx.id);
+    try {
+      await classifyTransaction(tx.id, {
+        ...(tx.entity ? { entity: tx.entity as EntitySlug } : {}),
+        category_tax: tx.category_tax ?? "uncategorized",
+        category_budget: newBudgetCategory || undefined,
+      });
+      toast.success("Recategorized");
+      setTxs((prev) => prev.map((t) => t.id === tx.id ? { ...t, category_budget: newBudgetCategory } : t));
+      await onChanged();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setReclassifying(null);
+    }
+  };
+
+  const total = txs.reduce((sum, t) => sum + Math.abs(t.amount), 0);
+
+  return (
+    <Drawer
+      open={!!slug}
+      onClose={onClose}
+      title={categoryName ?? "Transactions"}
+    >
+      {loading ? (
+        <div className="text-sm text-text-muted">Loading…</div>
+      ) : txs.length === 0 ? (
+        <EmptyState>No transactions in this category for the period.</EmptyState>
+      ) : (
+        <>
+          <div className="text-xs text-text-muted mb-3">
+            {txs.length} transaction{txs.length !== 1 ? "s" : ""} · {fmtUsd(total)} total
+          </div>
+          <div className="space-y-2">
+            {txs.map((tx) => (
+              <div key={tx.id} className="rounded-lg border border-border p-3 bg-bg-elevated">
+                <div className="flex items-start justify-between gap-2 mb-2">
+                  <div className="min-w-0">
+                    <div className="text-sm text-text-primary font-medium truncate">
+                      {tx.merchant_name ?? tx.description ?? "—"}
+                    </div>
+                    {tx.merchant_name && tx.description !== tx.merchant_name && (
+                      <div className="text-xs text-text-muted truncate">{tx.description}</div>
+                    )}
+                    <div className="text-xs text-text-muted mt-0.5">{tx.posted_date} · {tx.account_name ?? "—"}</div>
+                  </div>
+                  <span className={`tabular-nums text-sm font-semibold flex-none ${txAmountColor(tx.amount, tx.account_type ?? null, tx.category_tax ?? null)}`}>
+                    {fmtUsd(Math.abs(tx.amount))}
+                  </span>
+                </div>
+                <Select
+                  value={tx.category_budget ?? ""}
+                  onChange={(e) => void handleReclassify(tx, e.target.value)}
+                  disabled={reclassifying === tx.id}
+                  className="w-full text-xs"
+                >
+                  <option value="">— no budget category —</option>
+                  {CATEGORY_OPTIONS.map(({ slug: s, label }) => (
+                    <option key={s} value={s}>{label}</option>
+                  ))}
+                </Select>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </Drawer>
   );
 }
 
