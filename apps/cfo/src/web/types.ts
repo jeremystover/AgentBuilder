@@ -350,3 +350,50 @@ export interface BudgetStatusResponse {
   period: { start: string; end: string; days: number; label: string };
   categories: BudgetStatusLine[];
 }
+
+// ── Reports ──────────────────────────────────────────────────────────────
+
+export type ScheduleCEntity = "elyse_coaching" | "jeremy_coaching";
+export type ScheduleKind = "C" | "E";
+
+export interface ScheduleLine {
+  category_tax: string;
+  category_name: string | null;
+  form_line: string | null;
+  total_amount: number;
+  transaction_count: number;
+}
+
+export interface ScheduleReport {
+  tax_year: string;
+  entity: EntitySlug;
+  schedule: ScheduleKind;
+  income: { categories: ScheduleLine[]; total: number };
+  expenses: { categories: ScheduleLine[]; total: number };
+  net_profit: number;
+  pending_review: number;
+}
+
+export interface SummaryEntityRow {
+  entity: EntitySlug | null;
+  total: number;
+  count: number;
+}
+
+export interface SummaryMonthRow {
+  month: string;
+  entity: EntitySlug | null;
+  total: number;
+}
+
+export interface SummaryReviewRow {
+  status: ReviewStatus;
+  count: number;
+}
+
+export interface SummaryReport {
+  tax_year: string;
+  by_entity: SummaryEntityRow[];
+  by_month: SummaryMonthRow[];
+  review_queue: SummaryReviewRow[];
+}

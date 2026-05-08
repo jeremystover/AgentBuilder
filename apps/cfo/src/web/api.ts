@@ -10,6 +10,7 @@ import type {
   ImportRecord, CsvImportResult, AmazonImportResult, TillerImportResult, DeleteImportsResult,
   Rule, RuleMatchField, RuleMatchOperator, AutoCatImportResult,
   BudgetCategory, BudgetTarget, BudgetStatusResponse, BudgetCadence, BudgetPreset,
+  ScheduleReport, ScheduleCEntity, SummaryReport,
 } from "./types";
 
 async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
@@ -408,6 +409,30 @@ export async function getBudgetStatus(params: BudgetStatusParams = {}): Promise<
   if (params.category_slug) qs.set("category_slug", params.category_slug);
   const suffix = qs.toString() ? `?${qs.toString()}` : "";
   return request<BudgetStatusResponse>(`/budget/status${suffix}`);
+}
+
+// ── Reports ───────────────────────────────────────────────────────────────
+
+export async function getScheduleC(year: string, entity: ScheduleCEntity): Promise<ScheduleReport> {
+  const qs = new URLSearchParams({ year, entity });
+  return request<ScheduleReport>(`/reports/schedule-c?${qs.toString()}`);
+}
+
+export async function getScheduleE(year: string): Promise<ScheduleReport> {
+  const qs = new URLSearchParams({ year });
+  return request<ScheduleReport>(`/reports/schedule-e?${qs.toString()}`);
+}
+
+export async function getSummaryReport(year: string): Promise<SummaryReport> {
+  const qs = new URLSearchParams({ year });
+  return request<SummaryReport>(`/reports/summary?${qs.toString()}`);
+}
+
+// CSV export endpoint URL — used as an <a href> for download.
+export function reportExportUrl(year: string, entity?: string): string {
+  const qs = new URLSearchParams({ year });
+  if (entity) qs.set("entity", entity);
+  return `/reports/export?${qs.toString()}`;
 }
 
 // ── Chat (SSE) ────────────────────────────────────────────────────────────
