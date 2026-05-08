@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { Sparkles, RefreshCw } from "lucide-react";
+import { Sparkles, RefreshCw, Loader2 } from "lucide-react";
 import { txAmountColor } from "../../utils/txColor";
 import { toast } from "sonner";
 import {
@@ -39,6 +39,11 @@ export function ReviewQueueView() {
   const [bulkEntity, setBulkEntity] = useState<string>("elyse_coaching");
   const [bulkCategory, setBulkCategory] = useState<string>("");
   const [busy, setBusy] = useState(false);
+
+  // Classify flow: null = idle, "picking" = scope picker visible, "running" = in-flight
+  type ClassifyState = null | "picking" | "running";
+  const [classifyState, setClassifyState] = useState<ClassifyState>(null);
+  const [classifyStatus, setClassifyStatus] = useState("");
 
   // ── Selection helpers ──────────────────────────────────────────────────
   const visibleIds = useMemo(() => items.map((it) => it.id), [items]);
@@ -105,19 +110,34 @@ export function ReviewQueueView() {
     }
   }, [busy, total, status, selectedCount, selectedIds, categoryFilter, bulkEntity, bulkCategory, refresh]);
 
-  const onClassify = useCallback(async () => {
-    if (busy) return;
+  const runClassify = useCallback(async (transactionIds?: string[]) => {
+    const count = transactionIds ? transactionIds.length : total;
+    setClassifyState("running");
+    setClassifyStatus(`Classifying ${count} transaction${count !== 1 ? "s" : ""}…`);
     setBusy(true);
     try {
-      const r = await runClassification();
-      toast.success(`Classified ${r.total ?? 0}: rules ${r.rules ?? 0}, AI ${r.ai ?? 0}, review ${r.review_required ?? 0}`);
+      const r = await runClassification(transactionIds);
+      const processed = r.total_processed ?? 0;
+      const byRules = r.classified_by_rules ?? 0;
+      const byAI = r.classified_by_ai ?? 0;
+      const needsReview = r.queued_for_review ?? 0;
+      if (processed === 0) {
+        toast.success("Nothing to classify — all transactions already have a category.");
+      } else {
+        toast.success(
+          `Classified ${processed}: ${byRules} by rules, ${byAI} by AI` +
+          (needsReview > 0 ? `, ${needsReview} need review` : ""),
+        );
+      }
       await refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
+      setClassifyState(null);
+      setClassifyStatus("");
     }
-  }, [busy, refresh]);
+  }, [total, refresh]);
 
   const onResolveOne = useCallback(async (id: string, input: Parameters<typeof resolveReview>[1]) => {
     setBusy(true);
@@ -145,15 +165,44 @@ export function ReviewQueueView() {
         }
         actions={
           <>
-            <Button variant="primary" onClick={onClassify} disabled={busy}>
-              <Sparkles className="w-4 h-4" /> Classify unclassified
-            </Button>
-            <Button onClick={() => void refresh()} title="Refresh">
+            {classifyState === "picking" ? (
+              <>
+                <span className="text-sm text-text-muted self-center">Classify:</span>
+                <Button
+                  variant="primary"
+                  onClick={() => void runClassify(items.map(it => it.transaction_id))}
+                  disabled={items.length === 0}
+                >
+                  This page ({items.length})
+                </Button>
+                <Button variant="primary" onClick={() => void runClassify()}>
+                  All unclassified ({total})
+                </Button>
+                <Button variant="ghost" onClick={() => setClassifyState(null)}>Cancel</Button>
+              </>
+            ) : (
+              <Button
+                variant="primary"
+                onClick={() => setClassifyState("picking")}
+                disabled={busy || total === 0}
+              >
+                <Sparkles className="w-4 h-4" /> Classify unclassified
+              </Button>
+            )}
+            <Button onClick={() => void refresh()} title="Refresh" disabled={busy}>
               <RefreshCw className={"w-4 h-4 " + (loading ? "animate-spin" : "")} />
             </Button>
           </>
         }
       />
+
+      {classifyState === "running" && (
+        <div className="flex items-center gap-3 px-4 py-3 mb-4 rounded-lg bg-accent-primary/10 border border-accent-primary/20 text-sm text-accent-primary">
+          <Loader2 className="w-4 h-4 animate-spin flex-none" />
+          <span>{classifyStatus}</span>
+          <span className="text-text-muted ml-auto">This may take 30–60 seconds for large batches</span>
+        </div>
+      )}
 
       <Card className="p-4 mb-4">
         <div className="flex items-center gap-3 flex-wrap">

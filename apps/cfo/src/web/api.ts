@@ -113,15 +113,19 @@ export async function bulkResolveReview(input: BulkResolveInput): Promise<{ upda
 }
 
 export interface ClassifyRunResult {
-  total?: number;
-  rules?: number;
-  ai?: number;
-  review_required?: number;
+  total_processed?: number;
+  classified_by_rules?: number;
+  classified_by_ai?: number;
+  queued_for_review?: number;
+  ai_errors?: number;
   [k: string]: unknown;
 }
 
-export async function runClassification(): Promise<ClassifyRunResult> {
-  return request(`/classify/run`, { method: "POST", body: JSON.stringify({}) });
+export async function runClassification(transactionIds?: string[]): Promise<ClassifyRunResult> {
+  return request(`/classify/run`, {
+    method: "POST",
+    body: JSON.stringify(transactionIds ? { transaction_ids: transactionIds } : {}),
+  });
 }
 
 export async function getNextReviewItem(): Promise<ReviewItem | { empty: true; message: string }> {
