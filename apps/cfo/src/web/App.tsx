@@ -4,6 +4,7 @@ import { ReviewQueueRail } from "./components/ReviewQueueRail";
 import { TopNav } from "./components/TopNav";
 import { ReviewQueueView } from "./components/drilldowns/ReviewQueueView";
 import { AccountsView } from "./components/drilldowns/AccountsView";
+import { TransactionsView } from "./components/drilldowns/TransactionsView";
 import { useChat } from "./hooks/useChat";
 import { useSnapshot } from "./hooks/useSnapshot";
 import { useRoute } from "./router";
@@ -18,7 +19,8 @@ export function App() {
         {route === "chat" && <ChatLayout />}
         {route === "review" && <ReviewQueueView />}
         {route === "accounts" && <AccountsView />}
-        {route !== "chat" && route !== "review" && route !== "accounts" && <ComingSoon route={route} />}
+        {route === "transactions" && <TransactionsView />}
+        {route !== "chat" && route !== "review" && route !== "accounts" && route !== "transactions" && <ComingSoon route={route} />}
       </div>
     </div>
   );

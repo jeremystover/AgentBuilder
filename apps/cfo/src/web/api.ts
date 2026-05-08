@@ -6,6 +6,7 @@ import type {
   ChatMessage, ChatStreamEvent, Snapshot,
   ReviewListResponse, ReviewItem, ResolveAction, BulkResolveInput,
   Account, BankConfig,
+  Transaction, TransactionListResponse, TransactionDetail, TransactionSplit, EntitySlug,
 } from "./types";
 
 async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
@@ -163,6 +164,70 @@ export async function updateAccount(
     method: "PATCH",
     body: JSON.stringify(patch),
   });
+}
+
+// ── Transactions ──────────────────────────────────────────────────────────
+
+export interface ListTransactionsParams {
+  entity?: EntitySlug;
+  category_tax?: string;
+  account_id?: string;
+  date_from?: string;
+  date_to?: string;
+  review_required?: boolean;
+  unclassified?: boolean;
+  limit?: number;
+  offset?: number;
+}
+
+export async function listTransactions(params: ListTransactionsParams = {}): Promise<TransactionListResponse> {
+  const qs = new URLSearchParams();
+  if (params.entity) qs.set("entity", params.entity);
+  if (params.category_tax) qs.set("category_tax", params.category_tax);
+  if (params.account_id) qs.set("account_id", params.account_id);
+  if (params.date_from) qs.set("date_from", params.date_from);
+  if (params.date_to) qs.set("date_to", params.date_to);
+  if (params.review_required != null) qs.set("review_required", String(params.review_required));
+  if (params.unclassified) qs.set("unclassified", "true");
+  if (params.limit != null) qs.set("limit", String(params.limit));
+  if (params.offset != null) qs.set("offset", String(params.offset));
+  return request<TransactionListResponse>(`/transactions?${qs.toString()}`);
+}
+
+export async function getTransaction(id: string): Promise<TransactionDetail> {
+  return request<TransactionDetail>(`/transactions/${encodeURIComponent(id)}`);
+}
+
+export interface ClassifyTransactionInput {
+  entity: EntitySlug;
+  category_tax: string;
+  category_budget?: string;
+  note?: string;
+}
+
+export async function classifyTransaction(id: string, input: ClassifyTransactionInput): Promise<{ transaction: Transaction }> {
+  return request<{ transaction: Transaction }>(`/transactions/${encodeURIComponent(id)}/classify`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
+export interface SplitItem {
+  entity: EntitySlug;
+  category_tax?: string;
+  amount: number;
+  note?: string;
+}
+
+export async function splitTransaction(id: string, splits: SplitItem[]): Promise<{ splits: TransactionSplit[] }> {
+  return request<{ splits: TransactionSplit[] }>(`/transactions/${encodeURIComponent(id)}/split`, {
+    method: "POST",
+    body: JSON.stringify(splits),
+  });
+}
+
+export async function deleteTransaction(id: string): Promise<{ deleted: true; transaction_id: string }> {
+  return request(`/transactions/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
 // ── Chat (SSE) ────────────────────────────────────────────────────────────

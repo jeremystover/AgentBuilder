@@ -125,3 +125,90 @@ export interface BulkResolveInput {
   category_tax?: string;
   category_budget?: string;
 }
+
+// ── Transactions ─────────────────────────────────────────────────────────
+
+export type EntitySlug = "elyse_coaching" | "jeremy_coaching" | "airbnb_activity" | "family_personal";
+
+export interface Transaction {
+  id: string;
+  user_id: string;
+  account_id: string;
+  posted_date: string;
+  amount: number;
+  currency: string | null;
+  merchant_name: string | null;
+  description: string | null;
+  import_id: string | null;
+  // Joined from classifications
+  entity: EntitySlug | null;
+  category_tax: string | null;
+  category_budget: string | null;
+  confidence: number | null;
+  method: string | null;
+  reason_codes: string | null;
+  review_required: number | null;
+  is_locked: number | null;
+  // Joined from accounts
+  account_name: string | null;
+  owner_tag: string | null;
+}
+
+export interface TransactionSplit {
+  id: string;
+  transaction_id: string;
+  entity: EntitySlug;
+  category_tax: string | null;
+  amount: number;
+  note: string | null;
+}
+
+export interface ClassificationHistoryEntry {
+  id: string;
+  transaction_id: string;
+  entity: EntitySlug | null;
+  category_tax: string | null;
+  category_budget: string | null;
+  confidence: number | null;
+  method: string | null;
+  reason_codes: string | null;
+  changed_at: string;
+  changed_by: string | null;
+}
+
+export interface TransactionAttachment {
+  id: string;
+  filename: string;
+  content_type: string | null;
+  size_bytes: number | null;
+  note: string | null;
+  created_at: string;
+}
+
+export interface AmazonMatch {
+  order_id: string;
+  order_date: string | null;
+  shipment_date: string | null;
+  total_amount: number | null;
+  product_names: string | null;
+  seller_names: string | null;
+  ship_to: string | null;
+  shipping_address: string | null;
+  match_score: number | null;
+  match_method: string | null;
+}
+
+export interface TransactionDetail {
+  transaction: Transaction;
+  splits: TransactionSplit[];
+  history: ClassificationHistoryEntry[];
+  attachments: TransactionAttachment[];
+  amazon_matches: AmazonMatch[];
+}
+
+export interface TransactionListResponse {
+  transactions: Transaction[];
+  total: number;
+  limit: number;
+  offset: number;
+}
