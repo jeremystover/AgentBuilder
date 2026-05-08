@@ -12,7 +12,8 @@ export type RouteId =
   | "reports"
   | "imports"
   | "rules"
-  | "budget";
+  | "budget"
+  | "config";
 
 const ROUTE_BY_HASH: Record<string, RouteId> = {
   "": "chat",
@@ -25,6 +26,7 @@ const ROUTE_BY_HASH: Record<string, RouteId> = {
   "#/imports": "imports",
   "#/rules": "rules",
   "#/budget": "budget",
+  "#/config": "config",
 };
 
 export function parseRoute(hash: string): RouteId {

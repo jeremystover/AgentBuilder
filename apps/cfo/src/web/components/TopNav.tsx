@@ -1,4 +1,4 @@
-import { Wallet, MessageSquare, Inbox, Building2, Receipt, FileText, Upload, Filter, PiggyBank } from "lucide-react";
+import { Wallet, MessageSquare, Inbox, Building2, Receipt, FileText, Upload, Filter, PiggyBank, Settings } from "lucide-react";
 import { useRoute, type RouteId } from "../router";
 
 interface Tab {
@@ -16,6 +16,7 @@ const TABS: Tab[] = [
   { id: "imports",      label: "Imports",      icon: Upload },
   { id: "rules",        label: "Rules",        icon: Filter },
   { id: "budget",       label: "Budget",       icon: PiggyBank },
+  { id: "config",       label: "Config",       icon: Settings },
 ];
 
 export function TopNav() {
