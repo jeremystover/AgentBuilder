@@ -311,6 +311,62 @@ function compareTasks(a, b, key) {
   return av < bv ? -1 : 1;
 }
 
+// Surfaces waiting tasks in their own section above the open-task table so
+// the user has a single at-a-glance view of "what am I tracking but can't act
+// on yet." Each row exposes inline Resume / Snooze actions that hit the same
+// REST endpoints used by the chat tools (so the changeset audit trail and the
+// assigned-wait Commitment sibling are preserved).
+function renderWaitingSection(waitingTasks, projectsById, refresh) {
+  const card = el("div", { class: "bg-white rounded-xl ring-1 ring-amber-200 overflow-hidden" });
+  card.appendChild(el("div", { class: "flex items-center gap-2 px-4 py-2 bg-amber-50 border-b border-amber-200" },
+    el("span", { class: "text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 ring-1 ring-amber-200" }, "Waiting"),
+    el("span", { class: "text-sm font-medium text-amber-900" },
+      \`\${waitingTasks.length} task\${waitingTasks.length === 1 ? "" : "s"} parked\`),
+  ));
+  const list = el("div", { class: "divide-y divide-amber-100" });
+  for (const t of waitingTasks) {
+    const projName = t.projectId && projectsById[t.projectId] ? (projectsById[t.projectId].name || "") : "";
+    const waitOn = t.waitOnName || t.waitOnStakeholderId || t.blockedByTaskKey || "";
+    const expected = t.expectedBy ? fmtDate(t.expectedBy) : "";
+
+    const row = el("div", {
+      class: "flex items-center gap-3 px-4 py-2 hover:bg-amber-50/60 cursor-pointer",
+      onclick: () => window.openTaskEditor(t, { onChanged: () => refresh?.() }),
+    });
+    row.appendChild(el("div", { class: "flex-1 min-w-0" },
+      el("div", { class: "text-sm text-ink truncate" }, t.title || "(untitled)"),
+      el("div", { class: "text-xs text-slate-500 mt-0.5" },
+        [t.waitReason || "", waitOn ? "on " + waitOn : "", expected ? "expected " + expected : "", projName ? "· " + projName : ""]
+          .filter(Boolean).join(" · ")),
+    ));
+    row.appendChild(el("button", {
+      class: "text-xs text-emerald-700 hover:underline",
+      title: "Resume — clear wait fields, set status=open",
+      onclick: async (e) => {
+        e.stopPropagation();
+        try {
+          await api(\`/api/tasks/\${encodeURIComponent(t.taskKey)}/resume\`, { method: "POST", body: {} });
+          toast("Resumed", "ok"); refresh?.();
+        } catch (err) { toast(err.message, "err"); }
+      },
+    }, "Resume"));
+    row.appendChild(el("button", {
+      class: "text-xs text-slate-600 hover:underline",
+      title: "Snooze — bump nextCheckAt 3d (7d on second snooze)",
+      onclick: async (e) => {
+        e.stopPropagation();
+        try {
+          await api(\`/api/tasks/\${encodeURIComponent(t.taskKey)}/snooze\`, { method: "POST", body: {} });
+          toast("Snoozed", "ok"); refresh?.();
+        } catch (err) { toast(err.message, "err"); }
+      },
+    }, "Snooze"));
+    list.appendChild(row);
+  }
+  card.appendChild(list);
+  return card;
+}
+
 async function renderProjectsTaskView(root, refresh) {
   const includeCompleted = window.showCompletedFlag("projects-tasks");
   const [data, projData] = await Promise.all([
@@ -346,6 +402,22 @@ async function renderProjectsTaskView(root, refresh) {
     return sort.dir === "desc" ? -cmp : cmp;
   });
 
+  // Pull waiting tasks out into a dedicated section above the table so they
+  // don't crowd the actionable list. The amber badge that used to render
+  // inline (kept below for safety) is now redundant for these rows.
+  const isWaitingStatus = (t) => String(t.status || "").toLowerCase() === "waiting";
+  const waitingTasks = sorted.filter(isWaitingStatus);
+  const openTasks = sorted.filter((t) => !isWaitingStatus(t));
+  if (waitingTasks.length) {
+    root.appendChild(renderWaitingSection(waitingTasks, projectsById, refresh));
+  }
+  if (!openTasks.length) {
+    if (!waitingTasks.length) {
+      root.appendChild(el("div", { class: "text-sm text-slate-500" }, "No open tasks."));
+    }
+    return;
+  }
+
   const headerCell = (key, label, extra = "") => {
     const isOn = sort.key === key;
     const arrow = isOn ? (sort.dir === "asc" ? " ↑" : " ↓") : "";
@@ -374,7 +446,7 @@ async function renderProjectsTaskView(root, refresh) {
   table.appendChild(thead);
 
   const tbody = el("tbody", {});
-  for (const t of sorted) {
+  for (const t of openTasks) {
     const pri = (t.priority || "").toLowerCase();
     const priClass = pri === "high" ? "bg-rose-100 text-rose-700"
                    : pri === "medium" ? "bg-amber-100 text-amber-800"

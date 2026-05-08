@@ -761,7 +761,7 @@ export async function handleApiRequest(request, ctx) {
     return jsonResponse({ ok: true, result });
   }
   {
-    const m = path.match(/^\/api\/tasks\/([^/]+)(\/(complete|uncomplete))?$/);
+    const m = path.match(/^\/api\/tasks\/([^/]+)(\/(complete|uncomplete|waiting|resume|snooze))?$/);
     if (m && method === "PATCH") {
       const body = await readJson();
       const result = await proposeAndCommit(tools, "propose_update_task", {
@@ -785,6 +785,44 @@ export async function handleApiRequest(request, ctx) {
         taskKey: m[1],
         patch: { status: "open" },
         reason: "uncompleted via web UI",
+      });
+      return jsonResponse({ ok: true, result });
+    }
+    // Route through propose_set_task_waiting so the assigned-wait Commitment
+    // row + nextCheckAt defaulting are applied identically to the chat path.
+    if (m && m[3] === "waiting" && method === "POST") {
+      const body = await readJson();
+      const result = await proposeAndCommit(tools, "propose_set_task_waiting", {
+        taskKey: m[1],
+        waitReason: body.waitReason,
+        expectedBy: body.expectedBy || undefined,
+        nextCheckAt: body.nextCheckAt || undefined,
+        waitOnStakeholderId: body.waitOnStakeholderId || undefined,
+        waitOnName: body.waitOnName || undefined,
+        waitChannel: body.waitChannel || undefined,
+        blockedByTaskKey: body.blockedByTaskKey || undefined,
+        assigneeStakeholderId: body.assigneeStakeholderId || undefined,
+        assigneeName: body.assigneeName || undefined,
+        waitDetail: body.waitDetail || undefined,
+        reason: body.reason || "set waiting via web UI",
+        sources: body.sources || [{ sourceType: "manual", sourceRef: "web-ui", excerpt: "Set waiting via web UI" }],
+      });
+      return jsonResponse({ ok: true, result });
+    }
+    if (m && m[3] === "resume" && method === "POST") {
+      const body = await readJson();
+      const result = await proposeAndCommit(tools, "propose_resume_task", {
+        taskKey: m[1],
+        reason: body.reason || "resumed via web UI",
+      });
+      return jsonResponse({ ok: true, result });
+    }
+    if (m && m[3] === "snooze" && method === "POST") {
+      const body = await readJson();
+      const result = await proposeAndCommit(tools, "propose_snooze_task", {
+        taskKey: m[1],
+        until: body.until || undefined,
+        reason: body.reason || "snoozed via web UI",
       });
       return jsonResponse({ ok: true, result });
     }
@@ -1382,6 +1420,15 @@ function toTaskDto(t) {
     projectId: t.projectId || "",
     notes: t.notes || "",
     completedAt: t.completedAt || "",
+    waitReason: t.waitReason || "",
+    waitOnName: t.waitOnName || "",
+    waitOnStakeholderId: t.waitOnStakeholderId || "",
+    waitChannel: t.waitChannel || "",
+    blockedByTaskKey: t.blockedByTaskKey || "",
+    expectedBy: t.expectedBy || "",
+    nextCheckAt: t.nextCheckAt || "",
+    lastSnoozedAt: t.lastSnoozedAt || "",
+    commitmentId: t.commitmentId || "",
   };
 }
 

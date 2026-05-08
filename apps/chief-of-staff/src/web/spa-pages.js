@@ -215,6 +215,116 @@ function openTaskEditor(task, { onChanged, onSaved, onCompleted } = {}) {
   });
   notesI.value = task.notes || "";
 
+  // ── Waiting panel ────────────────────────────────────────────────────────
+  // Two modes:
+  //   - task.status !== 'waiting' → "Mark waiting…" toggle reveals the form
+  //   - task.status === 'waiting' → form is pre-expanded and pre-filled, with
+  //     extra Resume / Snooze buttons. Saving re-runs propose_set_task_waiting
+  //     so the backend overwrites cleanly (and re-creates the Commitment row
+  //     for assigned-waits if reason changed).
+  const wasWaiting = String(task.status || "").toLowerCase() === "waiting";
+
+  const reasonI = el("select", {
+    class: "rounded-lg ring-1 ring-slate-200 px-3 py-2 bg-white text-sm focus:ring-indigo-400 focus:outline-none",
+  });
+  for (const r of [
+    ["person", "Person — waiting on a reply"],
+    ["assigned", "Assigned — delegated to someone"],
+    ["dependency", "Dependency — blocked by another task"],
+    ["date", "Date — calendar date must arrive"],
+    ["time-block", "Time-block — waiting for focus time"],
+    ["external-event", "External event — release / vendor / etc"],
+  ]) {
+    const o = el("option", { value: r[0] }, r[1]);
+    if ((task.waitReason || "person") === r[0]) o.selected = true;
+    reasonI.appendChild(o);
+  }
+  // "Waiting on" maps differently per reason: name for person/assigned,
+  // taskKey for dependency, free text otherwise (stored in waitDetail.note).
+  const waitOnI = el("input", {
+    type: "text",
+    placeholder: "Name, taskKey, or free text",
+    value: task.waitOnName || task.blockedByTaskKey || "",
+    class: "w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 text-sm focus:ring-indigo-400 focus:outline-none",
+  });
+  const expectedI = el("input", {
+    type: "date",
+    value: (task.expectedBy || "").slice(0, 10),
+    class: "rounded-lg ring-1 ring-slate-200 px-3 py-2 text-sm focus:ring-indigo-400 focus:outline-none",
+  });
+  const channelI = el("select", {
+    class: "rounded-lg ring-1 ring-slate-200 px-3 py-2 bg-white text-sm focus:ring-indigo-400 focus:outline-none",
+  });
+  for (const c of [["", "—"], ["email", "Email"], ["call", "Call"], ["meeting", "Meeting"], ["other", "Other"]]) {
+    const o = el("option", { value: c[0] }, c[1]);
+    if ((task.waitChannel || "") === c[0]) o.selected = true;
+    channelI.appendChild(o);
+  }
+
+  const waitFields = el("div", { class: "space-y-3 pt-2" },
+    el("label", { class: "block text-xs uppercase tracking-wide text-slate-500" }, "Reason", reasonI),
+    el("label", { class: "block text-xs uppercase tracking-wide text-slate-500" }, "Waiting on", waitOnI),
+    el("div", { class: "flex gap-3" },
+      el("label", { class: "flex-1 text-xs uppercase tracking-wide text-slate-500" }, "Expected by", expectedI),
+      el("label", { class: "flex-1 text-xs uppercase tracking-wide text-slate-500" }, "Channel", channelI),
+    ),
+  );
+
+  // Map a single "waiting on" string into the right typed field per reason.
+  function buildWaitingBody() {
+    const reason = reasonI.value;
+    const waitOn = waitOnI.value.trim();
+    const body = {
+      waitReason: reason,
+      expectedBy: expectedI.value ? new Date(expectedI.value).toISOString() : "",
+      waitChannel: channelI.value || "",
+    };
+    if (reason === "person") body.waitOnName = waitOn;
+    else if (reason === "assigned") body.assigneeName = waitOn;
+    else if (reason === "dependency") body.blockedByTaskKey = waitOn;
+    else if (waitOn) body.waitDetail = { note: waitOn };
+    return body;
+  }
+
+  const toggle = el("button", {
+    class: "text-sm text-amber-700 hover:underline",
+    onclick: () => {
+      const open = waitWrap.style.display !== "none";
+      waitWrap.style.display = open ? "none" : "";
+      toggle.textContent = open ? "Mark waiting…" : "Hide waiting fields";
+    },
+  }, wasWaiting ? "Hide waiting fields" : "Mark waiting…");
+
+  const waitWrap = el("div", { class: "rounded-lg ring-1 ring-amber-200 bg-amber-50/50 p-3 space-y-2" });
+  if (wasWaiting) {
+    waitWrap.appendChild(el("div", { class: "flex items-center gap-2" },
+      el("span", { class: "text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 ring-1 ring-amber-200" }, "Waiting"),
+      el("button", {
+        class: "text-xs text-emerald-700 hover:underline",
+        onclick: async () => {
+          try {
+            await api(\`/api/tasks/\${encodeURIComponent(task.taskKey)}/resume\`, { method: "POST", body: {} });
+            modal.close(); toast("Resumed", "ok");
+            if (onSaved) onSaved({ status: "open", waitReason: "", waitOnName: "", blockedByTaskKey: "", expectedBy: "", nextCheckAt: "", waitChannel: "" });
+            else onChanged?.();
+          } catch (err) { toast(err.message, "err"); }
+        },
+      }, "Resume"),
+      el("button", {
+        class: "text-xs text-slate-600 hover:underline",
+        onclick: async () => {
+          try {
+            await api(\`/api/tasks/\${encodeURIComponent(task.taskKey)}/snooze\`, { method: "POST", body: {} });
+            modal.close(); toast("Snoozed", "ok");
+            onChanged?.();
+          } catch (err) { toast(err.message, "err"); }
+        },
+      }, "Snooze 3d"),
+    ));
+  }
+  waitWrap.appendChild(waitFields);
+  if (!wasWaiting) waitWrap.style.display = "none";
+
   const card = el("div", { class: "space-y-4" },
     el("h2", { class: "text-xl font-semibold" }, "Edit task"),
     titleI,
@@ -223,6 +333,11 @@ function openTaskEditor(task, { onChanged, onSaved, onCompleted } = {}) {
       el("label", { class: "flex-1 text-xs uppercase tracking-wide text-slate-500" }, "Priority", priI),
     ),
     el("label", { class: "block text-xs uppercase tracking-wide text-slate-500" }, "Notes", notesI),
+    el("div", { class: "flex items-center justify-between" },
+      el("span", { class: "text-xs uppercase tracking-wide text-slate-500" }, "Waiting"),
+      toggle,
+    ),
+    waitWrap,
     el("div", { class: "flex justify-between pt-2" },
       el("button", {
         class: "text-sm text-rose-600 hover:underline",
@@ -246,8 +361,26 @@ function openTaskEditor(task, { onChanged, onSaved, onCompleted } = {}) {
             priority: priI.value,
             notes: notesI.value,
           };
+          const wantsWaiting = waitWrap.style.display !== "none";
           try {
             await api(\`/api/tasks/\${encodeURIComponent(task.taskKey)}\`, { method: "PATCH", body: { patch } });
+            // If the user expanded the waiting panel, also push a wait change.
+            // propose_set_task_waiting is overwrite-clean, so re-saving is safe.
+            if (wantsWaiting) {
+              const body = buildWaitingBody();
+              if (!body.waitReason) {
+                toast("Pick a wait reason", "err"); return;
+              }
+              await api(\`/api/tasks/\${encodeURIComponent(task.taskKey)}/waiting\`, { method: "POST", body });
+              Object.assign(patch, {
+                status: "waiting",
+                waitReason: body.waitReason,
+                waitOnName: body.waitOnName || "",
+                blockedByTaskKey: body.blockedByTaskKey || "",
+                expectedBy: body.expectedBy || "",
+                waitChannel: body.waitChannel || "",
+              });
+            }
             modal.close(); toast("Saved", "ok");
             if (onSaved) onSaved(patch); else onChanged?.();
           } catch (err) { toast(err.message, "err"); }
