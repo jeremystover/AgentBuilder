@@ -9,6 +9,7 @@ import type {
   Transaction, TransactionListResponse, TransactionDetail, TransactionSplit, EntitySlug,
   ImportRecord, CsvImportResult, AmazonImportResult, TillerImportResult, DeleteImportsResult,
   Rule, RuleMatchField, RuleMatchOperator, AutoCatImportResult,
+  BudgetCategory, BudgetTarget, BudgetStatusResponse, BudgetCadence, BudgetPreset,
 } from "./types";
 
 async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
@@ -334,6 +335,79 @@ export async function importAutoCat(file: File): Promise<AutoCatImportResult> {
   const form = new FormData();
   form.append("file", file);
   return uploadForm<AutoCatImportResult>("/rules/import-autocat", form);
+}
+
+// ── Budget ────────────────────────────────────────────────────────────────
+
+export async function listBudgetCategories(): Promise<{ categories: BudgetCategory[] }> {
+  return request<{ categories: BudgetCategory[] }>("/budget/categories");
+}
+
+export interface CreateBudgetCategoryInput {
+  slug: string;
+  name: string;
+  parent_slug?: string;
+}
+
+export async function createBudgetCategory(input: CreateBudgetCategoryInput): Promise<BudgetCategory> {
+  return request<BudgetCategory>("/budget/categories", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export interface UpdateBudgetCategoryInput {
+  name?: string;
+  parent_slug?: string | null;
+  is_active?: boolean;
+}
+
+export async function updateBudgetCategory(slug: string, patch: UpdateBudgetCategoryInput): Promise<{ slug: string; updated: UpdateBudgetCategoryInput }> {
+  return request(`/budget/categories/${encodeURIComponent(slug)}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+}
+
+export async function listBudgetTargets(): Promise<{ targets: BudgetTarget[] }> {
+  return request<{ targets: BudgetTarget[] }>("/budget/targets");
+}
+
+export interface UpsertBudgetTargetInput {
+  category_slug: string;
+  cadence: BudgetCadence;
+  amount: number;
+  effective_from?: string;
+  effective_to?: string | null;
+  notes?: string;
+}
+
+export async function upsertBudgetTarget(input: UpsertBudgetTargetInput): Promise<{ id: string; category_slug: string; cadence: BudgetCadence; amount: number }> {
+  return request("/budget/targets", {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function deleteBudgetTarget(id: string): Promise<{ deleted: string }> {
+  return request<{ deleted: string }>(`/budget/targets/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export interface BudgetStatusParams {
+  preset?: BudgetPreset;
+  start?: string;
+  end?: string;
+  category_slug?: string;
+}
+
+export async function getBudgetStatus(params: BudgetStatusParams = {}): Promise<BudgetStatusResponse> {
+  const qs = new URLSearchParams();
+  if (params.preset) qs.set("preset", params.preset);
+  if (params.start) qs.set("start", params.start);
+  if (params.end) qs.set("end", params.end);
+  if (params.category_slug) qs.set("category_slug", params.category_slug);
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return request<BudgetStatusResponse>(`/budget/status${suffix}`);
 }
 
 // ── Chat (SSE) ────────────────────────────────────────────────────────────

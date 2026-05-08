@@ -7,6 +7,7 @@ import { AccountsView } from "./components/drilldowns/AccountsView";
 import { TransactionsView } from "./components/drilldowns/TransactionsView";
 import { ImportsView } from "./components/drilldowns/ImportsView";
 import { RulesView } from "./components/drilldowns/RulesView";
+import { BudgetView } from "./components/drilldowns/BudgetView";
 import { useChat } from "./hooks/useChat";
 import { useSnapshot } from "./hooks/useSnapshot";
 import { useRoute } from "./router";
@@ -24,7 +25,8 @@ export function App() {
         {route === "transactions" && <TransactionsView />}
         {route === "imports" && <ImportsView />}
         {route === "rules" && <RulesView />}
-        {route !== "chat" && route !== "review" && route !== "accounts" && route !== "transactions" && route !== "imports" && route !== "rules" && <ComingSoon route={route} />}
+        {route === "budget" && <BudgetView />}
+        {route !== "chat" && route !== "review" && route !== "accounts" && route !== "transactions" && route !== "imports" && route !== "rules" && route !== "budget" && <ComingSoon route={route} />}
       </div>
     </div>
   );
