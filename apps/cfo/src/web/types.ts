@@ -17,8 +17,36 @@ export interface SnapshotBudgetLine {
   pct: number;
 }
 
+// ── Accounts ─────────────────────────────────────────────────────────────
+
+export interface Account {
+  id: string;
+  name: string;
+  type: string;
+  subtype: string | null;
+  mask: string | null;
+  owner_tag: string | null;
+  is_active: number;
+  institution_name: string | null;
+  provider: "teller" | "plaid" | "manual";
+  teller_account_id: string | null;
+  teller_enrollment_id: string | null;
+  created_at: string;
+}
+
+export interface BankConfig {
+  default_provider: string;
+  available_providers: string[];
+  providers: {
+    teller: {
+      configured: boolean;
+      environment: string;
+      sandbox_shortcut: boolean;
+    };
+  };
+}
+
 export interface Snapshot {
-  tax_year: number | null;
   pnl: {
     period_label: string;
     entities: SnapshotEntityPnL[];

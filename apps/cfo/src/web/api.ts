@@ -5,6 +5,7 @@
 import type {
   ChatMessage, ChatStreamEvent, Snapshot,
   ReviewListResponse, ReviewItem, ResolveAction, BulkResolveInput,
+  Account, BankConfig,
 } from "./types";
 
 async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
@@ -98,6 +99,70 @@ export async function runClassification(): Promise<ClassifyRunResult> {
 
 export async function getNextReviewItem(): Promise<ReviewItem | { empty: true; message: string }> {
   return request<ReviewItem | { empty: true; message: string }>("/review/next");
+}
+
+// ── Accounts & bank connect ───────────────────────────────────────────────
+
+export async function getBankConfig(): Promise<BankConfig> {
+  return request<BankConfig>("/bank/config");
+}
+
+export interface TellerConnectConfig {
+  provider: string;
+  application_id: string;
+  environment: string;
+  products: string[];
+  select_account: string;
+}
+
+export async function startBankConnect(): Promise<TellerConnectConfig> {
+  return request<TellerConnectConfig>("/bank/connect/start", { method: "POST", body: JSON.stringify({}) });
+}
+
+export interface ConnectCompletePayload {
+  access_token: string;
+  enrollment_id: string;
+  institution_name: string | null;
+  institution_id: string | null;
+}
+
+export interface ConnectCompleteResult {
+  enrollment_id: string;
+  institution: string | null;
+  accounts_linked: number;
+  message: string;
+}
+
+export async function completeBankConnect(payload: ConnectCompletePayload): Promise<ConnectCompleteResult> {
+  return request<ConnectCompleteResult>("/bank/connect/complete", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export interface SyncResult {
+  transactions_imported: number;
+  duplicates_skipped: number;
+  message: string;
+}
+
+export async function bankSync(account_ids?: string[]): Promise<SyncResult> {
+  const body = account_ids?.length ? { account_ids } : {};
+  return request<SyncResult>("/bank/sync", { method: "POST", body: JSON.stringify(body) });
+}
+
+export async function listAccounts(): Promise<{ accounts: Account[] }> {
+  return request<{ accounts: Account[] }>("/accounts");
+}
+
+export async function updateAccount(
+  id: string,
+  patch: { owner_tag?: string | null; name?: string; is_active?: boolean },
+): Promise<{ account: Account }> {
+  return request<{ account: Account }>(`/accounts/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
 }
 
 // ── Chat (SSE) ────────────────────────────────────────────────────────────
