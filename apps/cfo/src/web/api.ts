@@ -207,6 +207,7 @@ export async function updateAccount(
 export interface ListTransactionsParams {
   entity?: EntitySlug;
   category_tax?: string;
+  category_budget?: string;
   account_id?: string;
   date_from?: string;
   date_to?: string;
@@ -223,6 +224,7 @@ export async function listTransactions(params: ListTransactionsParams = {}): Pro
   const qs = new URLSearchParams();
   if (params.entity) qs.set("entity", params.entity);
   if (params.category_tax) qs.set("category_tax", params.category_tax);
+  if (params.category_budget) qs.set("category_budget", params.category_budget);
   if (params.account_id) qs.set("account_id", params.account_id);
   if (params.date_from) qs.set("date_from", params.date_from);
   if (params.date_to) qs.set("date_to", params.date_to);

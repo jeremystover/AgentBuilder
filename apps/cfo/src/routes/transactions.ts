@@ -16,6 +16,7 @@ export async function handleListTransactions(request: Request, env: Env): Promis
 
   if (p.get('entity'))          { conditions.push('c.entity = ?');           vals.push(p.get('entity')); }
   if (p.get('category_tax'))    { conditions.push('c.category_tax = ?');     vals.push(p.get('category_tax')); }
+  if (p.get('category_budget')) { conditions.push('c.category_budget = ?'); vals.push(p.get('category_budget')); }
   if (p.get('account_id'))      { conditions.push('t.account_id = ?');       vals.push(p.get('account_id')); }
   if (p.get('date_from'))       { conditions.push('t.posted_date >= ?');     vals.push(p.get('date_from')); }
   if (p.get('date_to'))         { conditions.push('t.posted_date <= ?');     vals.push(p.get('date_to')); }
