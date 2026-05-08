@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Lock, RefreshCw, Trash2 } from "lucide-react";
+import { ArrowLeftRight, Lock, RefreshCw, Trash2 } from "lucide-react";
+import { txAmountColor } from "../../utils/txColor";
 import { toast } from "sonner";
 import {
   Button, Card, Badge, Select, Input, Drawer, PageHeader, EmptyState, fmtUsd, humanizeSlug,
@@ -254,8 +255,7 @@ export function TransactionsView() {
 // ── Row ─────────────────────────────────────────────────────────────────────
 
 function TransactionRow({ tx, onOpen }: { tx: Transaction; onOpen(): void }) {
-  const isPositive = (tx.amount ?? 0) > 0;
-  const amtCls = isPositive ? "text-accent-success" : "text-text-primary";
+  const amtCls = txAmountColor(tx.amount ?? 0, tx.account_type ?? null, tx.category_tax ?? null);
   const confTone =
     tx.confidence == null ? "neutral" :
     tx.confidence >= 0.9 ? "ok" :
@@ -352,6 +352,21 @@ function TransactionDrawer({
     }
   };
 
+  const handleMarkTransfer = async () => {
+    if (!detail) return;
+    setBusy(true);
+    try {
+      await classifyTransaction(detail.transaction.id, { category_tax: 'transfer' });
+      toast.success("Marked as transfer");
+      await onChanged();
+      onClose();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handleDelete = async () => {
     if (!detail) return;
     if (!confirm(`Delete this transaction? This cannot be undone.`)) return;
@@ -389,6 +404,14 @@ function TransactionDrawer({
             <Trash2 className="w-4 h-4" /> Delete
           </Button>
           <div className="flex gap-2">
+            <Button
+              variant="ghost"
+              onClick={() => void handleMarkTransfer()}
+              disabled={busy || !tx || locked}
+              title="Mark as a transfer between accounts"
+            >
+              <ArrowLeftRight className="w-4 h-4" /> Transfer
+            </Button>
             <Button variant="ghost" onClick={onClose}>Cancel</Button>
             <Button
               variant="primary"

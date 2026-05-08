@@ -31,7 +31,7 @@ export async function handleListTransactions(request: Request, env: Env): Promis
     env.DB.prepare(
       `SELECT t.*, c.entity, c.category_tax, c.category_budget, c.confidence,
               c.method, c.reason_codes, c.review_required, c.is_locked,
-              a.name AS account_name, a.owner_tag
+              a.name AS account_name, a.owner_tag, a.type AS account_type
        FROM transactions t
        LEFT JOIN classifications c ON c.transaction_id = t.id
        LEFT JOIN accounts a ON a.id = t.account_id
@@ -63,7 +63,7 @@ export async function handleGetTransaction(request: Request, env: Env, txId: str
     env.DB.prepare(
       `SELECT t.*, c.entity, c.category_tax, c.category_budget, c.confidence,
               c.method, c.reason_codes, c.review_required, c.is_locked,
-              a.name AS account_name, a.owner_tag
+              a.name AS account_name, a.owner_tag, a.type AS account_type
        FROM transactions t
        LEFT JOIN classifications c ON c.transaction_id = t.id
        LEFT JOIN accounts a ON a.id = t.account_id
@@ -128,7 +128,7 @@ export async function handleDeleteTransaction(request: Request, env: Env, txId: 
 
 // ── PATCH /transactions/:id/classify ─────────────────────────────────────────
 const ClassifySchema = z.object({
-  entity: z.enum(['elyse_coaching', 'jeremy_coaching', 'airbnb_activity', 'family_personal']),
+  entity: z.enum(['elyse_coaching', 'jeremy_coaching', 'airbnb_activity', 'family_personal']).optional(),
   category_tax: z.string().min(1),
   category_budget: z.string().optional(),
   note: z.string().optional(),
@@ -167,7 +167,7 @@ export async function handleManualClassify(request: Request, env: Env, txId: str
     ).run();
   }
 
-  const { entity, category_tax, category_budget } = parsed.data;
+  const { entity = null, category_tax, category_budget } = parsed.data;
   const classId = crypto.randomUUID();
   await env.DB.prepare(
     `INSERT INTO classifications
@@ -180,11 +180,13 @@ export async function handleManualClassify(request: Request, env: Env, txId: str
        classified_at=datetime('now')`,
   ).bind(classId, txId, entity, category_tax, category_budget ?? null).run();
 
-  await maybeLearnRuleFromManualClassification(env, userId, txId, {
-    entity,
-    category_tax,
-    category_budget: category_budget ?? null,
-  });
+  if (entity) {
+    await maybeLearnRuleFromManualClassification(env, userId, txId, {
+      entity,
+      category_tax,
+      category_budget: category_budget ?? null,
+    });
+  }
 
   // Resolve any open review queue item
   await env.DB.prepare(

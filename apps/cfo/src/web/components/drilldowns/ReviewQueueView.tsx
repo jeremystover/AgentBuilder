@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { Sparkles, RefreshCw } from "lucide-react";
+import { txAmountColor } from "../../utils/txColor";
 import { toast } from "sonner";
 import {
   Button, Card, Badge, Select, Drawer, PageHeader, EmptyState, fmtUsd, humanizeSlug,
@@ -307,8 +308,7 @@ export function ReviewQueueView() {
 function ReviewRow({
   item, selected, onToggle, onOpen,
 }: { item: ReviewItem; selected: boolean; onToggle(on: boolean): void; onOpen(): void }) {
-  const isPositive = (item.amount ?? 0) > 0;
-  const amtCls = isPositive ? "text-accent-success" : "text-accent-danger";
+  const amtCls = txAmountColor(item.amount ?? 0, item.account_type ?? null, item.current_category_tax ?? null);
   const sug = item.suggested_category_tax ?? item.current_category_tax;
   const conf = item.suggested_confidence ?? item.current_confidence;
   const confTone =

@@ -225,7 +225,7 @@ export async function getTransaction(id: string): Promise<TransactionDetail> {
 }
 
 export interface ClassifyTransactionInput {
-  entity: EntitySlug;
+  entity?: EntitySlug;
   category_tax: string;
   category_budget?: string;
   note?: string;

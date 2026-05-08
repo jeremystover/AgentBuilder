@@ -152,6 +152,7 @@ export interface Transaction {
   // Joined from accounts
   account_name: string | null;
   owner_tag: string | null;
+  account_type: string | null;
 }
 
 export interface TransactionSplit {
