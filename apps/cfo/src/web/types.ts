@@ -17,8 +17,36 @@ export interface SnapshotBudgetLine {
   pct: number;
 }
 
+// ── Accounts ─────────────────────────────────────────────────────────────
+
+export interface Account {
+  id: string;
+  name: string;
+  type: string;
+  subtype: string | null;
+  mask: string | null;
+  owner_tag: string | null;
+  is_active: number;
+  institution_name: string | null;
+  provider: "teller" | "plaid" | "manual";
+  teller_account_id: string | null;
+  teller_enrollment_id: string | null;
+  created_at: string;
+}
+
+export interface BankConfig {
+  default_provider: string;
+  available_providers: string[];
+  providers: {
+    teller: {
+      configured: boolean;
+      environment: string;
+      sandbox_shortcut: boolean;
+    };
+  };
+}
+
 export interface Snapshot {
-  tax_year: number | null;
   pnl: {
     period_label: string;
     entities: SnapshotEntityPnL[];
@@ -96,4 +124,152 @@ export interface BulkResolveInput {
   entity?: string;
   category_tax?: string;
   category_budget?: string;
+}
+
+// ── Transactions ─────────────────────────────────────────────────────────
+
+export type EntitySlug = "elyse_coaching" | "jeremy_coaching" | "airbnb_activity" | "family_personal";
+
+export interface Transaction {
+  id: string;
+  user_id: string;
+  account_id: string;
+  posted_date: string;
+  amount: number;
+  currency: string | null;
+  merchant_name: string | null;
+  description: string | null;
+  import_id: string | null;
+  // Joined from classifications
+  entity: EntitySlug | null;
+  category_tax: string | null;
+  category_budget: string | null;
+  confidence: number | null;
+  method: string | null;
+  reason_codes: string | null;
+  review_required: number | null;
+  is_locked: number | null;
+  // Joined from accounts
+  account_name: string | null;
+  owner_tag: string | null;
+}
+
+export interface TransactionSplit {
+  id: string;
+  transaction_id: string;
+  entity: EntitySlug;
+  category_tax: string | null;
+  amount: number;
+  note: string | null;
+}
+
+export interface ClassificationHistoryEntry {
+  id: string;
+  transaction_id: string;
+  entity: EntitySlug | null;
+  category_tax: string | null;
+  category_budget: string | null;
+  confidence: number | null;
+  method: string | null;
+  reason_codes: string | null;
+  changed_at: string;
+  changed_by: string | null;
+}
+
+export interface TransactionAttachment {
+  id: string;
+  filename: string;
+  content_type: string | null;
+  size_bytes: number | null;
+  note: string | null;
+  created_at: string;
+}
+
+export interface AmazonMatch {
+  order_id: string;
+  order_date: string | null;
+  shipment_date: string | null;
+  total_amount: number | null;
+  product_names: string | null;
+  seller_names: string | null;
+  ship_to: string | null;
+  shipping_address: string | null;
+  match_score: number | null;
+  match_method: string | null;
+}
+
+export interface TransactionDetail {
+  transaction: Transaction;
+  splits: TransactionSplit[];
+  history: ClassificationHistoryEntry[];
+  attachments: TransactionAttachment[];
+  amazon_matches: AmazonMatch[];
+}
+
+export interface TransactionListResponse {
+  transactions: Transaction[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+// ── Imports ──────────────────────────────────────────────────────────────
+
+export type ImportSource = "plaid" | "teller" | "csv" | "manual" | "amazon";
+export type ImportStatus = "pending" | "running" | "completed" | "failed";
+
+export interface ImportRecord {
+  id: string;
+  user_id: string;
+  source: ImportSource;
+  account_id: string | null;
+  status: ImportStatus;
+  date_from: string | null;
+  date_to: string | null;
+  transactions_found: number;
+  transactions_imported: number;
+  error_message: string | null;
+  created_at: string;
+  completed_at: string | null;
+  account_name: string | null;
+}
+
+export interface CsvImportResult {
+  import_id: string;
+  format: string;
+  rows_parsed: number;
+  transactions_imported: number;
+  duplicates_skipped: number;
+  errors: string[];
+  message: string;
+}
+
+export interface AmazonImportResult {
+  import_id: string;
+  rows_parsed: number;
+  amazon_orders_imported: number;
+  rows_skipped: number;
+  transactions_matched: number;
+  transactions_unmatched: number;
+  transactions_reclassified: number;
+  message: string;
+}
+
+export interface TillerImportResult {
+  import_id: string;
+  total_rows: number;
+  transactions_imported: number;
+  duplicates_skipped: number;
+  non_transaction_skipped: number;
+  unmapped_categories: string[];
+  learned_rules_created: number;
+  ambiguous_rule_groups_skipped: number;
+  message: string;
+}
+
+export interface DeleteImportsResult {
+  transactions_deleted: number;
+  imports_deleted?: number;
+  import_deleted?: boolean;
+  locked_transactions_skipped: number;
 }

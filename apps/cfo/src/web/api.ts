@@ -5,6 +5,9 @@
 import type {
   ChatMessage, ChatStreamEvent, Snapshot,
   ReviewListResponse, ReviewItem, ResolveAction, BulkResolveInput,
+  Account, BankConfig,
+  Transaction, TransactionListResponse, TransactionDetail, TransactionSplit, EntitySlug,
+  ImportRecord, CsvImportResult, AmazonImportResult, TillerImportResult, DeleteImportsResult,
 } from "./types";
 
 async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
@@ -15,6 +18,28 @@ async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
       "content-type": "application/json",
       ...(opts.headers || {}),
     },
+  });
+  if (res.status === 401) {
+    location.href = "/login";
+    throw new Error("unauthorized");
+  }
+  const ct = res.headers.get("content-type") || "";
+  const data = ct.includes("json") ? await res.json() : await res.text();
+  if (!res.ok) {
+    const msg = (data && typeof data === "object" && "error" in data)
+      ? String((data as Record<string, unknown>).error)
+      : `HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+  return data as T;
+}
+
+// Multipart form upload — let the browser set the content-type with boundary.
+async function uploadForm<T>(path: string, form: FormData): Promise<T> {
+  const res = await fetch(path, {
+    method: "POST",
+    body: form,
+    credentials: "same-origin",
   });
   if (res.status === 401) {
     location.href = "/login";
@@ -98,6 +123,174 @@ export async function runClassification(): Promise<ClassifyRunResult> {
 
 export async function getNextReviewItem(): Promise<ReviewItem | { empty: true; message: string }> {
   return request<ReviewItem | { empty: true; message: string }>("/review/next");
+}
+
+// ── Accounts & bank connect ───────────────────────────────────────────────
+
+export async function getBankConfig(): Promise<BankConfig> {
+  return request<BankConfig>("/bank/config");
+}
+
+export interface TellerConnectConfig {
+  provider: string;
+  application_id: string;
+  environment: string;
+  products: string[];
+  select_account: string;
+}
+
+export async function startBankConnect(): Promise<TellerConnectConfig> {
+  return request<TellerConnectConfig>("/bank/connect/start", { method: "POST", body: JSON.stringify({}) });
+}
+
+export interface ConnectCompletePayload {
+  access_token: string;
+  enrollment_id: string;
+  institution_name: string | null;
+  institution_id: string | null;
+}
+
+export interface ConnectCompleteResult {
+  enrollment_id: string;
+  institution: string | null;
+  accounts_linked: number;
+  message: string;
+}
+
+export async function completeBankConnect(payload: ConnectCompletePayload): Promise<ConnectCompleteResult> {
+  return request<ConnectCompleteResult>("/bank/connect/complete", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export interface SyncResult {
+  transactions_imported: number;
+  duplicates_skipped: number;
+  message: string;
+}
+
+export async function bankSync(account_ids?: string[]): Promise<SyncResult> {
+  const body = account_ids?.length ? { account_ids } : {};
+  return request<SyncResult>("/bank/sync", { method: "POST", body: JSON.stringify(body) });
+}
+
+export async function listAccounts(): Promise<{ accounts: Account[] }> {
+  return request<{ accounts: Account[] }>("/accounts");
+}
+
+export async function updateAccount(
+  id: string,
+  patch: { owner_tag?: string | null; name?: string; is_active?: boolean },
+): Promise<{ account: Account }> {
+  return request<{ account: Account }>(`/accounts/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+}
+
+// ── Transactions ──────────────────────────────────────────────────────────
+
+export interface ListTransactionsParams {
+  entity?: EntitySlug;
+  category_tax?: string;
+  account_id?: string;
+  date_from?: string;
+  date_to?: string;
+  review_required?: boolean;
+  unclassified?: boolean;
+  limit?: number;
+  offset?: number;
+}
+
+export async function listTransactions(params: ListTransactionsParams = {}): Promise<TransactionListResponse> {
+  const qs = new URLSearchParams();
+  if (params.entity) qs.set("entity", params.entity);
+  if (params.category_tax) qs.set("category_tax", params.category_tax);
+  if (params.account_id) qs.set("account_id", params.account_id);
+  if (params.date_from) qs.set("date_from", params.date_from);
+  if (params.date_to) qs.set("date_to", params.date_to);
+  if (params.review_required != null) qs.set("review_required", String(params.review_required));
+  if (params.unclassified) qs.set("unclassified", "true");
+  if (params.limit != null) qs.set("limit", String(params.limit));
+  if (params.offset != null) qs.set("offset", String(params.offset));
+  return request<TransactionListResponse>(`/transactions?${qs.toString()}`);
+}
+
+export async function getTransaction(id: string): Promise<TransactionDetail> {
+  return request<TransactionDetail>(`/transactions/${encodeURIComponent(id)}`);
+}
+
+export interface ClassifyTransactionInput {
+  entity: EntitySlug;
+  category_tax: string;
+  category_budget?: string;
+  note?: string;
+}
+
+export async function classifyTransaction(id: string, input: ClassifyTransactionInput): Promise<{ transaction: Transaction }> {
+  return request<{ transaction: Transaction }>(`/transactions/${encodeURIComponent(id)}/classify`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
+export interface SplitItem {
+  entity: EntitySlug;
+  category_tax?: string;
+  amount: number;
+  note?: string;
+}
+
+export async function splitTransaction(id: string, splits: SplitItem[]): Promise<{ splits: TransactionSplit[] }> {
+  return request<{ splits: TransactionSplit[] }>(`/transactions/${encodeURIComponent(id)}/split`, {
+    method: "POST",
+    body: JSON.stringify(splits),
+  });
+}
+
+export async function deleteTransaction(id: string): Promise<{ deleted: true; transaction_id: string }> {
+  return request(`/transactions/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+// ── Imports ───────────────────────────────────────────────────────────────
+
+export async function listImports(): Promise<{ imports: ImportRecord[] }> {
+  return request<{ imports: ImportRecord[] }>("/imports");
+}
+
+export interface CsvImportInput {
+  file: File;
+  format?: "auto" | "generic" | "venmo" | "chase" | "amex" | "bofa";
+  account_id?: string;
+}
+
+export async function importCsv(input: CsvImportInput): Promise<CsvImportResult> {
+  const form = new FormData();
+  form.append("file", input.file);
+  if (input.format) form.append("format", input.format);
+  if (input.account_id) form.append("account_id", input.account_id);
+  return uploadForm<CsvImportResult>("/imports/csv", form);
+}
+
+export async function importAmazon(file: File): Promise<AmazonImportResult> {
+  const form = new FormData();
+  form.append("file", file);
+  return uploadForm<AmazonImportResult>("/imports/amazon", form);
+}
+
+export async function importTiller(file: File): Promise<TillerImportResult> {
+  const form = new FormData();
+  form.append("file", file);
+  return uploadForm<TillerImportResult>("/imports/tiller", form);
+}
+
+export async function deleteImport(id: string): Promise<DeleteImportsResult> {
+  return request<DeleteImportsResult>(`/imports/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function deleteAllImports(): Promise<DeleteImportsResult> {
+  return request<DeleteImportsResult>(`/imports`, { method: "DELETE" });
 }
 
 // ── Chat (SSE) ────────────────────────────────────────────────────────────
