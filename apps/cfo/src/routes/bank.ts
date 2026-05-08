@@ -10,12 +10,6 @@ import { z } from 'zod';
 import type { BankProvider, Env } from '../types';
 import { getUserId, jsonError, jsonOk } from '../types';
 import {
-  getActiveTaxYearOrThrow,
-  getTaxYearDateRange,
-  markChecklistItemsCompleteForAccounts,
-  reconcileChecklistAccountLinks,
-} from '../lib/tax-year';
-import {
   connectTellerEnrollmentForUser,
   getTellerBankConfig,
   syncTellerTransactionsForUser,
@@ -162,25 +156,13 @@ export async function handleBankSync(request: Request, env: Env): Promise<Respon
 
   try {
     const provider = resolveProvider(env, parsed.data.provider);
-    const workflow = await getActiveTaxYearOrThrow(env, userId);
-    const { dateFrom, dateTo } = getTaxYearDateRange(workflow.tax_year);
-
     const result = await syncTellerTransactionsForUser(
       env,
       userId,
-      dateFrom,
-      dateTo,
+      null,
+      null,
       parsed.data.account_ids,
     );
-
-    await reconcileChecklistAccountLinks(env, userId, workflow.id);
-    await markChecklistItemsCompleteForAccounts(
-      env,
-      userId,
-      workflow.id,
-      result.account_ids_synced ?? [],
-    );
-
     return jsonOk({ provider, ...result });
   } catch (err) {
     return jsonError(String(err), 400);

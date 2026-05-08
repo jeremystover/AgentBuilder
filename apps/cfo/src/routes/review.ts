@@ -3,7 +3,6 @@ import type { Env } from '../types';
 import { jsonOk, jsonError, getUserId } from '../types';
 import { maybeLearnRuleFromManualClassification } from '../lib/learned-rules';
 import { backfillUnclassifiedReviewQueue } from '../lib/review-queue';
-import { getActiveTaxYearWorkflow, getTaxYearDateRange } from '../lib/tax-year';
 import { getNextInterviewItem } from '../lib/review-interview';
 
 // ── GET /review ───────────────────────────────────────────────────────────────
@@ -15,15 +14,9 @@ export async function handleListReview(request: Request, env: Env): Promise<Resp
   const categoryTax = url.searchParams.get('category_tax');
   const limit  = Math.min(parseInt(url.searchParams.get('limit')  ?? '50'), 200);
   const offset = parseInt(url.searchParams.get('offset') ?? '0');
-  const workflow = await getActiveTaxYearWorkflow(env, userId);
 
   const conditions = ['rq.user_id = ?', 'rq.status = ?'];
   const values: unknown[] = [userId, status];
-  if (workflow) {
-    const { dateFrom, dateTo } = getTaxYearDateRange(workflow.tax_year);
-    conditions.push('t.posted_date BETWEEN ? AND ?');
-    values.push(dateFrom, dateTo);
-  }
 
   if (categoryTax === '__uncategorized__') {
     conditions.push('COALESCE(rq.suggested_category_tax, c.category_tax) IS NULL');
@@ -230,7 +223,6 @@ export async function handleBulkResolveReview(request: Request, env: Env): Promi
 
   const { action, entity, category_tax, category_budget, review_ids, apply_to_filtered, status, filter_category_tax: filterCategoryTax } = parsed.data;
   const effectiveStatus = status ?? 'pending';
-  const workflow = await getActiveTaxYearWorkflow(env, userId);
 
   let items: ReviewItem[] = [];
 
@@ -247,11 +239,6 @@ export async function handleBulkResolveReview(request: Request, env: Env): Promi
   } else if (apply_to_filtered) {
     const conditions = ['rq.user_id = ?', 'rq.status = ?'];
     const values: unknown[] = [userId, effectiveStatus];
-    if (workflow) {
-      const { dateFrom, dateTo } = getTaxYearDateRange(workflow.tax_year);
-      conditions.push('t.posted_date BETWEEN ? AND ?');
-      values.push(dateFrom, dateTo);
-    }
 
     if (filterCategoryTax === '__uncategorized__') {
       conditions.push('COALESCE(rq.suggested_category_tax, c.category_tax) IS NULL');

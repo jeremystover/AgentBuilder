@@ -2,14 +2,10 @@ import type { AmazonOrder, Env } from '../types';
 import { jsonError, jsonOk, getUserId } from '../types';
 import { parseCsv } from '../lib/dedup';
 import { aggregateAmazonRows, matchAmazonOrderToTransaction } from '../lib/amazon';
-import { getActiveTaxYearWorkflow, getTaxYearDateRange, markChecklistItemCompleteByKey } from '../lib/tax-year';
 import { handleClassifySingle } from './classify';
 
 export async function handleAmazonImport(request: Request, env: Env): Promise<Response> {
   const userId = getUserId(request);
-  const workflow = await getActiveTaxYearWorkflow(env, userId);
-  if (!workflow) return jsonError('Create a tax year first so imports can be tracked against the right year.', 400);
-  const { dateFrom, dateTo } = getTaxYearDateRange(workflow.tax_year);
 
   let formData: FormData;
   try { formData = await request.formData(); }
@@ -26,9 +22,9 @@ export async function handleAmazonImport(request: Request, env: Env): Promise<Re
 
   const importId = crypto.randomUUID();
   await env.DB.prepare(
-    `INSERT INTO imports (id, user_id, source, status, transactions_found, date_from, date_to, tax_year)
-     VALUES (?, ?, 'amazon', 'running', ?, ?, ?, ?)`,
-  ).bind(importId, userId, rows.length, dateFrom, dateTo, workflow.tax_year).run();
+    `INSERT INTO imports (id, user_id, source, status, transactions_found)
+     VALUES (?, ?, 'amazon', 'running', ?)`,
+  ).bind(importId, userId, rows.length).run();
 
   const { aggregated, skipped } = aggregateAmazonRows(rows);
   let stored = 0;
@@ -111,11 +107,8 @@ export async function handleAmazonImport(request: Request, env: Env): Promise<Re
      SET status='completed', transactions_found=?, transactions_imported=?, completed_at=datetime('now')
      WHERE id = ?`,
   ).bind(rows.length, stored, importId).run();
-  await markChecklistItemCompleteByKey(env, userId, workflow.id, 'amazon');
-
   return jsonOk({
     import_id: importId,
-    tax_year: workflow.tax_year,
     rows_parsed: rows.length,
     amazon_orders_imported: stored,
     rows_skipped: skipped,

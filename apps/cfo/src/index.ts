@@ -57,7 +57,6 @@ import {
   handleGetBookkeepingNotes,
   handleSaveBookkeepingNotes,
 } from './routes/bookkeeping';
-import { handleCreateTaxYearWorkflow, handleGetTaxYearWorkflow } from './routes/workflow';
 import { handleClaudeHealth } from './routes/health';
 
 // MCP
@@ -150,10 +149,8 @@ const ROUTES: Route[] = [
   { method: 'GET',    pattern: /^\/health$/,                              handler: async () => Response.json({ status: 'ok', app: 'cfo' }) },
   { method: 'GET',    pattern: /^\/health\/claude$/,                       handler: (req, env) => handleClaudeHealth(req, env) },
 
-  // Setup
+  // Setup (entity + chart-of-accounts bootstrap, idempotent)
   { method: 'POST',   pattern: /^\/setup$/,                              handler: (req, env) => handleSetup(req, env) },
-  { method: 'GET',    pattern: /^\/workflow\/tax-year$/,                 handler: (req, env) => handleGetTaxYearWorkflow(req, env) },
-  { method: 'POST',   pattern: /^\/workflow\/tax-year$/,                 handler: (req, env) => handleCreateTaxYearWorkflow(req, env) },
 
   // Bank provider abstraction (teller-only post-migration)
   { method: 'GET',    pattern: /^\/bank\/config$/,                       handler: (req, env) => handleGetBankConfig(req, env) },

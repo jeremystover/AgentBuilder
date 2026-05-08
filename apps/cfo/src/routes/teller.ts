@@ -166,18 +166,28 @@ async function upsertTellerTransaction(
 async function removeMissingPendingTransactions(
   env: Env,
   accountId: string,
-  startDate: string,
+  startDate: string | null,
   endDate: string,
   seenTransactionIds: Set<string>,
 ): Promise<void> {
-  const existingPending = await env.DB.prepare(
-    `SELECT id, teller_transaction_id
-     FROM transactions
-     WHERE account_id = ?
-       AND teller_transaction_id IS NOT NULL
-       AND is_pending = 1
-       AND posted_date BETWEEN ? AND ?`,
-  ).bind(accountId, startDate, endDate).all<{ id: string; teller_transaction_id: string | null }>();
+  // When no start date is given we still clean up all pending rows for this
+  // account that weren't returned by the latest sync (they were cancelled).
+  const existingPending = startDate
+    ? await env.DB.prepare(
+        `SELECT id, teller_transaction_id
+         FROM transactions
+         WHERE account_id = ?
+           AND teller_transaction_id IS NOT NULL
+           AND is_pending = 1
+           AND posted_date BETWEEN ? AND ?`,
+      ).bind(accountId, startDate, endDate).all<{ id: string; teller_transaction_id: string | null }>()
+    : await env.DB.prepare(
+        `SELECT id, teller_transaction_id
+         FROM transactions
+         WHERE account_id = ?
+           AND teller_transaction_id IS NOT NULL
+           AND is_pending = 1`,
+      ).bind(accountId).all<{ id: string; teller_transaction_id: string | null }>();
 
   for (const row of existingPending.results) {
     if (!row.teller_transaction_id || seenTransactionIds.has(row.teller_transaction_id)) continue;
@@ -325,12 +335,12 @@ export async function syncTellerTransactionsForUser(
   let matchedRequestedAccounts = 0;
 
   for (const enrollment of enrollments.results) {
-    const syncStart = dateFrom ?? shiftIsoDate(todayIsoDate(), -90);
+    const syncStart = dateFrom;
     const importId = crypto.randomUUID();
     await env.DB.prepare(
       `INSERT INTO imports (id, user_id, source, status, date_from, date_to, tax_year)
        VALUES (?, ?, 'teller', 'running', ?, ?, ?)`,
-    ).bind(importId, userId, syncStart, syncEnd, syncStart ? parseInt(syncStart.slice(0, 4), 10) : null).run();
+    ).bind(importId, userId, syncStart ?? null, syncEnd, syncStart ? parseInt(syncStart.slice(0, 4), 10) : null).run();
 
     let added = 0;
     let dupes = 0;
@@ -354,7 +364,7 @@ export async function syncTellerTransactionsForUser(
           env,
           enrollment.access_token,
           account.teller_account_id,
-          { startDate: syncStart, endDate: syncEnd },
+          { startDate: syncStart ?? undefined, endDate: syncEnd },
         );
         found += transactions.length;
 

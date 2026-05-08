@@ -5,7 +5,6 @@ import { applyRules } from '../lib/rules';
 import { cleanDescription } from '../lib/dedup';
 import { backfillUnclassifiedReviewQueue, resolveReviewQueueItem, upsertReviewQueue } from '../lib/review-queue';
 import { buildAmazonSearchText, loadAmazonContext } from '../lib/amazon';
-import { getActiveTaxYearWorkflow, getTaxYearDateRange } from '../lib/tax-year';
 
 function buildAccountContext(tx: {
   account_name?: string | null;
@@ -149,8 +148,6 @@ async function loadHistoricalExamples(env: Env, userId: string, tx: Transaction)
 export async function handleRunClassification(request: Request, env: Env): Promise<Response> {
   const userId = getUserId(request);
   await backfillUnclassifiedReviewQueue(env, userId);
-  const workflow = await getActiveTaxYearWorkflow(env, userId);
-  const dateRange = workflow ? getTaxYearDateRange(workflow.tax_year) : null;
 
   // Load all active rules for this user
   const rulesResult = await env.DB.prepare(
@@ -171,7 +168,6 @@ export async function handleRunClassification(request: Request, env: Env): Promi
      WHERE rq.user_id = ?
        AND rq.status = 'pending'
        AND t.is_pending = 0
-       AND (? IS NULL OR t.posted_date BETWEEN ? AND ?)
        AND (
          (rq.reason = 'unclassified' AND c.id IS NULL)
          OR trim(COALESCE(rq.suggested_category_tax, c.category_tax, '')) = ''
@@ -179,7 +175,7 @@ export async function handleRunClassification(request: Request, env: Env): Promi
        )
      ORDER BY rq.created_at ASC
      LIMIT 500`,
-  ).bind(userId, dateRange?.dateFrom ?? null, dateRange?.dateFrom ?? null, dateRange?.dateTo ?? null).all<Transaction & {
+  ).bind(userId).all<Transaction & {
     account_name: string | null;
     account_mask: string | null;
     account_type: string | null;

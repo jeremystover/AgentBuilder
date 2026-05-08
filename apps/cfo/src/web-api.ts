@@ -106,22 +106,7 @@ async function handleSnapshot(request: Request, env: Env): Promise<Response> {
     console.error('[snapshot] review_queue count failed', err);
   }
 
-  // Tax year — best-effort lookup against the user's active workflow.
-  let taxYear: number | null = null;
-  try {
-    const row = await env.DB.prepare(
-      `SELECT tax_year FROM tax_year_workflow
-       WHERE user_id = ?
-       ORDER BY tax_year DESC
-       LIMIT 1`,
-    ).bind(userId).first<{ tax_year: number }>();
-    taxYear = row?.tax_year ?? null;
-  } catch {
-    // Table may not exist yet.
-  }
-
   return jsonResponse({
-    tax_year: taxYear,
     pnl: pnl
       ? {
           period_label: pnl.period.label,
