@@ -273,3 +273,32 @@ export interface DeleteImportsResult {
   import_deleted?: boolean;
   locked_transactions_skipped: number;
 }
+
+// ── Rules ────────────────────────────────────────────────────────────────
+
+export type RuleMatchField = "merchant_name" | "description" | "account_id" | "amount";
+export type RuleMatchOperator = "contains" | "equals" | "starts_with" | "ends_with" | "regex";
+
+export interface Rule {
+  id: string;
+  user_id: string;
+  name: string;
+  match_field: RuleMatchField;
+  match_operator: RuleMatchOperator;
+  match_value: string;
+  entity: EntitySlug;
+  category_tax: string | null;
+  category_budget: string | null;
+  priority: number;
+  is_active: number;
+  created_at: string;
+}
+
+export interface AutoCatImportResult {
+  total_rows: number;
+  rules_created: number;
+  skipped: number;
+  skipped_transfers: number;
+  warnings: string[];
+  message: string;
+}
