@@ -2,25 +2,17 @@ import type { Env } from '../types';
 import { jsonOk, jsonError, getUserId } from '../types';
 import { computeDedupHash, cleanDescription, parseCsv } from '../lib/dedup';
 import { ensureUnclassifiedReviewQueue } from '../lib/review-queue';
-import {
-  getActiveTaxYearWorkflow,
-  getTaxYearDateRange,
-  markChecklistItemsCompleteForAccounts,
-  reconcileChecklistAccountLinks,
-} from '../lib/tax-year';
 
 // ── GET /imports ──────────────────────────────────────────────────────────────
 export async function handleListImports(request: Request, env: Env): Promise<Response> {
   const userId = getUserId(request);
-  const workflow = await getActiveTaxYearWorkflow(env, userId);
   const imports = await env.DB.prepare(
     `SELECT i.*, a.name AS account_name FROM imports i
      LEFT JOIN accounts a ON a.id = i.account_id
      WHERE i.user_id = ?
-       AND (? IS NULL OR i.tax_year = ?)
      ORDER BY i.created_at DESC LIMIT 50`,
-  ).bind(userId, workflow?.tax_year ?? null, workflow?.tax_year ?? null).all();
-  return jsonOk({ imports: imports.results, tax_year: workflow?.tax_year ?? null });
+  ).bind(userId).all();
+  return jsonOk({ imports: imports.results });
 }
 
 // ── DELETE /imports ───────────────────────────────────────────────────────────
@@ -140,9 +132,6 @@ export async function handleDeleteImport(request: Request, env: Env, importId: s
 // Chase CSV:  Transaction Date, Amount, Description
 export async function handleCsvImport(request: Request, env: Env): Promise<Response> {
   const userId = getUserId(request);
-  const workflow = await getActiveTaxYearWorkflow(env, userId);
-  if (!workflow) return jsonError('Create a tax year first so imports can be tracked against the right year.', 400);
-  const { dateFrom, dateTo } = getTaxYearDateRange(workflow.tax_year);
 
   let formData: FormData;
   try { formData = await request.formData(); }
@@ -169,23 +158,21 @@ export async function handleCsvImport(request: Request, env: Env): Promise<Respo
 
   const importId = crypto.randomUUID();
   await env.DB.prepare(
-    `INSERT INTO imports (id, user_id, source, account_id, status, transactions_found, date_from, date_to, tax_year)
-     VALUES (?, ?, 'csv', ?, 'running', ?, ?, ?, ?)`,
-  ).bind(importId, userId, accountId, rows.length, dateFrom, dateTo, workflow.tax_year).run();
+    `INSERT INTO imports (id, user_id, source, account_id, status, transactions_found)
+     VALUES (?, ?, 'csv', ?, 'running', ?)`,
+  ).bind(importId, userId, accountId, rows.length).run();
 
   const detectedFormat = format === 'auto' ? detectFormat(rows[0]) : format;
   const accountName = await lookupAccountName(env, userId, accountId);
 
   let imported = 0;
   let dupes = 0;
-  let skippedOutOfYear = 0;
   const errors: string[] = [];
 
   for (let i = 0; i < rows.length; i++) {
     try {
       const parsed = parseRow(rows[i], detectedFormat, { accountName });
       if (!parsed) { errors.push(`Row ${i + 2}: could not parse`); continue; }
-      if (parsed.date < dateFrom || parsed.date > dateTo) { skippedOutOfYear++; continue; }
 
       const descClean = cleanDescription(parsed.description);
       const dedupHash = await computeDedupHash(
@@ -215,19 +202,12 @@ export async function handleCsvImport(request: Request, env: Env): Promise<Respo
     `UPDATE imports SET status='completed', transactions_imported=?, completed_at=datetime('now') WHERE id=?`,
   ).bind(imported, importId).run();
 
-  if (accountId) {
-    await reconcileChecklistAccountLinks(env, userId, workflow.id);
-    await markChecklistItemsCompleteForAccounts(env, userId, workflow.id, [accountId]);
-  }
-
   return jsonOk({
     import_id: importId,
-    tax_year: workflow.tax_year,
     format: detectedFormat,
     rows_parsed: rows.length,
     transactions_imported: imported,
     duplicates_skipped: dupes,
-    skipped_out_of_year: skippedOutOfYear,
     errors: errors.slice(0, 10),
     message: imported > 0 ? 'Imported transactions are now queued for review.' : 'No new transactions imported.',
   }, 201);

@@ -11,12 +11,6 @@
 
 import type { Env } from '../types';
 import { syncTellerTransactionsForUser } from '../routes/teller';
-import {
-  getActiveTaxYearWorkflow,
-  getTaxYearDateRange,
-  reconcileChecklistAccountLinks,
-  markChecklistItemsCompleteForAccounts,
-} from '../lib/tax-year';
 
 export interface NightlySyncSummary {
   started_at: string;
@@ -32,14 +26,6 @@ export interface NightlySyncSummary {
     accounts_synced?: number;
     error?: string;
   }>;
-}
-
-/**
- * Default date range passed to the underlying sync when no active workflow
- * is present. `null` means "use the sync function's default of -90 days".
- */
-function defaultRollingRange(): { dateFrom: string | null; dateTo: string | null } {
-  return { dateFrom: null, dateTo: null };
 }
 
 export async function runNightlyTellerSync(env: Env): Promise<NightlySyncSummary> {
@@ -62,30 +48,9 @@ export async function runNightlyTellerSync(env: Env): Promise<NightlySyncSummary
   for (const row of users.results) {
     const userId = row.user_id;
     try {
-      // Prefer the active tax-year range so checklist reconciliation still
-      // lines up; fall back to the sync's rolling default when no workflow
-      // exists. Either way, cron should never throw on "no workflow".
-      const workflow = await getActiveTaxYearWorkflow(env, userId);
-      const range = workflow
-        ? getTaxYearDateRange(workflow.tax_year)
-        : defaultRollingRange();
-
-      const result = await syncTellerTransactionsForUser(
-        env,
-        userId,
-        range.dateFrom,
-        range.dateTo,
-      );
-
-      if (workflow) {
-        await reconcileChecklistAccountLinks(env, userId, workflow.id);
-        await markChecklistItemsCompleteForAccounts(
-          env,
-          userId,
-          workflow.id,
-          result.account_ids_synced ?? [],
-        );
-      }
+      // Pass null dates so Teller returns all available history.
+      // Deduplication in upsertTellerTransaction prevents re-importing.
+      const result = await syncTellerTransactionsForUser(env, userId, null, null);
 
       summary.users_synced += 1;
       summary.per_user.push({
