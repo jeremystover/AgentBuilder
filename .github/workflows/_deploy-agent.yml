@@ -51,6 +51,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build web assets (if any)
+        working-directory: apps/${{ inputs.agent_id }}
+        run: pnpm run --if-present web:build
+
       - name: Apply D1 migrations
         if: inputs.d1_database != '' && hashFiles(format('apps/{0}/migrations/**/*.sql', inputs.agent_id)) != ''
         uses: cloudflare/wrangler-action@v3
