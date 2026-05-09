@@ -1,26 +1,19 @@
 import { useMemo, useState } from "react";
-import { RefreshCw, Target } from "lucide-react";
+import { RefreshCw, Target, ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 import {
   Button, Card, Badge, Select, Input, Drawer, PageHeader, fmtUsd,
 } from "../ui";
 import { useIncomeStatus } from "../../hooks/useIncomeStatus";
 import { upsertIncomeTarget, deleteIncomeTarget } from "../../api";
-import type { BudgetCadence, BudgetPreset, EntitySlug, IncomeStatusLine, IncomeTarget } from "../../types";
+import type { BudgetCadence, EntitySlug, IncomeStatusLine, IncomeTarget } from "../../types";
 
-const PRESETS: { value: BudgetPreset; label: string }[] = [
-  { value: "this_week",    label: "This week" },
-  { value: "this_month",   label: "This month" },
-  { value: "last_month",   label: "Last month" },
-  { value: "trailing_30d", label: "Last 30d" },
-  { value: "trailing_90d", label: "Last 90d" },
-  { value: "ytd",          label: "Year-to-date" },
-];
+type ViewCadence = "monthly" | "quarterly" | "annual";
 
 const CADENCE_OPTIONS: { value: BudgetCadence; label: string }[] = [
-  { value: "weekly",  label: "Weekly" },
-  { value: "monthly", label: "Monthly" },
   { value: "annual",  label: "Annual" },
+  { value: "monthly", label: "Monthly" },
+  { value: "weekly",  label: "Weekly" },
 ];
 
 const ENTITY_LABELS: Record<EntitySlug, string> = {
@@ -29,6 +22,44 @@ const ENTITY_LABELS: Record<EntitySlug, string> = {
   airbnb_activity: "Whitford House",
   family_personal: "Family / Personal",
 };
+
+function isoDate(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+function getPeriodBounds(cadence: ViewCadence, offset: number): { start: string; end: string; label: string } {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth(); // 0-indexed
+
+  if (cadence === "annual") {
+    const y = year + offset;
+    return { start: `${y}-01-01`, end: `${y}-12-31`, label: String(y) };
+  }
+
+  if (cadence === "quarterly") {
+    const currentQ = Math.floor(month / 3);
+    const totalQ = year * 4 + currentQ + offset;
+    const y = Math.floor(totalQ / 4);
+    const q = ((totalQ % 4) + 4) % 4;
+    const qStart = q * 3;
+    const start = new Date(y, qStart, 1);
+    const end = new Date(y, qStart + 3, 0);
+    return { start: isoDate(start), end: isoDate(end), label: `Q${q + 1} ${y}` };
+  }
+
+  // monthly
+  const totalMonths = year * 12 + month + offset;
+  const y = Math.floor(totalMonths / 12);
+  const m = ((totalMonths % 12) + 12) % 12;
+  const start = new Date(y, m, 1);
+  const end = new Date(y, m + 1, 0);
+  return {
+    start: isoDate(start),
+    end: isoDate(end),
+    label: start.toLocaleString("default", { month: "long", year: "numeric" }),
+  };
+}
 
 function statusTone(s: string): "ok" | "warn" | "danger" | "neutral" {
   if (s === "on_track") return "ok";
@@ -45,22 +76,21 @@ function statusLabel(s: string): string {
 }
 
 export function IncomeView() {
-  const [preset, setPreset] = useState<BudgetPreset | "custom">("this_month");
-  const [customStart, setCustomStart] = useState("");
-  const [customEnd, setCustomEnd] = useState("");
+  const [viewCadence, setViewCadence] = useState<ViewCadence>("annual");
+  const [periodOffset, setPeriodOffset] = useState(0);
   const [openEntity, setOpenEntity] = useState<EntitySlug | null>(null);
 
-  const statusParams = useMemo(() => {
-    if (preset === "custom" && customStart && customEnd) {
-      return { start: customStart, end: customEnd };
-    }
-    return { preset: preset === "custom" ? "this_month" as BudgetPreset : preset };
-  }, [preset, customStart, customEnd]);
+  const handleCadenceChange = (c: ViewCadence) => {
+    setViewCadence(c);
+    setPeriodOffset(0);
+  };
+
+  const { start, end, label: periodLabel } = getPeriodBounds(viewCadence, periodOffset);
+  const statusParams = useMemo(() => ({ start, end }), [start, end]);
 
   const { status, targets, loading, error, refresh } = useIncomeStatus(statusParams);
 
   const entities = status?.entities ?? [];
-  const period   = status?.period;
 
   const totalIncome  = entities.reduce((s, e) => s + e.actual_income,  0);
   const totalExpense = entities.reduce((s, e) => s + e.actual_expense, 0);
@@ -74,10 +104,7 @@ export function IncomeView() {
     <div className="p-6 max-w-5xl mx-auto">
       <PageHeader
         title="Income"
-        subtitle={
-          loading ? "Loading…" :
-          period  ? `${period.label} · ${period.start} → ${period.end}` : ""
-        }
+        subtitle={loading ? "Loading…" : `${periodLabel} · ${start} → ${end}`}
         actions={
           <Button onClick={() => void refresh()} title="Refresh" disabled={loading}>
             <RefreshCw className={"w-4 h-4 " + (loading ? "animate-spin" : "")} />
@@ -91,38 +118,49 @@ export function IncomeView() {
         </Card>
       )}
 
-      {/* Period selector */}
+      {/* Period controls */}
       <Card className="p-4 mb-4">
-        <div className="flex items-center gap-3 flex-wrap">
-          <div>
-            <label className="block text-xs text-text-muted mb-1">Period</label>
-            <Select value={preset} onChange={(e) => setPreset(e.target.value as BudgetPreset | "custom")}>
-              {PRESETS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
-              <option value="custom">Custom…</option>
-            </Select>
+        <div className="flex items-center gap-4 flex-wrap">
+          {/* View cadence toggle */}
+          <div className="flex rounded-md border border-border overflow-hidden">
+            {(["monthly", "quarterly", "annual"] as ViewCadence[]).map((c) => (
+              <button
+                key={c}
+                onClick={() => handleCadenceChange(c)}
+                className={
+                  "px-3 py-1.5 text-sm font-medium transition-colors border-r border-border last:border-r-0 " +
+                  (viewCadence === c
+                    ? "bg-accent-primary text-white"
+                    : "bg-bg-surface text-text-muted hover:text-text-primary hover:bg-bg-elevated")
+                }
+              >
+                {c.charAt(0).toUpperCase() + c.slice(1)}
+              </button>
+            ))}
           </div>
-          {preset === "custom" && (
-            <>
-              <div>
-                <label className="block text-xs text-text-muted mb-1">From</label>
-                <Input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)} />
-              </div>
-              <div>
-                <label className="block text-xs text-text-muted mb-1">To</label>
-                <Input type="date" value={customEnd} onChange={(e) => setCustomEnd(e.target.value)} />
-              </div>
-            </>
-          )}
+
+          {/* Period navigation */}
+          <div className="flex items-center gap-1">
+            <Button size="sm" onClick={() => setPeriodOffset(o => o - 1)}>
+              <ChevronLeft className="w-4 h-4" />
+            </Button>
+            <span className="text-sm font-medium text-text-primary w-32 text-center select-none">
+              {periodLabel}
+            </span>
+            <Button size="sm" onClick={() => setPeriodOffset(o => o + 1)} disabled={periodOffset >= 0}>
+              <ChevronRight className="w-4 h-4" />
+            </Button>
+          </div>
         </div>
       </Card>
 
       {/* Summary totals */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
         {[
-          { label: "Income target", value: totalTarget, muted: totalTarget === 0 },
+          { label: "Income target",  value: totalTarget,  muted: totalTarget === 0 },
           { label: "Actual income",  value: totalIncome,  muted: false },
           { label: "Total expenses", value: totalExpense, muted: false },
-          { label: "Net cash flow",  value: totalNet,     muted: false, signed: true },
+          { label: "Net cash flow",  value: totalNet,     signed: true },
         ].map(({ label, value, muted, signed }) => (
           <Card key={label} className="p-4">
             <div className="text-xs text-text-muted mb-1">{label}</div>
@@ -144,7 +182,8 @@ export function IncomeView() {
             <thead>
               <tr className="text-left text-xs text-text-muted uppercase tracking-wide border-b border-border bg-bg-elevated">
                 <th className="pl-4 py-2">Entity</th>
-                <th className="py-2">Income target</th>
+                <th className="py-2">Annual target</th>
+                <th className="py-2">Period target</th>
                 <th className="py-2">Actual income</th>
                 <th className="py-2">Expenses</th>
                 <th className="py-2">Net</th>
@@ -157,6 +196,7 @@ export function IncomeView() {
                 <EntityRow
                   key={line.entity}
                   line={line}
+                  viewCadence={viewCadence}
                   onOpen={() => setOpenEntity(line.entity)}
                 />
               ))}
@@ -178,9 +218,24 @@ export function IncomeView() {
 
 // ── Entity row ───────────────────────────────────────────────────────────────
 
-function EntityRow({ line, onOpen }: { line: IncomeStatusLine; onOpen(): void }) {
+function EntityRow({ line, viewCadence, onOpen }: {
+  line: IncomeStatusLine;
+  viewCadence: ViewCadence;
+  onOpen(): void;
+}) {
   const netColor = line.net >= 0 ? "text-accent-ok" : "text-accent-danger";
   const pct = line.pct_of_target;
+
+  // Annualise the native target regardless of its stored cadence
+  const annualTarget = line.target
+    ? line.target.native_cadence === "annual"  ? line.target.native_amount
+    : line.target.native_cadence === "monthly" ? line.target.native_amount * 12
+    : line.target.native_amount * 52  // weekly
+    : null;
+
+  const periodTargetLabel = viewCadence === "annual" ? null
+    : line.target ? fmtUsd(line.target.prorated_amount)
+    : null;
 
   return (
     <tr
@@ -190,10 +245,13 @@ function EntityRow({ line, onOpen }: { line: IncomeStatusLine; onOpen(): void })
       <td className="pl-4 py-3 font-medium text-text-primary">
         {ENTITY_LABELS[line.entity]}
       </td>
-      <td className="py-3 tabular-nums text-text-muted">
-        {line.target
-          ? `${fmtUsd(line.target.prorated_amount)} (${line.target.native_cadence}: ${fmtUsd(line.target.native_amount)})`
+      <td className="py-3 tabular-nums text-text-primary">
+        {annualTarget != null
+          ? fmtUsd(annualTarget)
           : <span className="italic text-text-subtle">no target</span>}
+      </td>
+      <td className="py-3 tabular-nums text-text-muted">
+        {periodTargetLabel ?? <span className="text-text-subtle">—</span>}
       </td>
       <td className="py-3 tabular-nums text-text-primary">
         {fmtUsd(line.actual_income)}
@@ -232,13 +290,13 @@ function TargetDrawer({
   onSaved(): void;
 }) {
   const [amount, setAmount] = useState(target?.amount?.toString() ?? "");
-  const [cadence, setCadence] = useState<BudgetCadence>(target?.cadence ?? "monthly");
+  const [cadence, setCadence] = useState<BudgetCadence>(target?.cadence ?? "annual");
   const [busy, setBusy] = useState(false);
 
   // Sync form when a different entity is opened
   useMemo(() => {
     setAmount(target?.amount?.toString() ?? "");
-    setCadence(target?.cadence ?? "monthly");
+    setCadence(target?.cadence ?? "annual");
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity]);
 
@@ -308,7 +366,7 @@ function TargetDrawer({
         </div>
         {line.target && (
           <div>
-            <dt className="text-xs text-text-muted">vs. target</dt>
+            <dt className="text-xs text-text-muted">vs. period target</dt>
             <dd className="text-text-primary tabular-nums">
               {Math.round(line.pct_of_target ?? 0)}% of {fmtUsd(line.target.prorated_amount)}
             </dd>
@@ -318,12 +376,12 @@ function TargetDrawer({
 
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="block text-xs text-text-muted mb-1">Income target amount</label>
+          <label className="block text-xs text-text-muted mb-1">Annual income target</label>
           <Input
             type="number"
             min="0"
-            step="100"
-            placeholder="e.g. 5000"
+            step="1000"
+            placeholder="e.g. 120000"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
             className="w-full"
