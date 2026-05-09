@@ -10,6 +10,7 @@ import type {
   ImportRecord, CsvImportResult, AmazonImportResult, TillerImportResult, DeleteImportsResult,
   Rule, RuleMatchField, RuleMatchOperator, AutoCatImportResult,
   BudgetCategory, BudgetTarget, BudgetStatusResponse, BudgetCadence, BudgetPreset,
+  IncomeTarget, IncomeStatusResponse,
   ScheduleReport, ScheduleCEntity, SummaryReport,
 } from "./types";
 
@@ -427,6 +428,43 @@ export async function getBudgetStatus(params: BudgetStatusParams = {}): Promise<
   if (params.category_slug) qs.set("category_slug", params.category_slug);
   const suffix = qs.toString() ? `?${qs.toString()}` : "";
   return request<BudgetStatusResponse>(`/budget/status${suffix}`);
+}
+
+// ── Income ────────────────────────────────────────────────────────────────
+
+export interface IncomeStatusParams {
+  preset?: BudgetPreset;
+  start?: string;
+  end?: string;
+}
+
+export async function getIncomeStatus(params: IncomeStatusParams = {}): Promise<IncomeStatusResponse> {
+  const qs = new URLSearchParams();
+  if (params.preset) qs.set("preset", params.preset);
+  if (params.start) qs.set("start", params.start);
+  if (params.end) qs.set("end", params.end);
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return request<IncomeStatusResponse>(`/income/status${suffix}`);
+}
+
+export async function listIncomeTargets(): Promise<{ targets: IncomeTarget[] }> {
+  return request<{ targets: IncomeTarget[] }>("/income/targets");
+}
+
+export interface UpsertIncomeTargetInput {
+  entity: EntitySlug;
+  cadence: BudgetCadence;
+  amount: number;
+  effective_from?: string;
+  notes?: string;
+}
+
+export async function upsertIncomeTarget(input: UpsertIncomeTargetInput): Promise<{ target: IncomeTarget }> {
+  return request("/income/targets", { method: "PUT", body: JSON.stringify(input) });
+}
+
+export async function deleteIncomeTarget(id: string): Promise<{ deleted: string }> {
+  return request<{ deleted: string }>(`/income/targets/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
 // ── Reports ───────────────────────────────────────────────────────────────

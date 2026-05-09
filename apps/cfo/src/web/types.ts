@@ -398,3 +398,39 @@ export interface SummaryReport {
   by_month: SummaryMonthRow[];
   review_queue: SummaryReviewRow[];
 }
+
+// ── Income ───────────────────────────────────────────────────────────────
+
+export type IncomeStatusTone = "no_target" | "under" | "near" | "on_track";
+
+export interface IncomeTarget {
+  id: string;
+  entity: EntitySlug;
+  cadence: BudgetCadence;
+  amount: number;
+  effective_from: string;
+  effective_to: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface IncomeStatusLine {
+  entity: EntitySlug;
+  target: {
+    native_amount: number;
+    native_cadence: BudgetCadence;
+    prorated_amount: number;
+  } | null;
+  actual_income: number;
+  actual_expense: number;
+  net: number;
+  pct_of_target: number | null;
+  status: IncomeStatusTone;
+  tx_count_income: number;
+  tx_count_expense: number;
+}
+
+export interface IncomeStatusResponse {
+  period: { start: string; end: string; days: number; label: string };
+  entities: IncomeStatusLine[];
+}

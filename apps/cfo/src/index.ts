@@ -49,6 +49,7 @@ import {
   handleDeleteBudgetTarget,
   handleBudgetStatus,
 } from './routes/budget';
+import { handleIncomeStatus, handleListIncomeTargets, handleUpsertIncomeTarget, handleDeleteIncomeTarget } from './routes/income';
 import { handlePnL, handlePnLAll, handlePnLTrend } from './routes/pnl';
 import {
   handleBookkeepingSession,
@@ -203,6 +204,12 @@ const ROUTES: Route[] = [
   { method: 'PUT',    pattern: /^\/budget\/targets$/,                    handler: (req, env) => handleUpsertBudgetTarget(req, env) },
   { method: 'DELETE', pattern: /^\/budget\/targets\/([^/]+)$/,           handler: (req, env, id) => handleDeleteBudgetTarget(req, env, id) },
   { method: 'GET',    pattern: /^\/budget\/status$/,                     handler: (req, env) => handleBudgetStatus(req, env) },
+
+  // Income tracking
+  { method: 'GET',    pattern: /^\/income\/status$/,                     handler: (req, env) => handleIncomeStatus(req, env) },
+  { method: 'GET',    pattern: /^\/income\/targets$/,                    handler: (req, env) => handleListIncomeTargets(req, env) },
+  { method: 'PUT',    pattern: /^\/income\/targets$/,                    handler: (req, env) => handleUpsertIncomeTarget(req, env) },
+  { method: 'DELETE', pattern: /^\/income\/targets\/([^/]+)$/,           handler: (req, env, id) => handleDeleteIncomeTarget(req, env, id) },
 
   // P&L / light bookkeeping
   { method: 'GET',    pattern: /^\/pnl$/,                                handler: (req, env) => handlePnL(req, env) },
