@@ -25,7 +25,7 @@ export interface Account {
   type: string;
   subtype: string | null;
   mask: string | null;
-  owner_tag: string | null;
+  owner_tag: EntitySlug | null;
   is_active: number;
   institution_name: string | null;
   provider: "teller" | "plaid" | "manual";
