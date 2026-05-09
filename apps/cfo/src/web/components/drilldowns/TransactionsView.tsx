@@ -11,7 +11,8 @@ import { classifyTransaction, deleteTransaction, getTransaction } from "../../ap
 import type {
   EntitySlug, Transaction, TransactionDetail,
 } from "../../types";
-import { CATEGORY_OPTIONS, ENTITY_OPTIONS } from "../../catalog";
+import { ENTITY_OPTIONS, type OptionCategory } from "../../catalog";
+import { useCategoryOptions } from "../../hooks/useCategoryOptions";
 
 const PAGE_SIZE = 100;
 
@@ -56,6 +57,7 @@ const EMPTY_FILTERS: FiltersState = {
 
 export function TransactionsView() {
   const { accounts } = useAccounts();
+  const { budgetOptions, taxOptions, allOptions } = useCategoryOptions();
   const [filters, setFilters] = useState<FiltersState>(EMPTY_FILTERS);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -190,7 +192,7 @@ export function TransactionsView() {
               className="w-full"
             >
               <option value="">All categories</option>
-              {CATEGORY_OPTIONS.map(({ slug, label }) => (
+              {allOptions.map(({ slug, label }) => (
                 <option key={slug} value={slug}>{label}</option>
               ))}
             </Select>
@@ -270,6 +272,8 @@ export function TransactionsView() {
 
       <TransactionDrawer
         txId={openId}
+        budgetOptions={budgetOptions}
+        taxOptions={taxOptions}
         onClose={() => setOpenId(null)}
         onChanged={refresh}
       />
@@ -320,9 +324,11 @@ function TransactionRow({ tx, onOpen }: { tx: Transaction; onOpen(): void }) {
 // ── Drawer ──────────────────────────────────────────────────────────────────
 
 function TransactionDrawer({
-  txId, onClose, onChanged,
+  txId, budgetOptions, taxOptions, onClose, onChanged,
 }: {
   txId: string | null;
+  budgetOptions: OptionCategory[];
+  taxOptions: OptionCategory[];
   onClose(): void;
   onChanged(): Promise<void>;
 }) {
@@ -509,7 +515,7 @@ function TransactionDrawer({
                   disabled={locked}
                 >
                   <option value="">— select —</option>
-                  {CATEGORY_OPTIONS.filter((c) => c.kind === "tax").map(({ slug, label }) => (
+                  {taxOptions.map(({ slug, label }) => (
                     <option key={slug} value={slug}>{label}</option>
                   ))}
                 </Select>
@@ -523,7 +529,7 @@ function TransactionDrawer({
                   disabled={locked}
                 >
                   <option value="">— none —</option>
-                  {CATEGORY_OPTIONS.filter((c) => c.kind === "budget").map(({ slug, label }) => (
+                  {budgetOptions.map(({ slug, label }) => (
                     <option key={slug} value={slug}>{label}</option>
                   ))}
                 </Select>

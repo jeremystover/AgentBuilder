@@ -85,6 +85,8 @@ export const TRANSFER_OPTION: OptionCategory = {
   slug: "transfer", label: "Transfer (between accounts)", kind: "tax", group: "special",
 };
 
+export const TAX_OPTIONS: OptionCategory[] = [...SCHEDULE_C, ...SCHEDULE_E];
+
 export const CATEGORY_OPTIONS: OptionCategory[] = [
   ...SCHEDULE_C, ...SCHEDULE_E, ...FAMILY,
 ];

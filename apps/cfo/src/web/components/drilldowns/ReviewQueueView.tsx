@@ -8,7 +8,8 @@ import {
 import { useReviewQueue } from "../../hooks/useReviewQueue";
 import { resolveReview, bulkResolveReview, runClassification } from "../../api";
 import type { ReviewItem, ReviewStatus, ResolveAction } from "../../types";
-import { CATEGORY_OPTIONS, ENTITY_OPTIONS } from "../../catalog";
+import { ENTITY_OPTIONS, type OptionCategory } from "../../catalog";
+import { useCategoryOptions } from "../../hooks/useCategoryOptions";
 
 const PAGE_SIZE = 50;
 
@@ -34,6 +35,7 @@ function SortTh({ col, label, sortBy, sortDir, onSort, className = "" }: {
 }
 
 export function ReviewQueueView() {
+  const { budgetOptions, taxOptions, allOptions } = useCategoryOptions();
   const [status, setStatus] = useState<ReviewStatus>("pending");
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("");
   const [search, setSearch] = useState("");
@@ -260,7 +262,7 @@ export function ReviewQueueView() {
             <Select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
               <option value="">All categories</option>
               <option value="__uncategorized__">Uncategorized</option>
-              {CATEGORY_OPTIONS.map(({ slug, label }) => (
+              {allOptions.map(({ slug, label }) => (
                 <option key={slug} value={slug}>{label}</option>
               ))}
             </Select>
@@ -329,7 +331,7 @@ export function ReviewQueueView() {
             <label className="block text-[11px] text-text-muted mb-0.5">Bulk category</label>
             <Select value={bulkCategory} onChange={(e) => setBulkCategory(e.target.value)}>
               <option value="">— select —</option>
-              {CATEGORY_OPTIONS.map(({ slug, label }) => (
+              {allOptions.map(({ slug, label }) => (
                 <option key={slug} value={slug}>{label}</option>
               ))}
             </Select>
@@ -396,6 +398,8 @@ export function ReviewQueueView() {
 
       <ReviewDrawer
         item={openItem}
+        budgetOptions={budgetOptions}
+        taxOptions={taxOptions}
         onClose={() => setOpenItem(null)}
         onResolve={onResolveOne}
         busy={busy}
@@ -458,9 +462,11 @@ function ReviewRow({
 // ── Drawer ──────────────────────────────────────────────────────────────────
 
 function ReviewDrawer({
-  item, onClose, onResolve, busy,
+  item, budgetOptions, taxOptions, onClose, onResolve, busy,
 }: {
   item: ReviewItem | null;
+  budgetOptions: OptionCategory[];
+  taxOptions: OptionCategory[];
   onClose(): void;
   onResolve(id: string, input: { action: ResolveAction; entity?: string; category_tax?: string; category_budget?: string }): Promise<void>;
   busy: boolean;
@@ -552,7 +558,7 @@ function ReviewDrawer({
           <label className="block text-xs text-text-muted mb-1">Tax category</label>
           <Select value={categoryTax} onChange={(e) => setCategoryTax(e.target.value)} className="w-full">
             <option value="">— none —</option>
-            {CATEGORY_OPTIONS.map(({ slug, label }) => (
+            {taxOptions.map(({ slug, label }) => (
               <option key={slug} value={slug}>{label}</option>
             ))}
           </Select>
@@ -561,7 +567,7 @@ function ReviewDrawer({
           <label className="block text-xs text-text-muted mb-1">Budget category (optional)</label>
           <Select value={categoryBudget} onChange={(e) => setCategoryBudget(e.target.value)} className="w-full">
             <option value="">— none —</option>
-            {CATEGORY_OPTIONS.filter((c) => c.kind === "budget").map(({ slug, label }) => (
+            {budgetOptions.map(({ slug, label }) => (
               <option key={slug} value={slug}>{label}</option>
             ))}
           </Select>
