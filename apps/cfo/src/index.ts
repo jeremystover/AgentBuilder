@@ -38,7 +38,7 @@ import { handleListReview, handleResolveReview, handleBulkResolveReview, handleN
 import { handleScheduleC, handleScheduleE, handleSummary, handleExport, handleSnapshot } from './routes/reports';
 import { handleListImports, handleDeleteAllImports, handleDeleteImport, handleCsvImport } from './routes/imports';
 import { handleTillerImport } from './routes/tiller';
-import { handleListRules, handleCreateRule, handleUpdateRule, handleDeleteRule, handleAutoCatImport } from './routes/rules';
+import { handleListRules, handleCreateRule, handleUpdateRule, handleDeleteRule, handleAutoCatImport, handleApplyRuleRetroactive } from './routes/rules';
 import { handleAmazonImport } from './routes/amazon';
 import {
   handleListBudgetCategories,
@@ -231,6 +231,7 @@ const ROUTES: Route[] = [
   { method: 'GET',    pattern: /^\/rules$/,                              handler: (req, env) => handleListRules(req, env) },
   { method: 'POST',   pattern: /^\/rules$/,                              handler: (req, env) => handleCreateRule(req, env) },
   { method: 'POST',   pattern: /^\/rules\/import-autocat$/,              handler: (req, env) => handleAutoCatImport(req, env) },
+  { method: 'POST',   pattern: /^\/rules\/([^/]+)\/apply-retroactive$/,  handler: (req, env, id) => handleApplyRuleRetroactive(req, env, id) },
   { method: 'PUT',    pattern: /^\/rules\/([^/]+)$/,                     handler: (req, env, id) => handleUpdateRule(req, env, id) },
   { method: 'DELETE', pattern: /^\/rules\/([^/]+)$/,                     handler: (req, env, id) => handleDeleteRule(req, env, id) },
 ];

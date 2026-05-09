@@ -1,8 +1,10 @@
 import { z } from 'zod';
-import type { Env } from '../types';
+import type { Env, Transaction, Rule } from '../types';
 import { jsonOk, jsonError, getUserId } from '../types';
 import { parseCsv } from '../lib/dedup';
 import { mapCategory } from './tiller';
+import { applyRules } from '../lib/rules';
+import { resolveReviewQueueItem } from '../lib/review-queue';
 
 const RuleSchema = z.object({
   name:           z.string().min(1),
@@ -175,4 +177,53 @@ export async function handleDeleteRule(request: Request, env: Env, ruleId: strin
 
   await env.DB.prepare('DELETE FROM rules WHERE id = ?').bind(ruleId).run();
   return jsonOk({ deleted: ruleId });
+}
+
+// ── POST /rules/:id/apply-retroactive ─────────────────────────────────────────
+// Applies a single rule to all uncategorized transactions, skipping any that
+// were manually classified. Does not touch transactions that already have a
+// category (regardless of how they got it).
+export async function handleApplyRuleRetroactive(request: Request, env: Env, ruleId: string): Promise<Response> {
+  const userId = getUserId(request);
+
+  const rule = await env.DB.prepare(
+    'SELECT * FROM rules WHERE id = ? AND user_id = ?',
+  ).bind(ruleId, userId).first<Rule>();
+  if (!rule) return jsonError('Rule not found', 404);
+
+  // Uncategorized = no classification OR classification exists but category_tax is null/empty.
+  // Never touch manually classified transactions.
+  const rows = await env.DB.prepare(`
+    SELECT t.*, c.id AS class_id
+    FROM transactions t
+    LEFT JOIN classifications c ON c.transaction_id = t.id
+    WHERE t.user_id = ?
+      AND t.is_pending = 0
+      AND (
+        c.id IS NULL
+        OR (c.method != 'manual' AND COALESCE(c.category_tax, '') = '')
+      )
+    ORDER BY t.posted_date DESC
+    LIMIT 5000
+  `).bind(userId).all<Transaction & { class_id: string | null }>();
+
+  let applied = 0;
+  for (const tx of rows.results) {
+    const match = applyRules(tx as unknown as Transaction, [rule]);
+    if (!match) continue;
+
+    const classId = (tx as unknown as { class_id: string | null }).class_id ?? crypto.randomUUID();
+    await env.DB.prepare(`
+      INSERT OR REPLACE INTO classifications
+        (id, transaction_id, entity, category_tax, category_budget, confidence, method, reason_codes, review_required, classified_by)
+      VALUES (?, ?, ?, ?, ?, 1.0, 'rule', ?, 0, 'system')
+    `).bind(
+      classId, tx.id, match.entity, match.category_tax, match.category_budget,
+      JSON.stringify([`rule:${match.rule_name}`]),
+    ).run();
+    await resolveReviewQueueItem(env, tx.id, 'system');
+    applied++;
+  }
+
+  return jsonOk({ applied, total_eligible: rows.results.length });
 }

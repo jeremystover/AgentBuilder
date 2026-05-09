@@ -1,15 +1,30 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeftRight, ChevronDown, ChevronUp, Sparkles, RefreshCw, Loader2 } from "lucide-react";
+import { ArrowLeftRight, ChevronDown, ChevronUp, Sparkles, RefreshCw, Loader2, Check } from "lucide-react";
 import { txAmountColor } from "../../utils/txColor";
 import { toast } from "sonner";
 import {
   Button, Card, Badge, Input, Select, Drawer, PageHeader, EmptyState, fmtUsd, humanizeSlug,
 } from "../ui";
 import { useReviewQueue } from "../../hooks/useReviewQueue";
-import { resolveReview, bulkResolveReview, runClassification } from "../../api";
-import type { ReviewItem, ReviewStatus, ResolveAction } from "../../types";
-import { ENTITY_OPTIONS, type OptionCategory } from "../../catalog";
+import { resolveReview, bulkResolveReview, runClassification, createRule, applyRuleRetroactive, type RuleInput } from "../../api";
+import type { ReviewItem, ReviewStatus, ResolveAction, RuleMatchField, RuleMatchOperator, EntitySlug } from "../../types";
+import { ENTITY_OPTIONS, TAX_OPTIONS, TRANSFER_OPTION, type OptionCategory } from "../../catalog";
 import { useCategoryOptions } from "../../hooks/useCategoryOptions";
+
+const FIELD_OPTIONS: { value: RuleMatchField; label: string }[] = [
+  { value: "merchant_name", label: "Merchant" },
+  { value: "description",   label: "Description" },
+  { value: "account_id",    label: "Account ID" },
+  { value: "amount",        label: "Amount" },
+];
+
+const OPERATOR_OPTIONS: { value: RuleMatchOperator; label: string }[] = [
+  { value: "contains",    label: "contains" },
+  { value: "equals",      label: "equals" },
+  { value: "starts_with", label: "starts with" },
+  { value: "ends_with",   label: "ends with" },
+  { value: "regex",       label: "regex" },
+];
 
 const PAGE_SIZE = 50;
 
@@ -34,6 +49,8 @@ function SortTh({ col, label, sortBy, sortDir, onSort, className = "" }: {
   );
 }
 
+type RuleProposal = { draft: RuleInput };
+
 export function ReviewQueueView() {
   const { budgetOptions, taxOptions, allOptions } = useCategoryOptions();
   const [status, setStatus] = useState<ReviewStatus>("pending");
@@ -42,6 +59,12 @@ export function ReviewQueueView() {
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [sortBy, setSortBy] = useState("created_at");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
+  const [suggestRules, setSuggestRules] = useState(() => {
+    try { return localStorage.getItem("cfo_suggest_rules") !== "false"; }
+    catch { return true; }
+  });
+  const [pendingRuleProposal, setPendingRuleProposal] = useState<RuleProposal | null>(null);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search), 400);
@@ -184,17 +207,43 @@ export function ReviewQueueView() {
 
   const onResolveOne = useCallback(async (id: string, input: Parameters<typeof resolveReview>[1]) => {
     setBusy(true);
+    const snapshotItem = openItem;
     try {
       await resolveReview(id, input);
       toast.success(`${input.action} applied`);
       setOpenItem(null);
       await refresh();
+
+      if (suggestRules && snapshotItem && (input.action === "classify" || input.action === "accept")) {
+        const entity = input.entity ?? snapshotItem.suggested_entity ?? snapshotItem.current_entity ?? "";
+        const categoryTax = input.category_tax ?? snapshotItem.suggested_category_tax ?? snapshotItem.current_category_tax ?? "";
+        if (entity && categoryTax && categoryTax !== "transfer") {
+          const merchantName = (snapshotItem.merchant_name ?? "").trim();
+          const description = (snapshotItem.description ?? "").trim();
+          const matchValue = merchantName || description;
+          if (matchValue) {
+            setPendingRuleProposal({
+              draft: {
+                name: `${matchValue} → ${humanizeSlug(categoryTax)}`,
+                match_field: merchantName ? "merchant_name" : "description",
+                match_operator: "contains",
+                match_value: matchValue,
+                entity: entity as EntitySlug,
+                category_tax: categoryTax,
+                category_budget: input.category_budget ?? snapshotItem.suggested_category_budget ?? "",
+                priority: 50,
+                is_active: true,
+              },
+            });
+          }
+        }
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
-  }, [refresh]);
+  }, [refresh, openItem, suggestRules]);
 
   // ── Render ─────────────────────────────────────────────────────────────
   return (
@@ -208,6 +257,21 @@ export function ReviewQueueView() {
         }
         actions={
           <>
+            <label className="flex items-center gap-1.5 text-sm text-text-muted cursor-pointer select-none" title="After categorizing, propose a rule for future transactions">
+              <button
+                role="switch"
+                aria-checked={suggestRules}
+                onClick={() => {
+                  const next = !suggestRules;
+                  setSuggestRules(next);
+                  try { localStorage.setItem("cfo_suggest_rules", next ? "true" : "false"); } catch {}
+                }}
+                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${suggestRules ? "bg-accent-primary" : "bg-bg-elevated border border-border"}`}
+              >
+                <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${suggestRules ? "translate-x-4" : "translate-x-0.5"}`} />
+              </button>
+              Suggest rules
+            </label>
             {classifyState === "picking" ? (
               <>
                 <span className="text-sm text-text-muted self-center">Classify:</span>
@@ -404,6 +468,14 @@ export function ReviewQueueView() {
         onResolve={onResolveOne}
         busy={busy}
       />
+
+      {pendingRuleProposal && (
+        <ProposeRuleModal
+          proposal={pendingRuleProposal}
+          onDismiss={() => setPendingRuleProposal(null)}
+          onSaved={() => { setPendingRuleProposal(null); void refresh(); }}
+        />
+      )}
     </div>
   );
 }
@@ -456,6 +528,142 @@ function ReviewRow({
         <Button size="sm" onClick={onOpen}>Open</Button>
       </td>
     </tr>
+  );
+}
+
+// ── Propose-rule modal ───────────────────────────────────────────────────────
+
+function ProposeRuleModal({
+  proposal, onDismiss, onSaved,
+}: {
+  proposal: RuleProposal;
+  onDismiss(): void;
+  onSaved(): void;
+}) {
+  const [draft, setDraft] = useState<RuleInput>(proposal.draft);
+  const [applyRetroactive, setApplyRetroactive] = useState(true);
+  const [busy, setBusy] = useState(false);
+
+  const update = <K extends keyof RuleInput>(key: K, value: RuleInput[K]) =>
+    setDraft((prev) => ({ ...prev, [key]: value }));
+
+  const handleAdd = async () => {
+    if (!draft.name.trim() || !draft.match_value.trim()) {
+      toast.error("Name and match value are required");
+      return;
+    }
+    setBusy(true);
+    try {
+      const payload: RuleInput = {
+        ...draft,
+        category_tax: draft.category_tax || undefined,
+        category_budget: draft.category_budget || undefined,
+      };
+      const { rule } = await createRule(payload);
+      if (applyRetroactive) {
+        const r = await applyRuleRetroactive(rule.id);
+        if (r.applied > 0) {
+          toast.success(`Rule created · applied to ${r.applied} uncategorized transaction${r.applied !== 1 ? "s" : ""}`);
+        } else {
+          toast.success("Rule created (no uncategorized matches found)");
+        }
+      } else {
+        toast.success("Rule created");
+      }
+      onSaved();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/40" onClick={onDismiss} />
+      <div className="relative w-full max-w-lg bg-bg-surface rounded-xl shadow-2xl border border-border">
+        <div className="flex items-center justify-between border-b border-border px-5 py-3">
+          <div className="font-semibold text-text-primary">Create a rule from this categorization?</div>
+          <button className="text-text-muted hover:text-text-primary" onClick={onDismiss} aria-label="Dismiss">✕</button>
+        </div>
+
+        <div className="px-5 py-4 space-y-4">
+          <div>
+            <label className="block text-xs text-text-muted mb-1">Rule name</label>
+            <Input
+              type="text"
+              value={draft.name}
+              onChange={(e) => update("name", e.target.value)}
+              className="w-full"
+            />
+          </div>
+
+          <div>
+            <div className="text-xs text-text-muted mb-1">When</div>
+            <div className="grid grid-cols-3 gap-2">
+              <Select value={draft.match_field} onChange={(e) => update("match_field", e.target.value as RuleMatchField)} className="w-full">
+                {FIELD_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </Select>
+              <Select value={draft.match_operator} onChange={(e) => update("match_operator", e.target.value as RuleMatchOperator)} className="w-full">
+                {OPERATOR_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </Select>
+              <Input
+                type="text"
+                value={draft.match_value}
+                onChange={(e) => update("match_value", e.target.value)}
+                className="w-full"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-xs text-text-muted mb-1">Entity</label>
+              <Select value={draft.entity ?? "family_personal"} onChange={(e) => update("entity", e.target.value as EntitySlug)} className="w-full">
+                {ENTITY_OPTIONS.map(({ slug, label }) => <option key={slug} value={slug}>{label}</option>)}
+              </Select>
+            </div>
+            <div>
+              <label className="block text-xs text-text-muted mb-1">Tax category</label>
+              <Select value={draft.category_tax ?? ""} onChange={(e) => update("category_tax", e.target.value)} className="w-full">
+                <option value="">— none —</option>
+                <option value={TRANSFER_OPTION.slug}>{TRANSFER_OPTION.label}</option>
+                <optgroup label="Schedule C">
+                  {TAX_OPTIONS.filter((c) => c.group === "schedule_c").map(({ slug, label }) => (
+                    <option key={slug} value={slug}>{label}</option>
+                  ))}
+                </optgroup>
+                <optgroup label="Schedule E">
+                  {TAX_OPTIONS.filter((c) => c.group === "schedule_e").map(({ slug, label }) => (
+                    <option key={slug} value={slug}>{label}</option>
+                  ))}
+                </optgroup>
+              </Select>
+            </div>
+          </div>
+
+          <label className="flex items-start gap-3 p-3 rounded-lg border border-border bg-bg-elevated cursor-pointer">
+            <input
+              type="checkbox"
+              checked={applyRetroactive}
+              onChange={(e) => setApplyRetroactive(e.target.checked)}
+              className="mt-0.5 rounded"
+            />
+            <div>
+              <div className="text-sm font-medium text-text-primary">Apply to past uncategorized transactions</div>
+              <div className="text-xs text-text-muted mt-0.5">Categorize any existing transactions that match this rule and don't have a category yet. Manually categorized transactions are never touched.</div>
+            </div>
+          </label>
+        </div>
+
+        <div className="flex items-center justify-between border-t border-border px-5 py-3 bg-bg-elevated rounded-b-xl">
+          <Button variant="ghost" onClick={onDismiss} disabled={busy}>Dismiss</Button>
+          <Button variant="primary" onClick={() => void handleAdd()} disabled={busy}>
+            <Check className="w-4 h-4" /> Add
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }
 
