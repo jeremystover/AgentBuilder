@@ -29,7 +29,7 @@ import { handleBankSync } from './routes/bank';
 import { handleCsvImport } from './routes/imports';
 import { handleAmazonImport } from './routes/amazon';
 import { handleTillerImport } from './routes/tiller';
-import { handleRunClassification } from './routes/classify';
+import { handleRunClassification, handleReapplyAccountRules } from './routes/classify';
 import { handleListReview, handleResolveReview, handleNextReviewItem } from './routes/review';
 import { handleScheduleC, handleScheduleE, handleSummary } from './routes/reports';
 import {
@@ -125,6 +125,16 @@ export const MCP_TOOLS = [
           description: 'Max number of transactions to classify in this run (default 50).',
         },
       },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'reapply_account_rules',
+    description:
+      'Re-run the rules engine against all existing transactions from accounts that have a business assigned (owner_tag). Overwrites any prior AI classification that is not locked or manually set. Use this after assigning a business to an account for the first time to retroactively tag historical transactions.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {},
       additionalProperties: false,
     },
   },
@@ -529,6 +539,11 @@ export async function dispatchTool(
     case 'classify_transactions': {
       const req = jsonRequest('POST', 'https://cfo.invalid/classify/run', args);
       return respondText(await handleRunClassification(req, env));
+    }
+
+    case 'reapply_account_rules': {
+      const req = jsonRequest('POST', 'https://cfo.invalid/classify/reapply-account-rules', {});
+      return respondText(await handleReapplyAccountRules(req, env));
     }
 
     case 'list_review_queue': {

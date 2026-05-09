@@ -33,7 +33,7 @@ import { handleSetup } from './routes/setup';
 import { handleGetBankConfig, handleStartBankConnect, handleCompleteBankConnect, handleBankSync } from './routes/bank';
 import { handleListAccounts, handleUpdateAccount } from './routes/accounts';
 import { handleListTransactions, handleGetTransaction, handleDeleteTransaction, handleManualClassify, handleSplitTransaction } from './routes/transactions';
-import { handleRunClassification, handleClassifySingle } from './routes/classify';
+import { handleRunClassification, handleClassifySingle, handleReapplyAccountRules } from './routes/classify';
 import { handleListReview, handleResolveReview, handleBulkResolveReview, handleNextReviewItem } from './routes/review';
 import { handleScheduleC, handleScheduleE, handleSummary, handleExport, handleSnapshot } from './routes/reports';
 import { handleListImports, handleDeleteAllImports, handleDeleteImport, handleCsvImport } from './routes/imports';
@@ -171,6 +171,7 @@ const ROUTES: Route[] = [
 
   // AI Classification
   { method: 'POST',   pattern: /^\/classify\/run$/,                      handler: (req, env) => handleRunClassification(req, env) },
+  { method: 'POST',   pattern: /^\/classify\/reapply-account-rules$/,    handler: (req, env) => handleReapplyAccountRules(req, env) },
   { method: 'POST',   pattern: /^\/classify\/transaction\/([^/]+)$/,     handler: (req, env, id) => handleClassifySingle(req, env, id) },
 
   // Review queue
