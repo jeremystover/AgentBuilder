@@ -268,12 +268,20 @@ function InstitutionCard({
 
 // ── Account row ─────────────────────────────────────────────────────────────
 
-const OWNER_OPTIONS = [
+const ENTITY_OPTIONS = [
   { value: "", label: "— none —" },
-  { value: "Jeremy", label: "Jeremy" },
-  { value: "Elyse", label: "Elyse" },
-  { value: "Shared", label: "Shared" },
+  { value: "elyse_coaching", label: "Elyse's Coaching" },
+  { value: "jeremy_coaching", label: "Jeremy's Coaching" },
+  { value: "airbnb_activity", label: "Whitford House" },
+  { value: "family_personal", label: "Family / Personal" },
 ];
+
+const ENTITY_LABELS: Record<string, string> = {
+  elyse_coaching: "Elyse's Coaching",
+  jeremy_coaching: "Jeremy's Coaching",
+  airbnb_activity: "Whitford House",
+  family_personal: "Family / Personal",
+};
 
 function AccountRow({
   account, busy, onUpdate,
@@ -352,15 +360,17 @@ function AccountRow({
         <Select
           value={ownerTag}
           onChange={(e) => setOwnerTag(e.target.value)}
-          className="w-32"
+          className="w-40"
         >
-          {OWNER_OPTIONS.map((o) => (
+          {ENTITY_OPTIONS.map((o) => (
             <option key={o.value} value={o.value}>{o.label}</option>
           ))}
         </Select>
       ) : (
-        <span className="text-xs text-text-muted w-16 text-right">
-          {account.owner_tag ?? <span className="italic">no owner</span>}
+        <span className="text-xs text-text-muted w-28 text-right">
+          {account.owner_tag
+            ? (ENTITY_LABELS[account.owner_tag] ?? account.owner_tag)
+            : <span className="italic">no owner</span>}
         </span>
       )}
 

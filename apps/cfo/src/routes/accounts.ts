@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { Env } from '../types';
+import type { Env, Entity } from '../types';
 import { jsonOk, jsonError, getUserId } from '../types';
 
 // ── GET /accounts ─────────────────────────────────────────────────────────────
@@ -23,8 +23,10 @@ export async function handleListAccounts(request: Request, env: Env): Promise<Re
 }
 
 // ── PATCH /accounts/:id ───────────────────────────────────────────────────────
+const ENTITY_VALUES: [Entity, ...Entity[]] = ['elyse_coaching', 'jeremy_coaching', 'airbnb_activity', 'family_personal'];
+
 const UpdateAccountSchema = z.object({
-  owner_tag: z.string().nullable().optional(),
+  owner_tag: z.enum(ENTITY_VALUES).nullable().optional(),
   name: z.string().min(1).optional(),
   is_active: z.boolean().optional(),
 });
@@ -40,8 +42,8 @@ export async function handleUpdateAccount(request: Request, env: Env, accountId:
   if (!parsed.success) return jsonError(parsed.error.message);
 
   const existing = await env.DB.prepare(
-    'SELECT id FROM accounts WHERE id = ? AND user_id = ?',
-  ).bind(accountId, userId).first();
+    'SELECT id, name FROM accounts WHERE id = ? AND user_id = ?',
+  ).bind(accountId, userId).first<{ id: string; name: string }>();
   if (!existing) return jsonError('Account not found', 404);
 
   const { owner_tag, name, is_active } = parsed.data;
@@ -56,6 +58,33 @@ export async function handleUpdateAccount(request: Request, env: Env, accountId:
 
   vals.push(accountId);
   await env.DB.prepare(`UPDATE accounts SET ${sets.join(', ')} WHERE id = ?`).bind(...vals).run();
+
+  // Keep a low-priority account_id rule in sync with the owner_tag so all
+  // transactions from this account are deterministically tagged to the right
+  // entity. Priority 1 is the floor — any user/learned rule wins over it.
+  if (owner_tag !== undefined) {
+    const accountName = name ?? existing.name;
+    if (owner_tag) {
+      const existingRule = await env.DB.prepare(
+        `SELECT id FROM rules WHERE user_id = ? AND match_field = 'account_id' AND match_operator = 'equals' AND match_value = ?`,
+      ).bind(userId, accountId).first<{ id: string }>();
+
+      if (existingRule) {
+        await env.DB.prepare(
+          'UPDATE rules SET entity = ?, name = ?, is_active = 1 WHERE id = ?',
+        ).bind(owner_tag, `Account default: ${accountName}`, existingRule.id).run();
+      } else {
+        await env.DB.prepare(
+          `INSERT INTO rules (id, user_id, name, match_field, match_operator, match_value, entity, category_tax, category_budget, priority, is_active)
+           VALUES (?, ?, ?, 'account_id', 'equals', ?, ?, NULL, NULL, 1, 1)`,
+        ).bind(crypto.randomUUID(), userId, `Account default: ${accountName}`, accountId, owner_tag).run();
+      }
+    } else {
+      await env.DB.prepare(
+        `DELETE FROM rules WHERE user_id = ? AND match_field = 'account_id' AND match_operator = 'equals' AND match_value = ?`,
+      ).bind(userId, accountId).run();
+    }
+  }
 
   const updated = await env.DB.prepare('SELECT * FROM accounts WHERE id = ?').bind(accountId).first();
   return jsonOk({ account: updated });
