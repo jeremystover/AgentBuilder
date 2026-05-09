@@ -12,7 +12,8 @@ import {
 import type {
   Rule, RuleMatchField, RuleMatchOperator, EntitySlug, AutoCatImportResult,
 } from "../../types";
-import { CATEGORY_OPTIONS, ENTITY_OPTIONS, TRANSFER_OPTION } from "../../catalog";
+import { ENTITY_OPTIONS, TRANSFER_OPTION, type OptionCategory } from "../../catalog";
+import { useCategoryOptions } from "../../hooks/useCategoryOptions";
 
 const FIELD_OPTIONS: { value: RuleMatchField; label: string }[] = [
   { value: "merchant_name", label: "Merchant" },
@@ -43,6 +44,7 @@ const EMPTY_DRAFT: RuleInput = {
 
 export function RulesView() {
   const { rules, loading, error, refresh } = useRules();
+  const { budgetOptions, taxOptions, allOptions } = useCategoryOptions();
   const [busy, setBusy] = useState(false);
 
   const [editing, setEditing] = useState<Rule | null>(null);
@@ -136,7 +138,7 @@ export function RulesView() {
             <label className="block text-xs text-text-muted mb-1">Category</label>
             <Select value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)} className="w-full">
               <option value="">All categories</option>
-              {CATEGORY_OPTIONS.map(({ slug, label }) => (
+              {allOptions.map(({ slug, label }) => (
                 <option key={slug} value={slug}>{label}</option>
               ))}
             </Select>
@@ -195,6 +197,8 @@ export function RulesView() {
       <RuleEditor
         open={creating || !!editing}
         rule={editing}
+        budgetOptions={budgetOptions}
+        taxOptions={taxOptions}
         onClose={() => { setEditing(null); setCreating(false); }}
         onSaved={async () => { await refresh(); setEditing(null); setCreating(false); }}
       />
@@ -266,10 +270,12 @@ function RuleRow({
 // ── Editor drawer ───────────────────────────────────────────────────────────
 
 function RuleEditor({
-  open, rule, onClose, onSaved,
+  open, rule, budgetOptions, taxOptions, onClose, onSaved,
 }: {
   open: boolean;
   rule: Rule | null;
+  budgetOptions: OptionCategory[];
+  taxOptions: OptionCategory[];
   onClose(): void;
   onSaved(): Promise<void>;
 }) {
@@ -398,12 +404,12 @@ function RuleEditor({
                 <option value="">— none —</option>
                 <option value={TRANSFER_OPTION.slug}>{TRANSFER_OPTION.label}</option>
                 <optgroup label="Schedule C">
-                  {CATEGORY_OPTIONS.filter((c) => c.kind === "tax" && c.group === "schedule_c").map(({ slug, label }) => (
+                  {taxOptions.filter((c) => c.group === "schedule_c").map(({ slug, label }) => (
                     <option key={slug} value={slug}>{label}</option>
                   ))}
                 </optgroup>
                 <optgroup label="Schedule E">
-                  {CATEGORY_OPTIONS.filter((c) => c.kind === "tax" && c.group === "schedule_e").map(({ slug, label }) => (
+                  {taxOptions.filter((c) => c.group === "schedule_e").map(({ slug, label }) => (
                     <option key={slug} value={slug}>{label}</option>
                   ))}
                 </optgroup>
@@ -427,7 +433,7 @@ function RuleEditor({
                   <label className="block text-xs text-text-muted mb-1">Budget category</label>
                   <Select value={draft.category_budget ?? ""} onChange={(e) => update("category_budget", e.target.value)} className="w-full">
                     <option value="">— none —</option>
-                    {CATEGORY_OPTIONS.filter((c) => c.kind === "budget").map(({ slug, label }) => (
+                    {budgetOptions.map(({ slug, label }) => (
                       <option key={slug} value={slug}>{label}</option>
                     ))}
                   </Select>
