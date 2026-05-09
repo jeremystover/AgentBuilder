@@ -351,6 +351,10 @@ export async function deleteRule(id: string): Promise<{ deleted: string }> {
   return request<{ deleted: string }>(`/rules/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
+export async function applyRuleRetroactive(id: string): Promise<{ applied: number; total_eligible: number }> {
+  return request<{ applied: number; total_eligible: number }>(`/rules/${encodeURIComponent(id)}/apply-retroactive`, { method: "POST" });
+}
+
 export async function importAutoCat(file: File): Promise<AutoCatImportResult> {
   const form = new FormData();
   form.append("file", file);
