@@ -335,6 +335,7 @@ export async function syncTellerTransactionsForUser(
   const byInstitution: Array<{ institution: string | null; added: number; dupes: number }> = [];
   const requestedAccountIds = new Set(accountIds ?? []);
   let matchedRequestedAccounts = 0;
+  const reconnectRequired: string[] = [];
 
   for (const enrollment of enrollments.results) {
     const syncStart = dateFrom;
@@ -394,9 +395,13 @@ export async function syncTellerTransactionsForUser(
          WHERE id=?`,
       ).bind(found, added, importId).run();
     } catch (err) {
+      const errMsg = String(err);
       await env.DB.prepare(
         `UPDATE imports SET status='failed', error_message=?, completed_at=datetime('now') WHERE id=?`,
-      ).bind(String(err), importId).run();
+      ).bind(errMsg, importId).run();
+      if (errMsg.includes('enrollment.disconnected')) {
+        reconnectRequired.push(enrollment.institution_name ?? 'Unknown institution');
+      }
     }
 
     totalAdded += added;
@@ -406,6 +411,14 @@ export async function syncTellerTransactionsForUser(
 
   if (requestedAccountIds.size > 0 && matchedRequestedAccounts === 0) {
     throw new Error('No linked Teller accounts matched the requested sync scope.');
+  }
+
+  if (reconnectRequired.length > 0) {
+    const names = reconnectRequired.join(', ');
+    throw new Error(
+      `Bank re-enrollment required for: ${names}. MFA was requested by the institution but the ` +
+      `enrollment is no longer active. Re-link via the bank connection flow to restore sync.`,
+    );
   }
 
   return {
