@@ -360,6 +360,7 @@ export function ReviewQueueView() {
                 <SortTh col="merchant_name" label="Merchant" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
                 <SortTh col="amount"        label="Amount"   sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
                 <SortTh col="account_name"  label="Account"  sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+                <th>Entity</th>
                 <th>Suggested</th>
                 <th>Conf.</th>
                 <th className="pr-4">Actions</th>
@@ -367,7 +368,7 @@ export function ReviewQueueView() {
             </thead>
             <tbody>
               {items.length === 0 ? (
-                <tr><td colSpan={8}><EmptyState>Nothing in queue.</EmptyState></td></tr>
+                <tr><td colSpan={9}><EmptyState>Nothing in queue.</EmptyState></td></tr>
               ) : items.map((it) => (
                 <ReviewRow
                   key={it.id}
@@ -430,6 +431,13 @@ function ReviewRow({
       </td>
       <td className={`tabular-nums ${amtCls}`}>{fmtUsd(item.amount, { sign: true })}</td>
       <td className="text-text-muted">{item.account_name ?? "—"}</td>
+      <td>
+        {(item.suggested_entity ?? item.current_entity) ? (
+          <Badge tone="neutral">{humanizeSlug(item.suggested_entity ?? item.current_entity ?? "")}</Badge>
+        ) : (
+          <span className="text-text-subtle">—</span>
+        )}
+      </td>
       <td>
         {sug ? (
           <Badge tone="info">{humanizeSlug(sug)}</Badge>
