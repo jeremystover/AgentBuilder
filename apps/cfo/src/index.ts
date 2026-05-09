@@ -33,7 +33,7 @@ import { handleSetup } from './routes/setup';
 import { handleGetBankConfig, handleStartBankConnect, handleCompleteBankConnect, handleBankSync } from './routes/bank';
 import { handleListAccounts, handleUpdateAccount } from './routes/accounts';
 import { handleListTransactions, handleGetTransaction, handleDeleteTransaction, handleManualClassify, handleSplitTransaction } from './routes/transactions';
-import { handleRunClassification, handleClassifySingle } from './routes/classify';
+import { handleRunClassification, handleClassifySingle, handleReapplyAccountRules } from './routes/classify';
 import { handleListReview, handleResolveReview, handleBulkResolveReview, handleNextReviewItem } from './routes/review';
 import { handleScheduleC, handleScheduleE, handleSummary, handleExport, handleSnapshot } from './routes/reports';
 import { handleListImports, handleDeleteAllImports, handleDeleteImport, handleCsvImport } from './routes/imports';
@@ -49,6 +49,7 @@ import {
   handleDeleteBudgetTarget,
   handleBudgetStatus,
 } from './routes/budget';
+import { handleIncomeStatus, handleListIncomeTargets, handleUpsertIncomeTarget, handleDeleteIncomeTarget } from './routes/income';
 import { handlePnL, handlePnLAll, handlePnLTrend } from './routes/pnl';
 import {
   handleBookkeepingSession,
@@ -171,6 +172,7 @@ const ROUTES: Route[] = [
 
   // AI Classification
   { method: 'POST',   pattern: /^\/classify\/run$/,                      handler: (req, env) => handleRunClassification(req, env) },
+  { method: 'POST',   pattern: /^\/classify\/reapply-account-rules$/,    handler: (req, env) => handleReapplyAccountRules(req, env) },
   { method: 'POST',   pattern: /^\/classify\/transaction\/([^/]+)$/,     handler: (req, env, id) => handleClassifySingle(req, env, id) },
 
   // Review queue
@@ -202,6 +204,12 @@ const ROUTES: Route[] = [
   { method: 'PUT',    pattern: /^\/budget\/targets$/,                    handler: (req, env) => handleUpsertBudgetTarget(req, env) },
   { method: 'DELETE', pattern: /^\/budget\/targets\/([^/]+)$/,           handler: (req, env, id) => handleDeleteBudgetTarget(req, env, id) },
   { method: 'GET',    pattern: /^\/budget\/status$/,                     handler: (req, env) => handleBudgetStatus(req, env) },
+
+  // Income tracking
+  { method: 'GET',    pattern: /^\/income\/status$/,                     handler: (req, env) => handleIncomeStatus(req, env) },
+  { method: 'GET',    pattern: /^\/income\/targets$/,                    handler: (req, env) => handleListIncomeTargets(req, env) },
+  { method: 'PUT',    pattern: /^\/income\/targets$/,                    handler: (req, env) => handleUpsertIncomeTarget(req, env) },
+  { method: 'DELETE', pattern: /^\/income\/targets\/([^/]+)$/,           handler: (req, env, id) => handleDeleteIncomeTarget(req, env, id) },
 
   // P&L / light bookkeeping
   { method: 'GET',    pattern: /^\/pnl$/,                                handler: (req, env) => handlePnL(req, env) },

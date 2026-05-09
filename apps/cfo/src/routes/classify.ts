@@ -304,6 +304,58 @@ export async function handleRunClassification(request: Request, env: Env): Promi
   });
 }
 
+// ── POST /classify/reapply-account-rules ─────────────────────────────────────
+// Re-runs the full rules engine against every non-locked, non-manual
+// classification for accounts that have an owner_tag set. Useful after
+// assigning a business to an account for the first time.
+export async function handleReapplyAccountRules(request: Request, env: Env): Promise<Response> {
+  const userId = getUserId(request);
+
+  const rulesResult = await env.DB.prepare(
+    'SELECT * FROM rules WHERE user_id = ? AND is_active = 1 ORDER BY priority DESC',
+  ).bind(userId).all<Rule>();
+  const rules = rulesResult.results;
+
+  // Transactions from tagged accounts where classification is not locked/manual
+  const rows = await env.DB.prepare(
+    `SELECT t.*, c.id AS class_id, c.method, c.is_locked
+     FROM transactions t
+     JOIN accounts a ON a.id = t.account_id
+     LEFT JOIN classifications c ON c.transaction_id = t.id
+     WHERE t.user_id = ?
+       AND a.owner_tag IS NOT NULL
+       AND t.is_pending = 0
+       AND (c.id IS NULL OR (c.is_locked = 0 AND c.method != 'manual'))
+     ORDER BY t.posted_date DESC`,
+  ).bind(userId).all<Transaction & { class_id: string | null; method: string | null; is_locked: number | null }>();
+
+  let reclassified = 0;
+  let skipped = 0;
+
+  for (const tx of rows.results) {
+    const ruleMatch = applyRules(tx as Transaction, rules);
+    if (!ruleMatch) { skipped++; continue; }
+
+    const classId = tx.class_id ?? crypto.randomUUID();
+    await env.DB.prepare(
+      `INSERT OR REPLACE INTO classifications
+         (id, transaction_id, entity, category_tax, category_budget, confidence, method, reason_codes, review_required, classified_by)
+       VALUES (?, ?, ?, ?, ?, 1.0, 'rule', ?, 0, 'system')`,
+    ).bind(
+      classId, tx.id, ruleMatch.entity, ruleMatch.category_tax, ruleMatch.category_budget,
+      JSON.stringify([`rule:${ruleMatch.rule_name}`]),
+    ).run();
+    await resolveReviewQueueItem(env, tx.id, 'system');
+    reclassified++;
+  }
+
+  return jsonOk({
+    total_eligible: rows.results.length,
+    reclassified,
+    skipped_no_rule_match: skipped,
+  });
+}
+
 // ── POST /classify/transaction/:id ────────────────────────────────────────────
 export async function handleClassifySingle(request: Request, env: Env, txId: string): Promise<Response> {
   const userId = getUserId(request);
