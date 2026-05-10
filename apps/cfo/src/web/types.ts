@@ -144,6 +144,7 @@ export interface Transaction {
   entity: EntitySlug | null;
   category_tax: string | null;
   category_budget: string | null;
+  expense_type: ExpenseType | null;
   confidence: number | null;
   method: string | null;
   reason_codes: string | null;
@@ -306,7 +307,12 @@ export interface AutoCatImportResult {
 
 // ── Budget ───────────────────────────────────────────────────────────────
 
-export type BudgetCadence = "weekly" | "monthly" | "annual";
+export type BudgetCadence = "weekly" | "monthly" | "annual" | "one_time";
+
+// Income cadences never include one_time (you can't have a one-time income target).
+export type IncomeCadence = "weekly" | "monthly" | "annual";
+
+export type ExpenseType = "recurring" | "one_time";
 export type BudgetPreset =
   | "this_week" | "this_month" | "last_month"
   | "ytd" | "trailing_30d" | "trailing_90d";
@@ -350,6 +356,34 @@ export interface BudgetStatusLine {
 export interface BudgetStatusResponse {
   period: { start: string; end: string; days: number; label: string };
   categories: BudgetStatusLine[];
+}
+
+export interface BudgetForecastLine {
+  category_slug: string;
+  category_name: string;
+  source: "target" | "history" | "none";
+  target: { amount: number; cadence: BudgetCadence } | null;
+  history_total_12mo: number | null;
+  monthly_anticipated: number;
+  annual_anticipated: number;
+}
+
+export interface BudgetOneTimeTarget {
+  category_slug: string;
+  category_name: string;
+  amount: number;
+  effective_from: string;
+  effective_to: string | null;
+  notes: string | null;
+}
+
+export interface BudgetForecastResponse {
+  trailing_window: { start: string; end: string; months: number };
+  monthly_anticipated: number;
+  annual_anticipated: number;
+  categories: BudgetForecastLine[];
+  one_time_targets: BudgetOneTimeTarget[];
+  excluded_one_time_transactions: { count: number; total: number };
 }
 
 // ── Reports ──────────────────────────────────────────────────────────────
@@ -406,7 +440,7 @@ export type IncomeStatusTone = "no_target" | "under" | "near" | "on_track";
 export interface IncomeTarget {
   id: string;
   entity: EntitySlug;
-  cadence: BudgetCadence;
+  cadence: IncomeCadence;
   amount: number;
   effective_from: string;
   effective_to: string | null;
@@ -418,7 +452,7 @@ export interface IncomeStatusLine {
   entity: EntitySlug;
   target: {
     native_amount: number;
-    native_cadence: BudgetCadence;
+    native_cadence: IncomeCadence;
     prorated_amount: number;
   } | null;
   actual_income: number;

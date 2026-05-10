@@ -7,13 +7,13 @@ import {
 import { useBudget } from "../../hooks/useBudget";
 import {
   upsertBudgetTarget, deleteBudgetTarget, createBudgetCategory,
-  listTransactions, classifyTransaction,
+  listTransactions, classifyTransaction, getBudgetForecast,
 } from "../../api";
 import { txAmountColor } from "../../utils/txColor";
 import { CATEGORY_OPTIONS } from "../../catalog";
 import type {
   BudgetCadence, BudgetPreset, BudgetStatusLine, BudgetStatusTone, BudgetTarget,
-  Transaction, EntitySlug,
+  BudgetForecastResponse, Transaction, EntitySlug, ExpenseType,
 } from "../../types";
 
 const PRESETS: { value: BudgetPreset; label: string }[] = [
@@ -26,10 +26,18 @@ const PRESETS: { value: BudgetPreset; label: string }[] = [
 ];
 
 const CADENCE_OPTIONS: { value: BudgetCadence; label: string }[] = [
-  { value: "weekly",  label: "Weekly" },
-  { value: "monthly", label: "Monthly" },
-  { value: "annual",  label: "Annual" },
+  { value: "weekly",   label: "Weekly" },
+  { value: "monthly",  label: "Monthly" },
+  { value: "annual",   label: "Annual" },
+  { value: "one_time", label: "One-time" },
 ];
+
+const CADENCE_LABEL: Record<BudgetCadence, string> = {
+  weekly:   "weekly",
+  monthly:  "monthly",
+  annual:   "annual",
+  one_time: "one-time",
+};
 
 export function BudgetView() {
   const [preset, setPreset] = useState<BudgetPreset | "custom">("this_month");
@@ -49,6 +57,26 @@ export function BudgetView() {
   const [openSlug, setOpenSlug] = useState<string | null>(null);
   const [openTxSlug, setOpenTxSlug] = useState<string | null>(null);
   const [creatingCategory, setCreatingCategory] = useState(false);
+
+  const [forecast, setForecast] = useState<BudgetForecastResponse | null>(null);
+  const [forecastLoading, setForecastLoading] = useState(false);
+
+  const refreshForecast = async () => {
+    setForecastLoading(true);
+    try {
+      setForecast(await getBudgetForecast());
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setForecastLoading(false);
+    }
+  };
+
+  useEffect(() => { void refreshForecast(); }, []);
+
+  const refreshAll = async () => {
+    await Promise.all([refresh(), refreshForecast()]);
+  };
 
   const visible = useMemo(() => {
     if (!status) return [];
@@ -133,6 +161,8 @@ export function BudgetView() {
         </div>
       </Card>
 
+      <BudgetForecastPanel forecast={forecast} loading={forecastLoading} />
+
       {/* Totals */}
       {status && (
         <div className="grid grid-cols-3 gap-3 mb-4">
@@ -199,7 +229,7 @@ export function BudgetView() {
         dateFrom={status?.period.start ?? ""}
         dateTo={status?.period.end ?? ""}
         onClose={() => setOpenTxSlug(null)}
-        onChanged={refresh}
+        onChanged={refreshAll}
       />
 
       <TargetEditor
@@ -207,16 +237,122 @@ export function BudgetView() {
         categoryName={openSlug ? (status?.categories.find((c) => c.category_slug === openSlug)?.category_name ?? openSlug) : null}
         existingTarget={openSlug ? targetByCategory.get(openSlug) ?? null : null}
         onClose={() => setOpenSlug(null)}
-        onSaved={async () => { await refresh(); setOpenSlug(null); }}
+        onSaved={async () => { await refreshAll(); setOpenSlug(null); }}
       />
 
       <NewCategoryDrawer
         open={creatingCategory}
         existingSlugs={categories.map((c) => c.slug)}
         onClose={() => setCreatingCategory(false)}
-        onSaved={async () => { await refresh(); setCreatingCategory(false); }}
+        onSaved={async () => { await refreshAll(); setCreatingCategory(false); }}
       />
     </div>
+  );
+}
+
+// ── Anticipated-expenses forecast panel ─────────────────────────────────────
+
+function BudgetForecastPanel({
+  forecast, loading,
+}: { forecast: BudgetForecastResponse | null; loading: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (!forecast && !loading) return null;
+  if (!forecast) {
+    return (
+      <Card className="p-3 mb-4 text-sm text-text-muted">Loading forecast…</Card>
+    );
+  }
+
+  const sourceLabel: Record<"target" | "history" | "none", string> = {
+    target:  "From target",
+    history: "From history",
+    none:    "No data",
+  };
+
+  return (
+    <Card className="p-4 mb-4">
+      <div className="flex items-baseline justify-between mb-3">
+        <div>
+          <div className="text-xs text-text-muted uppercase tracking-wide">Anticipated expenses</div>
+          <div className="text-xs text-text-subtle">
+            Hybrid of active targets + trailing-12mo recurring spend.
+            One-time excluded.
+          </div>
+        </div>
+        <Button size="sm" variant="ghost" onClick={() => setExpanded((v) => !v)}>
+          {expanded ? "Hide details" : "Show details"}
+        </Button>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
+        <SummaryStat label="Per month" value={fmtUsd(forecast.monthly_anticipated)} tone="neutral" />
+        <SummaryStat label="Per year"  value={fmtUsd(forecast.annual_anticipated)}  tone="neutral" />
+        <SummaryStat
+          label="Excluded one-time (last 12mo)"
+          value={`${forecast.excluded_one_time_transactions.count} tx · ${fmtUsd(forecast.excluded_one_time_transactions.total)}`}
+          tone="neutral"
+        />
+      </div>
+
+      {forecast.one_time_targets.length > 0 && (
+        <div className="rounded-md border border-border p-3 mb-3 text-xs">
+          <div className="text-text-muted mb-2">
+            One-time targets (envelopes — not included in monthly anticipated)
+          </div>
+          <ul className="space-y-1">
+            {forecast.one_time_targets.map((o) => (
+              <li key={o.category_slug} className="flex items-center justify-between">
+                <span className="text-text-primary">{o.category_name}</span>
+                <span className="tabular-nums text-text-muted">{fmtUsd(o.amount)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {expanded && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-text-muted uppercase tracking-wide border-b border-border">
+                <th className="py-2">Category</th>
+                <th className="text-right">Per month</th>
+                <th className="text-right">Per year</th>
+                <th className="text-right">12mo actual</th>
+                <th>Source</th>
+              </tr>
+            </thead>
+            <tbody>
+              {forecast.categories
+                .filter((l) => l.monthly_anticipated > 0 || l.history_total_12mo)
+                .map((line) => (
+                <tr key={line.category_slug} className="border-b border-border last:border-b-0">
+                  <td className="py-2">
+                    <div className="text-text-primary">{line.category_name}</div>
+                    {line.target && (
+                      <div className="text-xs text-text-muted">
+                        {fmtUsd(line.target.amount)} {CADENCE_LABEL[line.target.cadence]}
+                      </div>
+                    )}
+                  </td>
+                  <td className="text-right tabular-nums">{fmtUsd(line.monthly_anticipated)}</td>
+                  <td className="text-right tabular-nums">{fmtUsd(line.annual_anticipated)}</td>
+                  <td className="text-right tabular-nums text-text-muted">
+                    {line.history_total_12mo == null ? "—" : fmtUsd(line.history_total_12mo)}
+                  </td>
+                  <td>
+                    <Badge tone={line.source === "target" ? "ok" : line.source === "history" ? "neutral" : "warn"}>
+                      {sourceLabel[line.source]}
+                    </Badge>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -277,7 +413,7 @@ function BudgetRow({ line, onClick, onSpentClick }: { line: BudgetStatusLine; on
           <>
             <div className="text-text-primary">{fmtUsd(line.target.prorated_amount)}</div>
             <div className="text-xs text-text-muted">
-              {fmtUsd(line.target.native_amount)} {line.target.native_cadence}
+              {fmtUsd(line.target.native_amount)} {CADENCE_LABEL[line.target.native_cadence]}
             </div>
           </>
         ) : (
@@ -352,9 +488,30 @@ function BudgetTransactionsDrawer({
         ...(tx.entity ? { entity: tx.entity as EntitySlug } : {}),
         category_tax: tx.category_tax ?? "uncategorized",
         category_budget: newBudgetCategory || undefined,
+        expense_type: tx.expense_type,
       });
       toast.success("Recategorized");
       setTxs((prev) => prev.map((t) => t.id === tx.id ? { ...t, category_budget: newBudgetCategory } : t));
+      await onChanged();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setReclassifying(null);
+    }
+  };
+
+  const handleToggleOneTime = async (tx: Transaction, makeOneTime: boolean) => {
+    const next: ExpenseType | null = makeOneTime ? "one_time" : null;
+    setReclassifying(tx.id);
+    try {
+      await classifyTransaction(tx.id, {
+        ...(tx.entity ? { entity: tx.entity as EntitySlug } : {}),
+        category_tax: tx.category_tax ?? "uncategorized",
+        category_budget: tx.category_budget ?? undefined,
+        expense_type: next,
+      });
+      toast.success(makeOneTime ? "Marked one-time" : "Marked recurring");
+      setTxs((prev) => prev.map((t) => t.id === tx.id ? { ...t, expense_type: next } : t));
       await onChanged();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
@@ -408,6 +565,15 @@ function BudgetTransactionsDrawer({
                     <option key={s} value={s}>{label}</option>
                   ))}
                 </Select>
+                <label className="flex items-center gap-1.5 text-xs text-text-muted mt-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={tx.expense_type === "one_time"}
+                    onChange={(e) => void handleToggleOneTime(tx, e.target.checked)}
+                    disabled={reclassifying === tx.id}
+                  />
+                  Treat as one-time (exclude from forecasts)
+                </label>
               </div>
             ))}
           </div>
@@ -472,7 +638,7 @@ function TargetEditor({
 
   const handleDelete = async () => {
     if (!existingTarget) return;
-    if (!confirm(`Remove the ${existingTarget.cadence} ${fmtUsd(existingTarget.amount)} target for "${categoryName}"?`)) return;
+    if (!confirm(`Remove the ${CADENCE_LABEL[existingTarget.cadence]} ${fmtUsd(existingTarget.amount)} target for "${categoryName}"?`)) return;
     setBusy(true);
     try {
       await deleteBudgetTarget(existingTarget.id);
@@ -524,6 +690,11 @@ function TargetEditor({
             <Select value={cadence} onChange={(e) => setCadence(e.target.value as BudgetCadence)} className="w-full">
               {CADENCE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </Select>
+            {cadence === "one_time" && (
+              <div className="text-xs text-text-subtle mt-1">
+                Fixed envelope (e.g. kitchen remodel). Excluded from monthly forecast.
+              </div>
+            )}
           </div>
         </div>
 
@@ -552,7 +723,7 @@ function TargetEditor({
 
         {existingTarget && (
           <div className="rounded-md border border-border p-3 text-xs text-text-muted">
-            Current target: <span className="text-text-primary">{fmtUsd(existingTarget.amount)} {existingTarget.cadence}</span>
+            Current target: <span className="text-text-primary">{fmtUsd(existingTarget.amount)} {CADENCE_LABEL[existingTarget.cadence]}</span>
             {" "}since {existingTarget.effective_from}
             {existingTarget.notes && <div className="mt-1 italic">"{existingTarget.notes}"</div>}
           </div>
