@@ -124,6 +124,8 @@ export interface BulkResolveInput {
   entity?: string;
   category_tax?: string;
   category_budget?: string;
+  expense_type?: "recurring" | "one_time" | null;
+  cut_status?: "flagged" | "complete" | null;
 }
 
 // ── Transactions ─────────────────────────────────────────────────────────
@@ -145,6 +147,7 @@ export interface Transaction {
   category_tax: string | null;
   category_budget: string | null;
   expense_type: ExpenseType | null;
+  cut_status: CutStatus | null;
   confidence: number | null;
   method: string | null;
   reason_codes: string | null;
@@ -313,6 +316,8 @@ export type BudgetCadence = "weekly" | "monthly" | "annual" | "one_time";
 export type IncomeCadence = "weekly" | "monthly" | "annual";
 
 export type ExpenseType = "recurring" | "one_time";
+
+export type CutStatus = "flagged" | "complete";
 export type BudgetPreset =
   | "this_week" | "this_month" | "last_month"
   | "ytd" | "trailing_30d" | "trailing_90d";
@@ -384,6 +389,21 @@ export interface BudgetForecastResponse {
   categories: BudgetForecastLine[];
   one_time_targets: BudgetOneTimeTarget[];
   excluded_one_time_transactions: { count: number; total: number };
+}
+
+export interface CutsBucket {
+  count: number;
+  total: number;
+  by_category: Array<{ category_slug: string; count: number; total: number }>;
+  by_merchant: Array<{ merchant: string; count: number; total: number; latest_posted_date: string }>;
+}
+
+export interface CutsReportResponse {
+  flagged: CutsBucket;
+  complete: CutsBucket;
+  estimated_annual_savings: number;
+  annual_savings_breakdown: Array<{ merchant: string; trailing_12mo: number; annualized: boolean }>;
+  trailing_window: { start: string; end: string; months: number };
 }
 
 // ── Reports ──────────────────────────────────────────────────────────────

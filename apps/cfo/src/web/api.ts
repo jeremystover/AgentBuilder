@@ -9,7 +9,7 @@ import type {
   Transaction, TransactionListResponse, TransactionDetail, TransactionSplit, EntitySlug,
   ImportRecord, CsvImportResult, AmazonImportResult, TillerImportResult, DeleteImportsResult,
   Rule, RuleMatchField, RuleMatchOperator, AutoCatImportResult,
-  BudgetCategory, BudgetTarget, BudgetStatusResponse, BudgetForecastResponse,
+  BudgetCategory, BudgetTarget, BudgetStatusResponse, BudgetForecastResponse, CutsReportResponse,
   BudgetCadence, IncomeCadence, BudgetPreset,
   IncomeTarget, IncomeStatusResponse,
   ScheduleReport, ScheduleCEntity, SummaryReport,
@@ -104,6 +104,8 @@ export interface ResolveReviewInput {
   entity?: string;
   category_tax?: string;
   category_budget?: string;
+  expense_type?: "recurring" | "one_time" | null;
+  cut_status?: "flagged" | "complete" | null;
 }
 
 export async function resolveReview(id: string, input: ResolveReviewInput): Promise<{ ok: true }> {
@@ -215,6 +217,7 @@ export interface ListTransactionsParams {
   date_to?: string;
   review_required?: boolean;
   unclassified?: boolean;
+  cut_status?: "flagged" | "complete" | "any" | "none";
   q?: string;
   sort_by?: string;
   sort_dir?: "asc" | "desc";
@@ -232,6 +235,7 @@ export async function listTransactions(params: ListTransactionsParams = {}): Pro
   if (params.date_to) qs.set("date_to", params.date_to);
   if (params.review_required != null) qs.set("review_required", String(params.review_required));
   if (params.unclassified) qs.set("unclassified", "true");
+  if (params.cut_status) qs.set("cut_status", params.cut_status);
   if (params.q) qs.set("q", params.q);
   if (params.sort_by) qs.set("sort_by", params.sort_by);
   if (params.sort_dir) qs.set("sort_dir", params.sort_dir);
@@ -249,6 +253,7 @@ export interface ClassifyTransactionInput {
   category_tax: string;
   category_budget?: string;
   expense_type?: "recurring" | "one_time" | null;
+  cut_status?: "flagged" | "complete" | null;
   note?: string;
 }
 
@@ -438,6 +443,10 @@ export async function getBudgetStatus(params: BudgetStatusParams = {}): Promise<
 
 export async function getBudgetForecast(): Promise<BudgetForecastResponse> {
   return request<BudgetForecastResponse>("/budget/forecast");
+}
+
+export async function getCutsReport(): Promise<CutsReportResponse> {
+  return request<CutsReportResponse>("/budget/cuts");
 }
 
 // ── Income ────────────────────────────────────────────────────────────────

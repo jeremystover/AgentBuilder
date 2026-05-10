@@ -510,3 +510,148 @@ export async function handleBudgetForecast(request: Request, env: Env): Promise<
     },
   });
 }
+
+// ── GET /budget/cuts ──────────────────────────────────────────────────────────
+// Report on transactions flagged for elimination.
+//   - flagged: still open ("want to cut")
+//   - complete: eliminated ("already cut")
+//   - estimated_annual_savings: trailing-12mo spend per distinct merchant in
+//     the 'complete' set, deduped so a single Spotify charge marked complete
+//     still represents a full $180/yr saving.
+// Tx tagged expense_type='one_time' don't get annualized — their amount
+// counts once only.
+export async function handleBudgetCutsReport(request: Request, env: Env): Promise<Response> {
+  const userId = getUserId(request);
+
+  const today = new Date();
+  const trailingEnd = today.toISOString().slice(0, 10);
+  const trailingStartDate = new Date(Date.UTC(today.getUTCFullYear() - 1, today.getUTCMonth(), today.getUTCDate() + 1));
+  const trailingStart = trailingStartDate.toISOString().slice(0, 10);
+
+  type CutRow = {
+    transaction_id: string;
+    posted_date: string;
+    amount: number;
+    merchant_name: string | null;
+    description: string;
+    category_budget: string | null;
+    expense_type: string | null;
+    cut_status: 'flagged' | 'complete';
+  };
+
+  const rows = await env.DB.prepare(
+    `SELECT t.id AS transaction_id, t.posted_date, t.amount,
+            t.merchant_name, t.description,
+            c.category_budget, c.expense_type, c.cut_status
+     FROM transactions t
+     JOIN classifications c ON c.transaction_id = t.id
+     WHERE t.user_id = ?
+       AND c.cut_status IN ('flagged', 'complete')
+     ORDER BY t.posted_date DESC`,
+  ).bind(userId).all<CutRow>();
+
+  type Bucket = {
+    count: number;
+    total: number;
+    by_category: Map<string, { count: number; total: number }>;
+    by_merchant: Map<string, { count: number; total: number; latest: string }>;
+  };
+
+  const empty = (): Bucket => ({
+    count: 0,
+    total: 0,
+    by_category: new Map(),
+    by_merchant: new Map(),
+  });
+
+  const buckets: Record<'flagged' | 'complete', Bucket> = {
+    flagged: empty(),
+    complete: empty(),
+  };
+
+  for (const row of rows.results) {
+    const bucket = buckets[row.cut_status];
+    const amount = Math.abs(row.amount);
+    bucket.count += 1;
+    bucket.total += amount;
+
+    const cat = row.category_budget ?? '__uncategorized__';
+    const catEntry = bucket.by_category.get(cat) ?? { count: 0, total: 0 };
+    catEntry.count += 1;
+    catEntry.total += amount;
+    bucket.by_category.set(cat, catEntry);
+
+    const merchantKey = (row.merchant_name ?? row.description ?? '').trim() || '(unknown)';
+    const merchantEntry = bucket.by_merchant.get(merchantKey) ?? { count: 0, total: 0, latest: row.posted_date };
+    merchantEntry.count += 1;
+    merchantEntry.total += amount;
+    if (row.posted_date > merchantEntry.latest) merchantEntry.latest = row.posted_date;
+    bucket.by_merchant.set(merchantKey, merchantEntry);
+  }
+
+  // Annualized savings: per distinct merchant in 'complete', sum trailing-12mo
+  // spend (across all tx, regardless of cut status, so cancelling Spotify
+  // counts the full year). One-time tagged tx don't annualize.
+  const completeMerchants = [...buckets.complete.by_merchant.keys()];
+  const oneTimeMerchants = new Set<string>();
+  for (const row of rows.results) {
+    if (row.cut_status !== 'complete') continue;
+    if (row.expense_type === 'one_time') {
+      const key = (row.merchant_name ?? row.description ?? '').trim() || '(unknown)';
+      oneTimeMerchants.add(key);
+    }
+  }
+
+  const annualBreakdown: Array<{ merchant: string; trailing_12mo: number; annualized: boolean }> = [];
+  let estimatedAnnualSavings = 0;
+
+  for (const merchant of completeMerchants) {
+    if (oneTimeMerchants.has(merchant)) {
+      // Don't annualize a one-time charge; it counted once in `complete.total`.
+      annualBreakdown.push({ merchant, trailing_12mo: 0, annualized: false });
+      continue;
+    }
+    const merchantSpend = await env.DB.prepare(
+      `SELECT COALESCE(SUM(-t.amount), 0) AS total
+       FROM transactions t
+       JOIN classifications c ON c.transaction_id = t.id
+       WHERE t.user_id = ?
+         AND t.amount < 0
+         AND t.posted_date BETWEEN ? AND ?
+         AND COALESCE(t.merchant_name, t.description) = ?`,
+    ).bind(userId, trailingStart, trailingEnd, merchant).first<{ total: number }>();
+    const trailing = merchantSpend?.total ?? 0;
+    estimatedAnnualSavings += trailing;
+    annualBreakdown.push({
+      merchant,
+      trailing_12mo: Math.round(trailing * 100) / 100,
+      annualized: true,
+    });
+  }
+
+  annualBreakdown.sort((a, b) => b.trailing_12mo - a.trailing_12mo);
+
+  const serialize = (b: Bucket) => ({
+    count: b.count,
+    total: Math.round(b.total * 100) / 100,
+    by_category: [...b.by_category.entries()]
+      .map(([slug, v]) => ({ category_slug: slug, count: v.count, total: Math.round(v.total * 100) / 100 }))
+      .sort((a, b) => b.total - a.total),
+    by_merchant: [...b.by_merchant.entries()]
+      .map(([merchant, v]) => ({
+        merchant,
+        count: v.count,
+        total: Math.round(v.total * 100) / 100,
+        latest_posted_date: v.latest,
+      }))
+      .sort((a, b) => b.total - a.total),
+  });
+
+  return jsonOk({
+    flagged: serialize(buckets.flagged),
+    complete: serialize(buckets.complete),
+    estimated_annual_savings: Math.round(estimatedAnnualSavings * 100) / 100,
+    annual_savings_breakdown: annualBreakdown,
+    trailing_window: { start: trailingStart, end: trailingEnd, months: 12 },
+  });
+}

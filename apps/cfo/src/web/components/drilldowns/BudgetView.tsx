@@ -7,13 +7,13 @@ import {
 import { useBudget } from "../../hooks/useBudget";
 import {
   upsertBudgetTarget, deleteBudgetTarget, createBudgetCategory,
-  listTransactions, classifyTransaction, getBudgetForecast,
+  listTransactions, classifyTransaction, getBudgetForecast, getCutsReport,
 } from "../../api";
 import { txAmountColor } from "../../utils/txColor";
 import { CATEGORY_OPTIONS } from "../../catalog";
 import type {
   BudgetCadence, BudgetPreset, BudgetStatusLine, BudgetStatusTone, BudgetTarget,
-  BudgetForecastResponse, Transaction, EntitySlug, ExpenseType,
+  BudgetForecastResponse, CutsReportResponse, Transaction, EntitySlug, ExpenseType,
 } from "../../types";
 
 const PRESETS: { value: BudgetPreset; label: string }[] = [
@@ -60,6 +60,8 @@ export function BudgetView() {
 
   const [forecast, setForecast] = useState<BudgetForecastResponse | null>(null);
   const [forecastLoading, setForecastLoading] = useState(false);
+  const [cuts, setCuts] = useState<CutsReportResponse | null>(null);
+  const [cutsLoading, setCutsLoading] = useState(false);
 
   const refreshForecast = async () => {
     setForecastLoading(true);
@@ -72,10 +74,24 @@ export function BudgetView() {
     }
   };
 
-  useEffect(() => { void refreshForecast(); }, []);
+  const refreshCuts = async () => {
+    setCutsLoading(true);
+    try {
+      setCuts(await getCutsReport());
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCutsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void refreshForecast();
+    void refreshCuts();
+  }, []);
 
   const refreshAll = async () => {
-    await Promise.all([refresh(), refreshForecast()]);
+    await Promise.all([refresh(), refreshForecast(), refreshCuts()]);
   };
 
   const visible = useMemo(() => {
@@ -162,6 +178,7 @@ export function BudgetView() {
       </Card>
 
       <BudgetForecastPanel forecast={forecast} loading={forecastLoading} />
+      <CutsPanel cuts={cuts} loading={cutsLoading} />
 
       {/* Totals */}
       {status && (
@@ -351,6 +368,121 @@ function BudgetForecastPanel({
             </tbody>
           </table>
         </div>
+      )}
+    </Card>
+  );
+}
+
+// ── Cuts panel ──────────────────────────────────────────────────────────────
+
+function CutsPanel({
+  cuts, loading,
+}: { cuts: CutsReportResponse | null; loading: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (!cuts && !loading) return null;
+  if (!cuts) {
+    return <Card className="p-3 mb-4 text-sm text-text-muted">Loading cuts…</Card>;
+  }
+
+  const empty = cuts.flagged.count === 0 && cuts.complete.count === 0;
+
+  return (
+    <Card className="p-4 mb-4">
+      <div className="flex items-baseline justify-between mb-3">
+        <div>
+          <div className="text-xs text-text-muted uppercase tracking-wide">Expense cuts</div>
+          <div className="text-xs text-text-subtle">
+            Flag transactions you want to eliminate, then mark them complete once cancelled.
+          </div>
+        </div>
+        {!empty && (
+          <Button size="sm" variant="ghost" onClick={() => setExpanded((v) => !v)}>
+            {expanded ? "Hide details" : "Show details"}
+          </Button>
+        )}
+      </div>
+
+      {empty ? (
+        <div className="text-sm text-text-muted">
+          Nothing flagged yet. Open the Transactions page and use the Cut tracking control on any
+          transaction to mark it for elimination.
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
+            <SummaryStat
+              label={`Flagged to cut (${cuts.flagged.count})`}
+              value={fmtUsd(cuts.flagged.total)}
+              tone="warn"
+            />
+            <SummaryStat
+              label={`Cut complete (${cuts.complete.count})`}
+              value={fmtUsd(cuts.complete.total)}
+              tone="ok"
+            />
+            <SummaryStat
+              label="Estimated annual savings"
+              value={fmtUsd(cuts.estimated_annual_savings)}
+              tone="ok"
+            />
+          </div>
+
+          {expanded && (
+            <div className="space-y-4">
+              {cuts.complete.by_merchant.length > 0 && (
+                <div>
+                  <div className="text-xs text-text-muted uppercase tracking-wide mb-1">
+                    Cut complete — by merchant
+                  </div>
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-xs text-text-muted border-b border-border">
+                        <th className="py-1">Merchant</th>
+                        <th className="text-right">Tx total</th>
+                        <th className="text-right">Annualized (12mo)</th>
+                        <th className="text-right">Latest</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {cuts.complete.by_merchant.map((m) => {
+                        const ann = cuts.annual_savings_breakdown.find((a) => a.merchant === m.merchant);
+                        return (
+                          <tr key={m.merchant} className="border-b border-border last:border-b-0">
+                            <td className="py-1.5 text-text-primary truncate max-w-[16rem]">{m.merchant}</td>
+                            <td className="text-right tabular-nums">{fmtUsd(m.total)}</td>
+                            <td className="text-right tabular-nums text-text-muted">
+                              {ann?.annualized ? fmtUsd(ann.trailing_12mo) : "—"}
+                            </td>
+                            <td className="text-right text-xs text-text-muted">{m.latest_posted_date}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {cuts.flagged.by_merchant.length > 0 && (
+                <div>
+                  <div className="text-xs text-text-muted uppercase tracking-wide mb-1">
+                    Flagged to cut — by merchant
+                  </div>
+                  <ul className="text-sm space-y-1">
+                    {cuts.flagged.by_merchant.map((m) => (
+                      <li key={m.merchant} className="flex items-center justify-between">
+                        <span className="text-text-primary truncate max-w-[20rem]">{m.merchant}</span>
+                        <span className="tabular-nums text-text-muted">
+                          {m.count} tx · {fmtUsd(m.total)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+        </>
       )}
     </Card>
   );

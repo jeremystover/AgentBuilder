@@ -90,6 +90,7 @@ const ResolveSchema = z.object({
   category_tax: z.string().optional(),
   category_budget: z.string().optional(),
   expense_type: z.enum(['recurring', 'one_time']).nullable().optional(),
+  cut_status: z.enum(['flagged', 'complete']).nullable().optional(),
 });
 
 const BulkResolveSchema = ResolveSchema.extend({
@@ -124,6 +125,7 @@ async function resolveReviewItem(
   category_tax?: string,
   category_budget?: string,
   expense_type?: 'recurring' | 'one_time' | null,
+  cut_status?: 'flagged' | 'complete' | null,
 ): Promise<'pending' | 'resolved' | 'skipped'> {
   if (action === 'reopen') {
     if (item.status === 'pending') throw new Error('Review item is already pending');
@@ -167,15 +169,16 @@ async function resolveReviewItem(
 
     await env.DB.prepare(
       `INSERT INTO classifications
-         (id, transaction_id, entity, category_tax, category_budget, expense_type, confidence, method, reason_codes, review_required, classified_by)
-       VALUES (?, ?, ?, ?, ?, ?, 1.0, 'manual', '["manual_review"]', 0, 'user')
+         (id, transaction_id, entity, category_tax, category_budget, expense_type, cut_status, confidence, method, reason_codes, review_required, classified_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1.0, 'manual', '["manual_review"]', 0, 'user')
        ON CONFLICT(transaction_id) DO UPDATE SET
          entity=excluded.entity, category_tax=excluded.category_tax,
          category_budget=excluded.category_budget, expense_type=excluded.expense_type,
+         cut_status=excluded.cut_status,
          confidence=1.0,
          method='manual', review_required=0, classified_by='user',
          classified_at=datetime('now')`,
-    ).bind(crypto.randomUUID(), item.transaction_id, entity ?? null, category_tax, category_budget ?? null, expense_type ?? null).run();
+    ).bind(crypto.randomUUID(), item.transaction_id, entity ?? null, category_tax, category_budget ?? null, expense_type ?? null, cut_status ?? null).run();
 
     if (entity) {
       await maybeLearnRuleFromManualClassification(env, userId, item.transaction_id, {
@@ -226,9 +229,9 @@ export async function handleResolveReview(request: Request, env: Env, reviewId: 
 
   if (!item) return jsonError('Review item not found', 404);
 
-  const { action, entity, category_tax, category_budget, expense_type } = parsed.data;
+  const { action, entity, category_tax, category_budget, expense_type, cut_status } = parsed.data;
   try {
-    const newStatus = await resolveReviewItem(env, userId, item, action, entity, category_tax, category_budget, expense_type);
+    const newStatus = await resolveReviewItem(env, userId, item, action, entity, category_tax, category_budget, expense_type, cut_status);
     return jsonOk({ status: newStatus, transaction_id: item.transaction_id });
   } catch (err) {
     return jsonError(err instanceof Error ? err.message : String(err));
@@ -245,7 +248,7 @@ export async function handleBulkResolveReview(request: Request, env: Env): Promi
   const parsed = BulkResolveSchema.safeParse(body);
   if (!parsed.success) return jsonError(parsed.error.message);
 
-  const { action, entity, category_tax, category_budget, expense_type, review_ids, apply_to_filtered, status, filter_category_tax: filterCategoryTax } = parsed.data;
+  const { action, entity, category_tax, category_budget, expense_type, cut_status, review_ids, apply_to_filtered, status, filter_category_tax: filterCategoryTax } = parsed.data;
   const effectiveStatus = status ?? 'pending';
 
   let items: ReviewItem[] = [];
@@ -290,7 +293,7 @@ export async function handleBulkResolveReview(request: Request, env: Env): Promi
 
   for (const item of items) {
     try {
-      const newStatus = await resolveReviewItem(env, userId, item, action, entity, category_tax, category_budget, expense_type);
+      const newStatus = await resolveReviewItem(env, userId, item, action, entity, category_tax, category_budget, expense_type, cut_status);
       results.push({ review_id: item.id, transaction_id: item.transaction_id, status: newStatus });
       updated += 1;
     } catch (err) {

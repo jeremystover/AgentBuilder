@@ -49,6 +49,7 @@ import {
   handleDeleteBudgetTarget,
   handleBudgetStatus,
   handleBudgetForecast,
+  handleBudgetCutsReport,
 } from './routes/budget';
 import { handleIncomeStatus, handleListIncomeTargets, handleUpsertIncomeTarget, handleDeleteIncomeTarget } from './routes/income';
 import { handlePnL, handlePnLAll, handlePnLTrend } from './routes/pnl';
@@ -206,6 +207,7 @@ const ROUTES: Route[] = [
   { method: 'DELETE', pattern: /^\/budget\/targets\/([^/]+)$/,           handler: (req, env, id) => handleDeleteBudgetTarget(req, env, id) },
   { method: 'GET',    pattern: /^\/budget\/status$/,                     handler: (req, env) => handleBudgetStatus(req, env) },
   { method: 'GET',    pattern: /^\/budget\/forecast$/,                   handler: (req, env) => handleBudgetForecast(req, env) },
+  { method: 'GET',    pattern: /^\/budget\/cuts$/,                       handler: (req, env) => handleBudgetCutsReport(req, env) },
 
   // Income tracking
   { method: 'GET',    pattern: /^\/income\/status$/,                     handler: (req, env) => handleIncomeStatus(req, env) },
