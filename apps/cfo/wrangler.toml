@@ -59,6 +59,8 @@ TELLER_ENV = "development"
 #   TWILIO_ACCOUNT_SID     (Twilio account SID for SMS outbound)
 #   TWILIO_AUTH_TOKEN      (Twilio auth token; also verifies inbound HMAC)
 #   TWILIO_FROM            (E.164 sender number, e.g. +14155551234)
+#   GMAIL_CLIENT_ID        (Google OAuth client ID — for Amazon email auto-sync)
+#   GMAIL_CLIENT_SECRET    (Google OAuth client secret)
 #
 # Twilio inbound webhook: configure your number's "A MESSAGE COMES IN"
 # webhook to POST https://cfo.<account>.workers.dev/sms/inbound
