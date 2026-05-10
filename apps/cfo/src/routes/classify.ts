@@ -316,9 +316,13 @@ export async function handleReapplyAccountRules(request: Request, env: Env): Pro
   ).bind(userId).all<Rule>();
   const rules = rulesResult.results;
 
-  // Transactions from tagged accounts where classification is not locked/manual
+  // Transactions from tagged accounts where classification is not locked/manual.
+  // account_owner_tag is included so we can fall back to the account entity when
+  // no merchant/description rule matches — the expected behaviour after a direct
+  // D1 owner_tag assignment that bypassed handleUpdateAccount (which would have
+  // created the account_id rule automatically).
   const rows = await env.DB.prepare(
-    `SELECT t.*, c.id AS class_id, c.method, c.is_locked
+    `SELECT t.*, a.owner_tag AS account_owner_tag, c.id AS class_id, c.method, c.is_locked
      FROM transactions t
      JOIN accounts a ON a.id = t.account_id
      LEFT JOIN classifications c ON c.transaction_id = t.id
@@ -327,14 +331,20 @@ export async function handleReapplyAccountRules(request: Request, env: Env): Pro
        AND t.is_pending = 0
        AND (c.id IS NULL OR (c.is_locked = 0 AND c.method != 'manual'))
      ORDER BY t.posted_date DESC`,
-  ).bind(userId).all<Transaction & { class_id: string | null; method: string | null; is_locked: number | null }>();
+  ).bind(userId).all<Transaction & { account_owner_tag: string; class_id: string | null; method: string | null; is_locked: number | null }>();
 
   let reclassified = 0;
-  let skipped = 0;
 
   for (const tx of rows.results) {
     const ruleMatch = applyRules(tx as Transaction, rules);
-    if (!ruleMatch) { skipped++; continue; }
+
+    // Use the matched rule's entity, or fall back to the account's owner_tag so
+    // that every transaction from a tagged account gets classified even when no
+    // merchant/description rule matches.
+    const entity = ruleMatch?.entity ?? tx.account_owner_tag;
+    const categoryTax = ruleMatch?.category_tax ?? null;
+    const categoryBudget = ruleMatch?.category_budget ?? null;
+    const reasonCode = ruleMatch ? `rule:${ruleMatch.rule_name}` : `account_tag:${tx.account_owner_tag}`;
 
     const classId = tx.class_id ?? crypto.randomUUID();
     await env.DB.prepare(
@@ -342,8 +352,8 @@ export async function handleReapplyAccountRules(request: Request, env: Env): Pro
          (id, transaction_id, entity, category_tax, category_budget, confidence, method, reason_codes, review_required, classified_by)
        VALUES (?, ?, ?, ?, ?, 1.0, 'rule', ?, 0, 'system')`,
     ).bind(
-      classId, tx.id, ruleMatch.entity, ruleMatch.category_tax, ruleMatch.category_budget,
-      JSON.stringify([`rule:${ruleMatch.rule_name}`]),
+      classId, tx.id, entity, categoryTax, categoryBudget,
+      JSON.stringify([reasonCode]),
     ).run();
     await resolveReviewQueueItem(env, tx.id, 'system');
     reclassified++;
@@ -352,7 +362,6 @@ export async function handleReapplyAccountRules(request: Request, env: Env): Pro
   return jsonOk({
     total_eligible: rows.results.length,
     reclassified,
-    skipped_no_rule_match: skipped,
   });
 }
 

@@ -25,6 +25,7 @@
  */
 
 import type { Env } from './types';
+import { handleUpdateAccount } from './routes/accounts';
 import { handleBankSync } from './routes/bank';
 import { handleCsvImport } from './routes/imports';
 import { handleAmazonImport } from './routes/amazon';
@@ -125,6 +126,27 @@ export const MCP_TOOLS = [
           description: 'Max number of transactions to classify in this run (default 50).',
         },
       },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'set_account_owner',
+    description:
+      "Assign a business entity to a bank/credit-card account (sets owner_tag). All transactions from that account will be tagged to the entity by default. Pass entity=null to clear the assignment. After calling this, call reapply_account_rules to retroactively tag historical transactions.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        account_id: {
+          type: 'string' as const,
+          description: 'The account id to update (from list_accounts or transactions).',
+        },
+        entity: {
+          type: ['string', 'null'] as ['string', 'null'],
+          enum: ['elyse_coaching', 'jeremy_coaching', 'airbnb_activity', 'family_personal', null],
+          description: 'Business entity to assign, or null to clear.',
+        },
+      },
+      required: ['account_id', 'entity'],
       additionalProperties: false,
     },
   },
@@ -539,6 +561,13 @@ export async function dispatchTool(
     case 'classify_transactions': {
       const req = jsonRequest('POST', 'https://cfo.invalid/classify/run', args);
       return respondText(await handleRunClassification(req, env));
+    }
+
+    case 'set_account_owner': {
+      const accountId = String(args.account_id ?? '');
+      if (!accountId) throw new Error('account_id is required');
+      const req = jsonRequest('PATCH', `https://cfo.invalid/accounts/${accountId}`, { owner_tag: args.entity ?? null });
+      return respondText(await handleUpdateAccount(req, env, accountId));
     }
 
     case 'reapply_account_rules': {
