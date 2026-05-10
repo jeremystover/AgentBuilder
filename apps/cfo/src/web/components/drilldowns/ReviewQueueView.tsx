@@ -731,7 +731,7 @@ function ReviewDrawer({
                 category_budget: categoryBudget || undefined,
                 cut_status: cutStatus || null,
               })}
-              disabled={busy || !categoryTax}
+              disabled={busy}
             >
               Apply override
             </Button>
