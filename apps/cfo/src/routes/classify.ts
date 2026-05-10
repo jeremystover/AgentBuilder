@@ -5,6 +5,7 @@ import { applyRules } from '../lib/rules';
 import { cleanDescription } from '../lib/dedup';
 import { backfillUnclassifiedReviewQueue, resolveReviewQueueItem, upsertReviewQueue } from '../lib/review-queue';
 import { buildAmazonSearchText, loadAmazonContext } from '../lib/amazon';
+import { loadVenmoContext } from '../lib/venmo';
 
 function buildAccountContext(tx: {
   account_name?: string | null;
@@ -238,14 +239,18 @@ export async function handleRunClassification(request: Request, env: Env): Promi
   const batchItems = await Promise.all(
     needsAI.map(async tx => {
       const accountContext = buildAccountContext(tx);
-      const historicalExamples = await loadHistoricalExamples(env, userId, tx as Transaction);
-      const amazonContext = await loadAmazonContext(env, tx.id);
+      const [historicalExamples, amazonContext, venmoContext] = await Promise.all([
+        loadHistoricalExamples(env, userId, tx as Transaction),
+        loadAmazonContext(env, tx.id),
+        loadVenmoContext(env, tx.id),
+      ]);
 
       return {
         transaction: tx as Transaction,
         accountContext,
         historicalExamples,
         amazonContext,
+        venmoContext,
       };
     }),
   );
@@ -403,13 +408,17 @@ export async function handleClassifySingle(request: Request, env: Env, txId: str
 
   const { classifyTransaction } = await import('../lib/claude');
   const accountContext = buildAccountContext(tx);
-  const historicalExamples = await loadHistoricalExamples(env, userId, tx as Transaction);
-  const amazonContext = await loadAmazonContext(env, txId);
+  const [historicalExamples, amazonContext, venmoContext] = await Promise.all([
+    loadHistoricalExamples(env, userId, tx as Transaction),
+    loadAmazonContext(env, txId),
+    loadVenmoContext(env, txId),
+  ]);
 
   const result = await classifyTransaction(
     env, tx as Transaction, accountContext,
     historicalExamples,
     amazonContext,
+    venmoContext,
   );
 
   await env.DB.prepare(

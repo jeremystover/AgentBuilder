@@ -1,3 +1,14 @@
+/**
+ * Gmail REST API client for the CFO worker.
+ *
+ * Uses the fleet-wide Google OAuth credentials:
+ *   GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET / GOOGLE_OAUTH_REFRESH_TOKEN
+ *
+ * These are the same secrets the chief-of-staff uses. The refresh token is
+ * obtained once via scripts/google-auth.js in the chief-of-staff app and
+ * stored as a Cloudflare secret — no in-app OAuth flow needed.
+ */
+
 import type { Env } from '../types';
 
 interface GmailMessageRef {
@@ -19,13 +30,14 @@ export interface GmailMessage {
   payload: GmailMessagePart;
 }
 
+// Exchange a refresh token for a short-lived access token.
 export async function refreshAccessToken(env: Env, refreshToken: string): Promise<string> {
   const resp = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
-      client_id: env.GMAIL_CLIENT_ID ?? '',
-      client_secret: env.GMAIL_CLIENT_SECRET ?? '',
+      client_id: env.GOOGLE_OAUTH_CLIENT_ID ?? '',
+      client_secret: env.GOOGLE_OAUTH_CLIENT_SECRET ?? '',
       refresh_token: refreshToken,
       grant_type: 'refresh_token',
     }),
@@ -35,31 +47,15 @@ export async function refreshAccessToken(env: Env, refreshToken: string): Promis
   return data.access_token;
 }
 
-export async function exchangeCodeForTokens(
-  env: Env,
-  code: string,
-  redirectUri: string,
-): Promise<{ access_token: string; refresh_token: string; email: string }> {
-  const resp = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      code,
-      client_id: env.GMAIL_CLIENT_ID ?? '',
-      client_secret: env.GMAIL_CLIENT_SECRET ?? '',
-      redirect_uri: redirectUri,
-      grant_type: 'authorization_code',
-    }),
-  });
-  if (!resp.ok) throw new Error(`Gmail OAuth exchange failed: ${await resp.text()}`);
-  const data = await resp.json() as { access_token: string; refresh_token: string };
-
-  const infoResp = await fetch('https://www.googleapis.com/oauth2/v1/userinfo', {
-    headers: { Authorization: `Bearer ${data.access_token}` },
-  });
-  const info = await infoResp.json() as { email?: string };
-
-  return { access_token: data.access_token, refresh_token: data.refresh_token, email: info.email ?? '' };
+// Convenience: get an access token using the env-stored personal refresh token.
+// Throws if GOOGLE_OAUTH_REFRESH_TOKEN is not configured.
+export async function getEnvAccessToken(env: Env): Promise<string> {
+  if (!env.GOOGLE_OAUTH_REFRESH_TOKEN) {
+    throw new Error(
+      'GOOGLE_OAUTH_REFRESH_TOKEN is not set. Run: wrangler secret put GOOGLE_OAUTH_REFRESH_TOKEN',
+    );
+  }
+  return refreshAccessToken(env, env.GOOGLE_OAUTH_REFRESH_TOKEN);
 }
 
 export async function searchMessages(
