@@ -31,14 +31,17 @@ export async function handleGmailStatus(request: Request, env: Env): Promise<Res
   });
 }
 
-// POST /gmail/sync — manually trigger the nightly email sync
-export async function handleGmailSync(_request: Request, env: Env): Promise<Response> {
+// POST /gmail/sync[?days=N] — manually trigger the nightly email sync.
+// Pass ?days=365 to backfill older emails beyond the default 90-day window.
+export async function handleGmailSync(request: Request, env: Env): Promise<Response> {
   if (!env.GOOGLE_OAUTH_REFRESH_TOKEN) {
     return jsonError(
       'GOOGLE_OAUTH_REFRESH_TOKEN is not configured. Run: wrangler secret put GOOGLE_OAUTH_REFRESH_TOKEN',
       503,
     );
   }
-  const result = await runNightlyEmailSync(env);
+  const daysParam = new URL(request.url).searchParams.get('days');
+  const lookbackDays = daysParam ? Math.min(Math.max(parseInt(daysParam, 10), 1), 3650) : undefined;
+  const result = await runNightlyEmailSync(env, lookbackDays);
   return jsonOk(result);
 }

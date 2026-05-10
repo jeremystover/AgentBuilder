@@ -41,7 +41,8 @@ export interface NightlyEmailSyncSummary {
   };
 }
 
-export async function runNightlyEmailSync(env: Env): Promise<NightlyEmailSyncSummary> {
+// lookbackDays overrides the since-last-sync window — useful for one-time backfills.
+export async function runNightlyEmailSync(env: Env, lookbackDays?: number): Promise<NightlyEmailSyncSummary> {
   const startedAt = new Date().toISOString();
   const empty = {
     started_at: startedAt,
@@ -69,8 +70,8 @@ export async function runNightlyEmailSync(env: Env): Promise<NightlyEmailSyncSum
   ).bind(userId).first<{ amazon_last_synced_at: string | null; venmo_last_synced_at: string | null }>();
 
   const [amazonResult, venmoResult] = await Promise.all([
-    syncAmazonEmails(env, userId, accessToken, state?.amazon_last_synced_at ?? null),
-    syncVenmoEmails(env, userId, accessToken, state?.venmo_last_synced_at ?? null),
+    syncAmazonEmails(env, userId, accessToken, state?.amazon_last_synced_at ?? null, lookbackDays),
+    syncVenmoEmails(env, userId, accessToken, state?.venmo_last_synced_at ?? null, lookbackDays),
   ]);
 
   await env.DB.prepare(
@@ -98,10 +99,11 @@ async function syncAmazonEmails(
   userId: string,
   accessToken: string,
   lastSyncedAt: string | null,
+  lookbackDays?: number,
 ) {
-  const sinceDays = lastSyncedAt
+  const sinceDays = lookbackDays ?? (lastSyncedAt
     ? Math.ceil((Date.now() - new Date(lastSyncedAt).getTime()) / 86_400_000) + 2
-    : 90;
+    : 90);
 
   const query = `from:(auto-confirm@amazon.com OR shipment-tracking@amazon.com) newer_than:${sinceDays}d`;
   const refs = await searchMessages(accessToken, query);
@@ -177,10 +179,11 @@ async function syncVenmoEmails(
   userId: string,
   accessToken: string,
   lastSyncedAt: string | null,
+  lookbackDays?: number,
 ) {
-  const sinceDays = lastSyncedAt
+  const sinceDays = lookbackDays ?? (lastSyncedAt
     ? Math.ceil((Date.now() - new Date(lastSyncedAt).getTime()) / 86_400_000) + 2
-    : 90;
+    : 90);
 
   const query = `from:venmo@venmo.com newer_than:${sinceDays}d`;
   const refs = await searchMessages(accessToken, query);
