@@ -149,7 +149,7 @@ async function resolveReviewItem(
 
   if (action === 'classify') {
     const isTransfer = category_tax === 'transfer';
-    if (!isTransfer && (!entity || !category_tax)) throw new Error('entity and category_tax required for classify action');
+    if (!isTransfer && !entity) throw new Error('entity required for classify action');
     if (item.is_locked) throw new Error('This transaction is locked in a filing snapshot');
 
     const existing = await env.DB.prepare(
