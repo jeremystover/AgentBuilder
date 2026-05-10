@@ -40,7 +40,7 @@ import { handleListImports, handleDeleteAllImports, handleDeleteImport, handleCs
 import { handleTillerImport } from './routes/tiller';
 import { handleListRules, handleCreateRule, handleUpdateRule, handleDeleteRule, handleAutoCatImport, handleApplyRuleRetroactive } from './routes/rules';
 import { handleAmazonImport } from './routes/amazon';
-import { handleGmailOAuthStart, handleGmailOAuthCallback, handleGmailStatus, handleGmailSync, handleGmailDisconnect } from './routes/gmail';
+import { handleGmailStatus, handleGmailSync } from './routes/gmail';
 import {
   handleListBudgetCategories,
   handleCreateBudgetCategory,
@@ -93,7 +93,7 @@ import {
 
 // Scheduled jobs
 import { runNightlyTellerSync } from './lib/nightly-sync';
-import { runNightlyAmazonEmailSync } from './lib/nightly-amazon-sync';
+import { runNightlyEmailSync } from './lib/nightly-email-sync';
 
 // The kit's auth helpers expect env.DB — which is exactly what the CFO
 // has. This shim narrows env to the subset the kit reads, keeping the
@@ -229,16 +229,13 @@ const ROUTES: Route[] = [
   { method: 'GET',    pattern: /^\/bookkeeping\/notes$/,                 handler: (req, env) => handleGetBookkeepingNotes(req, env) },
   { method: 'PUT',    pattern: /^\/bookkeeping\/notes$/,                 handler: (req, env) => handleSaveBookkeepingNotes(req, env) },
 
-  // Gmail OAuth + Amazon email sync
-  { method: 'GET',    pattern: /^\/gmail\/oauth\/start$/,                 handler: (req, env) => handleGmailOAuthStart(req, env) },
-  { method: 'GET',    pattern: /^\/gmail\/oauth\/callback$/,              handler: (req, env) => handleGmailOAuthCallback(req, env) },
+  // Gmail email sync (Amazon + Venmo enrichment)
   { method: 'GET',    pattern: /^\/gmail\/status$/,                       handler: (req, env) => handleGmailStatus(req, env) },
   { method: 'POST',   pattern: /^\/gmail\/sync$/,                         handler: (req, env) => handleGmailSync(req, env) },
-  { method: 'DELETE', pattern: /^\/gmail\/disconnect$/,                   handler: (req, env) => handleGmailDisconnect(req, env) },
 
   // Cron triggers — manual entry points for testing/debugging the scheduled handler
   { method: 'POST',   pattern: /^\/cron\/nightly-sync$/,                 handler: async (_req, env) => Response.json(await runNightlyTellerSync(env)) },
-  { method: 'POST',   pattern: /^\/cron\/amazon-email-sync$/,            handler: async (_req, env) => Response.json(await runNightlyAmazonEmailSync(env)) },
+  { method: 'POST',   pattern: /^\/cron\/email-sync$/,                   handler: async (_req, env) => Response.json(await runNightlyEmailSync(env)) },
   { method: 'POST',   pattern: /^\/cron\/sms\/dispatch$/,                handler: (req, env) => handleManualDispatch(req, env) },
 
   // Rules
@@ -459,8 +456,8 @@ export default {
       ctx.waitUntil(
         runCron(
           env,
-          { agentId: 'cfo', trigger: 'amazon-email-sync', cron: event.cron },
-          () => runNightlyAmazonEmailSync(env),
+          { agentId: 'cfo', trigger: 'email-sync', cron: event.cron },
+          () => runNightlyEmailSync(env),
         ),
       );
       return;

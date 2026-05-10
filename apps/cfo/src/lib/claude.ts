@@ -1,4 +1,4 @@
-import type { Env, Transaction, AIClassification, AmazonContext } from '../types';
+import type { Env, Transaction, AIClassification, AmazonContext, VenmoContext } from '../types';
 import { SCHEDULE_C_CATEGORIES, AIRBNB_CATEGORIES, FAMILY_CATEGORIES } from '../types';
 
 function describeApiKey(value: string | undefined): {
@@ -117,6 +117,7 @@ export async function classifyTransaction(
   accountContext: string,
   historicalExamples: Array<{ merchant: string; entity: string; category_tax: string }>,
   amazonContext?: AmazonContext | null,
+  venmoContext?: VenmoContext | null,
 ): Promise<AIClassification> {
   // DB convention: expenses stored as negative, income as positive
   // (Teller-native, and Chase/Venmo importers normalize to match).
@@ -148,6 +149,14 @@ export async function classifyTransaction(
     }`
     : '';
 
+  const venmoBlock = venmoContext
+    ? `\nVenmo context:
+- Direction:    ${venmoContext.direction === 'received' ? 'payment received' : venmoContext.direction === 'sent' ? 'payment sent' : 'charge received'}
+- Counterparty: ${venmoContext.counterparty ?? '(unknown)'}
+- Memo:         ${venmoContext.memo ?? '(none)'}
+- Amount:       $${venmoContext.amount.toFixed(2)}`
+    : '';
+
   const userMessage = `Classify this transaction:
 - Merchant:     ${transaction.merchant_name ?? '(unknown)'}
 - Description:  ${transaction.description}
@@ -156,6 +165,7 @@ export async function classifyTransaction(
 - Account:      ${accountContext}
 ${exampleBlock}
 ${amazonBlock}
+${venmoBlock}
 
 Call the classify_transaction tool with your classification.`;
 
@@ -215,6 +225,7 @@ export async function classifyBatch(
     accountContext: string;
     historicalExamples: Array<{ merchant: string; entity: string; category_tax: string }>;
     amazonContext?: AmazonContext | null;
+    venmoContext?: VenmoContext | null;
   }>,
   onResult: (txId: string, result: AIClassification | null, error?: string) => Promise<void>,
 ): Promise<void> {
@@ -226,6 +237,7 @@ export async function classifyBatch(
         item.accountContext,
         item.historicalExamples,
         item.amazonContext,
+        item.venmoContext,
       );
       await onResult(item.transaction.id, result);
     } catch (err) {

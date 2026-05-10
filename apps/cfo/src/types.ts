@@ -31,10 +31,11 @@ export interface Env {
   TWILIO_ACCOUNT_SID?: string;
   TWILIO_AUTH_TOKEN?: string;
   TWILIO_FROM?: string;
-  // Gmail OAuth for nightly Amazon email sync.
-  // Set via `wrangler secret put GMAIL_CLIENT_ID` etc.
-  GMAIL_CLIENT_ID?: string;
-  GMAIL_CLIENT_SECRET?: string;
+  // Fleet-wide Google OAuth — same credentials used by chief-of-staff.
+  // Obtain the refresh token once via chief-of-staff/scripts/google-auth.js.
+  GOOGLE_OAUTH_CLIENT_ID?: string;
+  GOOGLE_OAUTH_CLIENT_SECRET?: string;
+  GOOGLE_OAUTH_REFRESH_TOKEN?: string;
 }
 
 export type BankProvider = 'teller' | 'plaid';
@@ -136,6 +137,14 @@ export interface AmazonOrder {
   ship_to: string | null;
   shipping_address: string | null;
   created_at: string;
+}
+
+export interface VenmoContext {
+  counterparty: string | null;
+  memo: string | null;
+  direction: 'received' | 'sent' | 'charged';
+  amount: number;
+  date: string | null;
 }
 
 export interface AmazonContext {
