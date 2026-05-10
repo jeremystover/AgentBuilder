@@ -28,6 +28,10 @@ export interface Env {
   TWILIO_ACCOUNT_SID?: string;
   TWILIO_AUTH_TOKEN?: string;
   TWILIO_FROM?: string;
+  // Gmail OAuth for nightly Amazon email sync.
+  // Set via `wrangler secret put GMAIL_CLIENT_ID` etc.
+  GMAIL_CLIENT_ID?: string;
+  GMAIL_CLIENT_SECRET?: string;
 }
 
 export type BankProvider = 'teller';

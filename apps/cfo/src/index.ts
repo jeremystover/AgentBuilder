@@ -40,6 +40,7 @@ import { handleListImports, handleDeleteAllImports, handleDeleteImport, handleCs
 import { handleTillerImport } from './routes/tiller';
 import { handleListRules, handleCreateRule, handleUpdateRule, handleDeleteRule, handleAutoCatImport, handleApplyRuleRetroactive } from './routes/rules';
 import { handleAmazonImport } from './routes/amazon';
+import { handleGmailOAuthStart, handleGmailOAuthCallback, handleGmailStatus, handleGmailSync, handleGmailDisconnect } from './routes/gmail';
 import {
   handleListBudgetCategories,
   handleCreateBudgetCategory,
@@ -91,6 +92,7 @@ import {
 
 // Scheduled jobs
 import { runNightlyTellerSync } from './lib/nightly-sync';
+import { runNightlyAmazonEmailSync } from './lib/nightly-amazon-sync';
 
 // The kit's auth helpers expect env.DB — which is exactly what the CFO
 // has. This shim narrows env to the subset the kit reads, keeping the
@@ -225,8 +227,16 @@ const ROUTES: Route[] = [
   { method: 'GET',    pattern: /^\/bookkeeping\/notes$/,                 handler: (req, env) => handleGetBookkeepingNotes(req, env) },
   { method: 'PUT',    pattern: /^\/bookkeeping\/notes$/,                 handler: (req, env) => handleSaveBookkeepingNotes(req, env) },
 
+  // Gmail OAuth + Amazon email sync
+  { method: 'GET',    pattern: /^\/gmail\/oauth\/start$/,                 handler: (req, env) => handleGmailOAuthStart(req, env) },
+  { method: 'GET',    pattern: /^\/gmail\/oauth\/callback$/,              handler: (req, env) => handleGmailOAuthCallback(req, env) },
+  { method: 'GET',    pattern: /^\/gmail\/status$/,                       handler: (req, env) => handleGmailStatus(req, env) },
+  { method: 'POST',   pattern: /^\/gmail\/sync$/,                         handler: (req, env) => handleGmailSync(req, env) },
+  { method: 'DELETE', pattern: /^\/gmail\/disconnect$/,                   handler: (req, env) => handleGmailDisconnect(req, env) },
+
   // Cron triggers — manual entry points for testing/debugging the scheduled handler
   { method: 'POST',   pattern: /^\/cron\/nightly-sync$/,                 handler: async (_req, env) => Response.json(await runNightlyTellerSync(env)) },
+  { method: 'POST',   pattern: /^\/cron\/amazon-email-sync$/,            handler: async (_req, env) => Response.json(await runNightlyAmazonEmailSync(env)) },
   { method: 'POST',   pattern: /^\/cron\/sms\/dispatch$/,                handler: (req, env) => handleManualDispatch(req, env) },
 
   // Rules
@@ -431,7 +441,7 @@ export default {
   },
 
   // Cloudflare Cron Trigger entrypoint. We dispatch by cron expression:
-  //   "0 9 * * *"        → nightly Teller sync
+  //   "0 9 * * *"        → nightly Teller sync + Amazon email sync
   //   "*/30 * * * *"     → SMS dispatcher (it self-checks Pacific local
   //                        time + per-person preferred slots, so 47 of
   //                        the 48 daily fires are no-ops).
@@ -442,6 +452,13 @@ export default {
           env,
           { agentId: 'cfo', trigger: 'nightly-sync', cron: event.cron },
           () => runNightlyTellerSync(env),
+        ),
+      );
+      ctx.waitUntil(
+        runCron(
+          env,
+          { agentId: 'cfo', trigger: 'amazon-email-sync', cron: event.cron },
+          () => runNightlyAmazonEmailSync(env),
         ),
       );
       return;
