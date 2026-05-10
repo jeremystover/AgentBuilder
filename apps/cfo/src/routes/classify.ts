@@ -92,7 +92,7 @@ async function loadHistoricalExamples(env: Env, userId: string, tx: Transaction)
     .replace(/[%_]/g, '')
     .slice(0, 40)
     .trim();
-  const descriptionNeedle = (tx.description_clean ?? cleanDescription(`${tx.merchant_name ?? ''} ${tx.description ?? ''}`)))
+  const descriptionNeedle = (tx.description_clean ?? cleanDescription(`${tx.merchant_name ?? ''} ${tx.description ?? ''}`))
     .replace(/[%_]/g, '')
     .slice(0, 32)
     .trim();
