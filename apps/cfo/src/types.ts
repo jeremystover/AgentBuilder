@@ -11,9 +11,6 @@ export interface Env {
   TELLER_APPLICATION_ID?: string;
   TELLER_ENV?: string;
   TELLER_MTLS?: Fetcher;
-  PLAID_CLIENT_ID?: string;
-  PLAID_SECRET?: string;
-  PLAID_ENV?: string;
   DEFAULT_BANK_PROVIDER?: string;
   ANTHROPIC_API_KEY: string;
   MCP_HTTP_KEY?: string;
@@ -33,7 +30,7 @@ export interface Env {
   TWILIO_FROM?: string;
 }
 
-export type BankProvider = 'teller' | 'plaid';
+export type BankProvider = 'teller';
 
 export type Entity = 'elyse_coaching' | 'jeremy_coaching' | 'airbnb_activity' | 'family_personal';
 export type ClassificationMethod = 'rule' | 'ai' | 'manual' | 'historical';

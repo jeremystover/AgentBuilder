@@ -146,29 +146,23 @@ export async function getBankConfig(): Promise<BankConfig> {
   return request<BankConfig>("/bank/config");
 }
 
-export interface BankConnectStartPayload {
-  provider?: "teller" | "plaid";
-  institution_key?: string; // Plaid only: our internal key (e.g. 'patelco')
+export interface TellerConnectConfig {
+  provider: string;
+  application_id: string;
+  environment: string;
+  products: string[];
+  select_account: string;
 }
 
-export type BankConnectConfig = Record<string, unknown>; // varies by provider
-
-export async function startBankConnect(payload: BankConnectStartPayload = {}): Promise<BankConnectConfig> {
-  return request<BankConnectConfig>("/bank/connect/start", { method: "POST", body: JSON.stringify(payload) });
+export async function startBankConnect(): Promise<TellerConnectConfig> {
+  return request<TellerConnectConfig>("/bank/connect/start", { method: "POST", body: JSON.stringify({}) });
 }
 
 export interface ConnectCompletePayload {
-  provider?: "teller" | "plaid";
-  // Teller fields
-  access_token?: string;
-  enrollment_id?: string;
-  // Plaid fields
-  public_token?: string;
-  institution_key?: string;
-  plaid_institution_id?: string | null;
-  // Shared
+  access_token: string;
+  enrollment_id: string;
   institution_name: string | null;
-  institution_id?: string | null;
+  institution_id: string | null;
 }
 
 export interface ConnectCompleteResult {
