@@ -230,6 +230,7 @@ const DecisionSchema = z.object({
   category_tax: z.string().optional(),
   category_budget: z.string().optional(),
   expense_type: z.enum(['recurring', 'one_time']).nullable().optional(),
+  cut_status: z.enum(['flagged', 'complete']).nullable().optional(),
 });
 
 const CommitSchema = z.object({
@@ -287,18 +288,19 @@ export async function handleBookkeepingCommit(request: Request, env: Env): Promi
 
         await env.DB.prepare(
           `INSERT INTO classifications
-             (id, transaction_id, entity, category_tax, category_budget, expense_type, confidence, method, reason_codes, review_required, classified_by)
-           VALUES (?, ?, ?, ?, ?, ?, 1.0, 'manual', '["bookkeeping_session"]', 0, 'user')
+             (id, transaction_id, entity, category_tax, category_budget, expense_type, cut_status, confidence, method, reason_codes, review_required, classified_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 1.0, 'manual', '["bookkeeping_session"]', 0, 'user')
            ON CONFLICT(transaction_id) DO UPDATE SET
              entity=excluded.entity, category_tax=excluded.category_tax,
              category_budget=excluded.category_budget, expense_type=excluded.expense_type,
+             cut_status=excluded.cut_status,
              confidence=1.0,
              method='manual', review_required=0, classified_by='user',
              classified_at=datetime('now')`,
         ).bind(
           crypto.randomUUID(), decision.transaction_id,
           decision.entity, decision.category_tax, decision.category_budget ?? null,
-          decision.expense_type ?? null,
+          decision.expense_type ?? null, decision.cut_status ?? null,
         ).run();
 
         await env.DB.prepare(

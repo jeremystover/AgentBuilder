@@ -676,12 +676,13 @@ function ReviewDrawer({
   budgetOptions: OptionCategory[];
   taxOptions: OptionCategory[];
   onClose(): void;
-  onResolve(id: string, input: { action: ResolveAction; entity?: string; category_tax?: string; category_budget?: string }): Promise<void>;
+  onResolve(id: string, input: { action: ResolveAction; entity?: string; category_tax?: string; category_budget?: string; cut_status?: "flagged" | "complete" | null }): Promise<void>;
   busy: boolean;
 }) {
   const [entity, setEntity] = useState(item?.suggested_entity ?? item?.current_entity ?? "elyse_coaching");
   const [categoryTax, setCategoryTax] = useState(item?.suggested_category_tax ?? item?.current_category_tax ?? "");
   const [categoryBudget, setCategoryBudget] = useState(item?.suggested_category_budget ?? "");
+  const [cutStatus, setCutStatus] = useState<"flagged" | "complete" | "">("");
 
   // Sync state when a different item is opened.
   useMemo(() => {
@@ -689,6 +690,7 @@ function ReviewDrawer({
       setEntity(item.suggested_entity ?? item.current_entity ?? "elyse_coaching");
       setCategoryTax(item.suggested_category_tax ?? item.current_category_tax ?? "");
       setCategoryBudget(item.suggested_category_budget ?? "");
+      setCutStatus("");
     }
   }, [item?.id]);
 
@@ -722,7 +724,13 @@ function ReviewDrawer({
             </Button>
             <Button
               variant="primary"
-              onClick={() => void onResolve(item.id, { action: "classify", entity, category_tax: categoryTax || undefined, category_budget: categoryBudget || undefined })}
+              onClick={() => void onResolve(item.id, {
+                action: "classify",
+                entity,
+                category_tax: categoryTax || undefined,
+                category_budget: categoryBudget || undefined,
+                cut_status: cutStatus || null,
+              })}
               disabled={busy || !categoryTax}
             >
               Apply override
@@ -778,6 +786,19 @@ function ReviewDrawer({
             {budgetOptions.map(({ slug, label }) => (
               <option key={slug} value={slug}>{label}</option>
             ))}
+          </Select>
+        </div>
+        <div>
+          <label className="block text-xs text-text-muted mb-1">Cut tracking</label>
+          <Select
+            value={cutStatus}
+            onChange={(e) => setCutStatus(e.target.value as "flagged" | "complete" | "")}
+            className="w-full"
+            title="Mark this expense for elimination — applied when you click Apply override."
+          >
+            <option value="">Unflagged</option>
+            <option value="flagged">Flag to cut</option>
+            <option value="complete">Cut complete</option>
           </Select>
         </div>
       </div>

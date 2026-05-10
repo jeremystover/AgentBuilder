@@ -9,7 +9,7 @@ import { useTransactions } from "../../hooks/useTransactions";
 import { useAccounts } from "../../hooks/useAccounts";
 import { classifyTransaction, deleteTransaction, getTransaction } from "../../api";
 import type {
-  EntitySlug, Transaction, TransactionDetail,
+  EntitySlug, Transaction, TransactionDetail, CutStatus, ExpenseType,
 } from "../../types";
 import { ENTITY_OPTIONS, type OptionCategory } from "../../catalog";
 import { useCategoryOptions } from "../../hooks/useCategoryOptions";
@@ -43,6 +43,7 @@ interface FiltersState {
   category_tax: string;
   review_only: boolean;
   unclassified_only: boolean;
+  cut_status: "" | "flagged" | "complete" | "any" | "none";
 }
 
 const EMPTY_FILTERS: FiltersState = {
@@ -53,6 +54,7 @@ const EMPTY_FILTERS: FiltersState = {
   category_tax: "",
   review_only: false,
   unclassified_only: false,
+  cut_status: "",
 };
 
 export function TransactionsView() {
@@ -77,6 +79,7 @@ export function TransactionsView() {
     category_tax: filters.category_tax || undefined,
     review_required: filters.review_only ? true : undefined,
     unclassified: filters.unclassified_only || undefined,
+    cut_status: filters.cut_status || undefined,
     q: debouncedSearch || undefined,
     sort_by: sortBy,
     sort_dir: sortDir,
@@ -113,7 +116,8 @@ export function TransactionsView() {
 
   const hasFilters =
     filters.date_from || filters.date_to || filters.account_id || filters.entity ||
-    filters.category_tax || filters.review_only || filters.unclassified_only || search;
+    filters.category_tax || filters.review_only || filters.unclassified_only ||
+    filters.cut_status || search;
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
@@ -208,7 +212,7 @@ export function TransactionsView() {
             />
           </div>
         </div>
-        <div className="flex items-center gap-4 mt-3 text-xs text-text-muted">
+        <div className="flex items-center gap-4 mt-3 text-xs text-text-muted flex-wrap">
           <label className="flex items-center gap-1.5 cursor-pointer">
             <input
               type="checkbox"
@@ -224,6 +228,20 @@ export function TransactionsView() {
               onChange={(e) => updateFilter("unclassified_only", e.target.checked)}
             />
             Unclassified
+          </label>
+          <label className="flex items-center gap-1.5">
+            <span>Cuts:</span>
+            <Select
+              value={filters.cut_status}
+              onChange={(e) => updateFilter("cut_status", e.target.value as FiltersState["cut_status"])}
+              className="text-xs py-1"
+            >
+              <option value="">All</option>
+              <option value="any">Any flag</option>
+              <option value="flagged">Flagged to cut</option>
+              <option value="complete">Cut complete</option>
+              <option value="none">Unflagged only</option>
+            </Select>
           </label>
         </div>
       </Card>
@@ -300,6 +318,8 @@ function TransactionRow({ tx, onOpen }: { tx: Transaction; onOpen(): void }) {
         <div className="text-text-primary truncate flex items-center gap-1.5">
           {tx.is_locked ? <Lock className="w-3 h-3 text-text-subtle flex-none" /> : null}
           {tx.merchant_name ?? tx.description ?? "—"}
+          {tx.cut_status === "flagged" && <Badge tone="warn">Flagged to cut</Badge>}
+          {tx.cut_status === "complete" && <Badge tone="ok">Cut</Badge>}
         </div>
         {tx.description && tx.merchant_name && tx.description !== tx.merchant_name && (
           <div className="text-xs text-text-subtle truncate">{tx.description}</div>
@@ -339,6 +359,8 @@ function TransactionDrawer({
   const [entity, setEntity] = useState<EntitySlug>("family_personal");
   const [categoryTax, setCategoryTax] = useState("");
   const [categoryBudget, setCategoryBudget] = useState("");
+  const [expenseType, setExpenseType] = useState<ExpenseType | null>(null);
+  const [cutStatus, setCutStatus] = useState<CutStatus | null>(null);
 
   useEffect(() => {
     if (!txId) {
@@ -355,6 +377,8 @@ function TransactionDrawer({
         setEntity((d.transaction.entity ?? "family_personal") as EntitySlug);
         setCategoryTax(d.transaction.category_tax ?? "");
         setCategoryBudget(d.transaction.category_budget ?? "");
+        setExpenseType(d.transaction.expense_type ?? null);
+        setCutStatus(d.transaction.cut_status ?? null);
       } catch (e) {
         if (!cancelled) toast.error(e instanceof Error ? e.message : String(e));
       } finally {
@@ -372,6 +396,8 @@ function TransactionDrawer({
         entity,
         category_tax: categoryTax,
         category_budget: categoryBudget || undefined,
+        expense_type: expenseType,
+        cut_status: cutStatus,
       });
       toast.success("Reclassified");
       await onChanged();
@@ -532,6 +558,31 @@ function TransactionDrawer({
                   {budgetOptions.map(({ slug, label }) => (
                     <option key={slug} value={slug}>{label}</option>
                   ))}
+                </Select>
+              </div>
+              <div>
+                <label className="block text-xs text-text-muted mb-1">Frequency</label>
+                <Select
+                  value={expenseType ?? ""}
+                  onChange={(e) => setExpenseType((e.target.value || null) as ExpenseType | null)}
+                  className="w-full"
+                  disabled={locked}
+                >
+                  <option value="">Recurring (default)</option>
+                  <option value="one_time">One-time (exclude from forecast)</option>
+                </Select>
+              </div>
+              <div>
+                <label className="block text-xs text-text-muted mb-1">Cut tracking</label>
+                <Select
+                  value={cutStatus ?? ""}
+                  onChange={(e) => setCutStatus((e.target.value || null) as CutStatus | null)}
+                  className="w-full"
+                  disabled={locked}
+                >
+                  <option value="">Unflagged</option>
+                  <option value="flagged">Flag to cut</option>
+                  <option value="complete">Cut complete</option>
                 </Select>
               </div>
             </div>

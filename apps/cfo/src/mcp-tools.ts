@@ -39,6 +39,7 @@ import {
   handleUpsertBudgetTarget,
   handleBudgetStatus,
   handleBudgetForecast,
+  handleBudgetCutsReport,
 } from './routes/budget';
 import { handlePnL, handlePnLAll, handlePnLTrend } from './routes/pnl';
 import {
@@ -206,6 +207,11 @@ export const MCP_TOOLS = [
           enum: ['recurring', 'one_time'],
           description: "Optional. Mark this transaction 'one_time' to exclude it from anticipated-expense forecasts (e.g. an unusual one-off purchase inside a normally-recurring category). Defaults to recurring.",
         },
+        cut_status: {
+          type: 'string' as const,
+          enum: ['flagged', 'complete'],
+          description: "Optional. Mark this transaction 'flagged' to earmark the expense for elimination, or 'complete' once it's actually been cancelled. Omit (or pass null via commit_bookkeeping_decisions) to leave unflagged.",
+        },
       },
       required: ['review_id', 'action'],
       additionalProperties: false,
@@ -297,6 +303,16 @@ export const MCP_TOOLS = [
     name: 'budget_forecast',
     description:
       "Anticipated recurring expenses, expressed monthly and annually. Hybrid logic per category: if there's an active target use it, otherwise use the trailing-12-month average of actual spend. One-time targets are listed separately, and transactions tagged expense_type='one_time' are excluded from the historical fallback. Use when the user asks 'what should I expect to spend each month' or 'what are my recurring expenses'.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'cuts_report',
+    description:
+      "Report on transactions flagged for elimination. Returns two buckets — 'flagged' (still want to cut) and 'complete' (already cancelled) — each with category and merchant breakdowns, plus an estimated_annual_savings figure. Annualized savings is computed by deduping completed cuts on merchant_name and summing each merchant's trailing-12-month spend, so cancelling a $15/mo subscription shows up as ~$180/yr saved. Use when the user asks 'what am I trying to cut', 'how much have I saved', or 'show me my cancelled subscriptions'.",
     inputSchema: {
       type: 'object' as const,
       properties: {},
@@ -427,7 +443,7 @@ export const MCP_TOOLS = [
   {
     name: 'commit_bookkeeping_decisions',
     description:
-      "Commit a batch of bookkeeping decisions. Each decision is { transaction_id, action, entity?, category_tax?, category_budget?, expense_type? }. Actions: 'classify' (set entity + category_tax, feeds the learning loop), 'accept' (keep existing AI suggestion), 'skip' (defer to later). Pass expense_type='one_time' on a classify decision to flag the transaction as non-recurring so it's excluded from the anticipated-expense forecast. Returns counts of classified/accepted/skipped/errors. Every classify decision trains the auto-categorization rules — after 3+ consistent manual decisions for the same merchant, a rule is auto-created.",
+      "Commit a batch of bookkeeping decisions. Each decision is { transaction_id, action, entity?, category_tax?, category_budget?, expense_type?, cut_status? }. Actions: 'classify' (set entity + category_tax, feeds the learning loop), 'accept' (keep existing AI suggestion), 'skip' (defer to later). Pass expense_type='one_time' on a classify decision to exclude it from forecasts; pass cut_status='flagged' to earmark it for elimination or 'complete' once cancelled. Returns counts of classified/accepted/skipped/errors. Every classify decision trains the auto-categorization rules — after 3+ consistent manual decisions for the same merchant, a rule is auto-created.",
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -445,6 +461,7 @@ export const MCP_TOOLS = [
               category_tax: { type: 'string' as const },
               category_budget: { type: 'string' as const },
               expense_type: { type: 'string' as const, enum: ['recurring', 'one_time'] },
+              cut_status: { type: 'string' as const, enum: ['flagged', 'complete'] },
             },
             required: ['transaction_id', 'action'],
           },
@@ -654,6 +671,11 @@ export async function dispatchTool(
     case 'budget_forecast': {
       const req = jsonRequest('GET', 'https://cfo.invalid/budget/forecast');
       return respondText(await handleBudgetForecast(req, env));
+    }
+
+    case 'cuts_report': {
+      const req = jsonRequest('GET', 'https://cfo.invalid/budget/cuts');
+      return respondText(await handleBudgetCutsReport(req, env));
     }
 
     case 'pnl_for_entity': {
