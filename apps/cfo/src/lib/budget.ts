@@ -10,7 +10,7 @@
 import type { Env } from '../types';
 import { FAMILY_CATEGORIES } from '../types';
 
-export type Cadence = 'weekly' | 'monthly' | 'annual';
+export type Cadence = 'weekly' | 'monthly' | 'annual' | 'one_time';
 
 export interface ResolvedPeriod {
   start: string; // ISO date (YYYY-MM-DD)
@@ -19,9 +19,10 @@ export interface ResolvedPeriod {
   label: string;
 }
 
-// Average days per period, used for pro-rating across mismatched cadences.
+// Average days per period, used for pro-rating recurring cadences.
 // 365.25 / 12 ≈ 30.4375 captures leap years without special-casing February.
-export const DAYS_PER_PERIOD: Record<Cadence, number> = {
+// `one_time` is intentionally absent — see prorateTarget.
+export const DAYS_PER_PERIOD: Record<'weekly' | 'monthly' | 'annual', number> = {
   weekly: 7,
   monthly: 365.25 / 12,
   annual: 365.25,
@@ -116,9 +117,39 @@ export function resolvePeriod(
 /**
  * Scale a target amount from its native cadence to a given period length.
  * Example: $600/month target + 7-day period → $600 * (7 / 30.4375) ≈ $138.
+ *
+ * `one_time` targets are fixed envelopes — the full amount applies regardless
+ * of period length, so we return the amount unchanged.
  */
 export function prorateTarget(amount: number, cadence: Cadence, periodDays: number): number {
+  if (cadence === 'one_time') return amount;
   return (amount * periodDays) / DAYS_PER_PERIOD[cadence];
+}
+
+/**
+ * Convert a target to its monthly-equivalent amount, used by the anticipated-
+ * expense forecast. `one_time` returns null because by definition it doesn't
+ * recur and shouldn't show up in monthly averages.
+ */
+export function targetMonthlyEquivalent(amount: number, cadence: Cadence): number | null {
+  switch (cadence) {
+    case 'weekly':   return amount * (52 / 12);
+    case 'monthly':  return amount;
+    case 'annual':   return amount / 12;
+    case 'one_time': return null;
+  }
+}
+
+/**
+ * Convert a target to its annual-equivalent amount.
+ */
+export function targetAnnualEquivalent(amount: number, cadence: Cadence): number | null {
+  switch (cadence) {
+    case 'weekly':   return amount * 52;
+    case 'monthly':  return amount * 12;
+    case 'annual':   return amount;
+    case 'one_time': return null;
+  }
 }
 
 /**

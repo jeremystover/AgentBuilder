@@ -6,11 +6,11 @@ import {
 } from "../ui";
 import { useIncomeStatus } from "../../hooks/useIncomeStatus";
 import { upsertIncomeTarget, deleteIncomeTarget } from "../../api";
-import type { BudgetCadence, EntitySlug, IncomeStatusLine, IncomeTarget } from "../../types";
+import type { IncomeCadence, EntitySlug, IncomeStatusLine, IncomeTarget } from "../../types";
 
 type ViewCadence = "monthly" | "quarterly" | "annual";
 
-const CADENCE_OPTIONS: { value: BudgetCadence; label: string }[] = [
+const CADENCE_OPTIONS: { value: IncomeCadence; label: string }[] = [
   { value: "annual",  label: "Annual" },
   { value: "monthly", label: "Monthly" },
   { value: "weekly",  label: "Weekly" },
@@ -290,7 +290,7 @@ function TargetDrawer({
   onSaved(): void;
 }) {
   const [amount, setAmount] = useState(target?.amount?.toString() ?? "");
-  const [cadence, setCadence] = useState<BudgetCadence>(target?.cadence ?? "annual");
+  const [cadence, setCadence] = useState<IncomeCadence>(target?.cadence ?? "annual");
   const [busy, setBusy] = useState(false);
 
   // Sync form when a different entity is opened
@@ -389,7 +389,7 @@ function TargetDrawer({
         </div>
         <div>
           <label className="block text-xs text-text-muted mb-1">Cadence</label>
-          <Select value={cadence} onChange={(e) => setCadence(e.target.value as BudgetCadence)} className="w-full">
+          <Select value={cadence} onChange={(e) => setCadence(e.target.value as IncomeCadence)} className="w-full">
             {CADENCE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
           </Select>
         </div>

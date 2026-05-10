@@ -48,7 +48,7 @@ export async function handleListTransactions(request: Request, env: Env): Promis
 
   const [rows, countRow] = await Promise.all([
     env.DB.prepare(
-      `SELECT t.*, c.entity, c.category_tax, c.category_budget, c.confidence,
+      `SELECT t.*, c.entity, c.category_tax, c.category_budget, c.expense_type, c.confidence,
               c.method, c.reason_codes, c.review_required, c.is_locked,
               a.name AS account_name, a.owner_tag, a.type AS account_type
        FROM transactions t
@@ -80,7 +80,7 @@ export async function handleGetTransaction(request: Request, env: Env, txId: str
 
   const [tx, splits, history, attachments, amazon] = await Promise.all([
     env.DB.prepare(
-      `SELECT t.*, c.entity, c.category_tax, c.category_budget, c.confidence,
+      `SELECT t.*, c.entity, c.category_tax, c.category_budget, c.expense_type, c.confidence,
               c.method, c.reason_codes, c.review_required, c.is_locked,
               a.name AS account_name, a.owner_tag, a.type AS account_type
        FROM transactions t
@@ -150,6 +150,7 @@ const ClassifySchema = z.object({
   entity: z.enum(['elyse_coaching', 'jeremy_coaching', 'airbnb_activity', 'family_personal']).optional(),
   category_tax: z.string().min(1),
   category_budget: z.string().optional(),
+  expense_type: z.enum(['recurring', 'one_time']).nullable().optional(),
   note: z.string().optional(),
 });
 
@@ -186,18 +187,19 @@ export async function handleManualClassify(request: Request, env: Env, txId: str
     ).run();
   }
 
-  const { entity = null, category_tax, category_budget } = parsed.data;
+  const { entity = null, category_tax, category_budget, expense_type } = parsed.data;
   const classId = crypto.randomUUID();
   await env.DB.prepare(
     `INSERT INTO classifications
-       (id, transaction_id, entity, category_tax, category_budget, confidence, method, review_required, classified_by)
-     VALUES (?, ?, ?, ?, ?, 1.0, 'manual', 0, 'user')
+       (id, transaction_id, entity, category_tax, category_budget, expense_type, confidence, method, review_required, classified_by)
+     VALUES (?, ?, ?, ?, ?, ?, 1.0, 'manual', 0, 'user')
      ON CONFLICT(transaction_id) DO UPDATE SET
        entity=excluded.entity, category_tax=excluded.category_tax,
-       category_budget=excluded.category_budget, confidence=1.0,
+       category_budget=excluded.category_budget, expense_type=excluded.expense_type,
+       confidence=1.0,
        method='manual', review_required=0, classified_by='user',
        classified_at=datetime('now')`,
-  ).bind(classId, txId, entity, category_tax, category_budget ?? null).run();
+  ).bind(classId, txId, entity, category_tax, category_budget ?? null, expense_type ?? null).run();
 
   if (entity) {
     await maybeLearnRuleFromManualClassification(env, userId, txId, {
@@ -214,7 +216,7 @@ export async function handleManualClassify(request: Request, env: Env, txId: str
   ).bind(txId).run();
 
   const updated = await env.DB.prepare(
-    `SELECT t.*, c.entity, c.category_tax, c.category_budget, c.confidence, c.method
+    `SELECT t.*, c.entity, c.category_tax, c.category_budget, c.expense_type, c.confidence, c.method
      FROM transactions t JOIN classifications c ON c.transaction_id = t.id
      WHERE t.id = ?`,
   ).bind(txId).first();

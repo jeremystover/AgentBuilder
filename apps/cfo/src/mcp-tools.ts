@@ -38,6 +38,7 @@ import {
   handleCreateBudgetCategory,
   handleUpsertBudgetTarget,
   handleBudgetStatus,
+  handleBudgetForecast,
 } from './routes/budget';
 import { handlePnL, handlePnLAll, handlePnLTrend } from './routes/pnl';
 import {
@@ -200,6 +201,11 @@ export const MCP_TOOLS = [
         },
         category_tax: { type: 'string' as const, description: "Required for action='classify'." },
         category_budget: { type: 'string' as const, description: "Optional budget category." },
+        expense_type: {
+          type: 'string' as const,
+          enum: ['recurring', 'one_time'],
+          description: "Optional. Mark this transaction 'one_time' to exclude it from anticipated-expense forecasts (e.g. an unusual one-off purchase inside a normally-recurring category). Defaults to recurring.",
+        },
       },
       required: ['review_id', 'action'],
       additionalProperties: false,
@@ -274,16 +280,26 @@ export const MCP_TOOLS = [
   {
     name: 'set_budget_target',
     description:
-      "Set or update the target amount for a budget category. Cadence is 'weekly', 'monthly', or 'annual' — pick whichever the user thinks about naturally (dining out is easier monthly, gifts are easier annual). Upserting creates history; the prior open-ended target is closed automatically so trendlines still work.",
+      "Set or update the target amount for a budget category. Cadence is 'weekly', 'monthly', 'annual', or 'one_time' — pick whichever the user thinks about naturally (dining out is easier monthly, gifts are easier annual, kitchen remodel or named vacation is one_time). One-time targets are fixed envelopes and are excluded from the anticipated-monthly forecast. Upserting creates history; the prior open-ended target is closed automatically so trendlines still work.",
     inputSchema: {
       type: 'object' as const,
       properties: {
         category_slug: { type: 'string' as const },
-        cadence: { type: 'string' as const, enum: ['weekly', 'monthly', 'annual'] },
+        cadence: { type: 'string' as const, enum: ['weekly', 'monthly', 'annual', 'one_time'] },
         amount: { type: 'number' as const, description: 'Target amount in dollars, non-negative' },
         notes: { type: 'string' as const, description: 'Optional free-text context' },
       },
       required: ['category_slug', 'cadence', 'amount'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'budget_forecast',
+    description:
+      "Anticipated recurring expenses, expressed monthly and annually. Hybrid logic per category: if there's an active target use it, otherwise use the trailing-12-month average of actual spend. One-time targets are listed separately, and transactions tagged expense_type='one_time' are excluded from the historical fallback. Use when the user asks 'what should I expect to spend each month' or 'what are my recurring expenses'.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {},
       additionalProperties: false,
     },
   },
@@ -411,7 +427,7 @@ export const MCP_TOOLS = [
   {
     name: 'commit_bookkeeping_decisions',
     description:
-      "Commit a batch of bookkeeping decisions. Each decision is { transaction_id, action, entity?, category_tax?, category_budget? }. Actions: 'classify' (set entity + category_tax, feeds the learning loop), 'accept' (keep existing AI suggestion), 'skip' (defer to later). Returns counts of classified/accepted/skipped/errors. Every classify decision trains the auto-categorization rules — after 3+ consistent manual decisions for the same merchant, a rule is auto-created.",
+      "Commit a batch of bookkeeping decisions. Each decision is { transaction_id, action, entity?, category_tax?, category_budget?, expense_type? }. Actions: 'classify' (set entity + category_tax, feeds the learning loop), 'accept' (keep existing AI suggestion), 'skip' (defer to later). Pass expense_type='one_time' on a classify decision to flag the transaction as non-recurring so it's excluded from the anticipated-expense forecast. Returns counts of classified/accepted/skipped/errors. Every classify decision trains the auto-categorization rules — after 3+ consistent manual decisions for the same merchant, a rule is auto-created.",
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -428,6 +444,7 @@ export const MCP_TOOLS = [
               },
               category_tax: { type: 'string' as const },
               category_budget: { type: 'string' as const },
+              expense_type: { type: 'string' as const, enum: ['recurring', 'one_time'] },
             },
             required: ['transaction_id', 'action'],
           },
@@ -632,6 +649,11 @@ export async function dispatchTool(
       const url = withQuery('https://cfo.invalid/budget/status', args);
       const req = jsonRequest('GET', url);
       return respondText(await handleBudgetStatus(req, env));
+    }
+
+    case 'budget_forecast': {
+      const req = jsonRequest('GET', 'https://cfo.invalid/budget/forecast');
+      return respondText(await handleBudgetForecast(req, env));
     }
 
     case 'pnl_for_entity': {

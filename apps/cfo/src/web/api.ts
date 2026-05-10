@@ -9,7 +9,8 @@ import type {
   Transaction, TransactionListResponse, TransactionDetail, TransactionSplit, EntitySlug,
   ImportRecord, CsvImportResult, AmazonImportResult, TillerImportResult, DeleteImportsResult,
   Rule, RuleMatchField, RuleMatchOperator, AutoCatImportResult,
-  BudgetCategory, BudgetTarget, BudgetStatusResponse, BudgetCadence, BudgetPreset,
+  BudgetCategory, BudgetTarget, BudgetStatusResponse, BudgetForecastResponse,
+  BudgetCadence, IncomeCadence, BudgetPreset,
   IncomeTarget, IncomeStatusResponse,
   ScheduleReport, ScheduleCEntity, SummaryReport,
 } from "./types";
@@ -247,6 +248,7 @@ export interface ClassifyTransactionInput {
   entity?: EntitySlug;
   category_tax: string;
   category_budget?: string;
+  expense_type?: "recurring" | "one_time" | null;
   note?: string;
 }
 
@@ -434,6 +436,10 @@ export async function getBudgetStatus(params: BudgetStatusParams = {}): Promise<
   return request<BudgetStatusResponse>(`/budget/status${suffix}`);
 }
 
+export async function getBudgetForecast(): Promise<BudgetForecastResponse> {
+  return request<BudgetForecastResponse>("/budget/forecast");
+}
+
 // ── Income ────────────────────────────────────────────────────────────────
 
 export interface IncomeStatusParams {
@@ -457,7 +463,7 @@ export async function listIncomeTargets(): Promise<{ targets: IncomeTarget[] }> 
 
 export interface UpsertIncomeTargetInput {
   entity: EntitySlug;
-  cadence: BudgetCadence;
+  cadence: IncomeCadence;
   amount: number;
   effective_from?: string;
   notes?: string;

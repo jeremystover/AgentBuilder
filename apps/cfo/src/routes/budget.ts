@@ -17,10 +17,12 @@ import {
   ensureDefaultBudgetCategories,
   prorateTarget,
   resolvePeriod,
+  targetAnnualEquivalent,
+  targetMonthlyEquivalent,
   type Cadence,
 } from '../lib/budget';
 
-const CadenceSchema = z.enum(['weekly', 'monthly', 'annual']);
+const CadenceSchema = z.enum(['weekly', 'monthly', 'annual', 'one_time']);
 
 const CreateCategorySchema = z.object({
   slug: z.string().min(1).max(64).regex(/^[a-z0-9_]+$/, 'Use lowercase_with_underscores'),
@@ -331,5 +333,180 @@ export async function handleBudgetStatus(request: Request, env: Env): Promise<Re
   return jsonOk({
     period: { start: period.start, end: period.end, days: period.days, label: period.label },
     categories: lines,
+  });
+}
+
+// ── GET /budget/forecast ──────────────────────────────────────────────────────
+// Anticipated recurring expenses, per the "hybrid" rule:
+//   - If a category has an active target, use that (monthly_eq + annual_eq).
+//   - Otherwise fall back to the trailing-12-month spend average for that
+//     category, excluding transactions tagged expense_type='one_time'.
+//   - Categories with cadence='one_time' targets are listed separately so
+//     the user can see which envelopes are planned but not anticipated.
+export async function handleBudgetForecast(request: Request, env: Env): Promise<Response> {
+  const userId = getUserId(request);
+  await ensureDefaultBudgetCategories(env, userId);
+
+  // Trailing 12 months ending today.
+  const today = new Date();
+  const end = today.toISOString().slice(0, 10);
+  const startDate = new Date(Date.UTC(today.getUTCFullYear() - 1, today.getUTCMonth(), today.getUTCDate() + 1));
+  const start = startDate.toISOString().slice(0, 10);
+
+  const categories = await env.DB.prepare(
+    `SELECT slug, name FROM budget_categories WHERE user_id = ? AND is_active = 1`,
+  ).bind(userId).all<{ slug: string; name: string }>();
+  const nameBySlug = new Map(categories.results.map(r => [r.slug, r.name]));
+
+  // Active target per category as of today.
+  const targets = await env.DB.prepare(
+    `SELECT category_slug, cadence, amount, effective_from, effective_to, notes
+     FROM budget_targets
+     WHERE user_id = ?
+       AND effective_from <= date('now')
+       AND (effective_to IS NULL OR effective_to >= date('now'))`,
+  ).bind(userId).all<{
+    category_slug: string;
+    cadence: Cadence;
+    amount: number;
+    effective_from: string;
+    effective_to: string | null;
+    notes: string | null;
+  }>();
+
+  const targetBySlug = new Map<string, typeof targets.results[number]>();
+  for (const t of targets.results) targetBySlug.set(t.category_slug, t);
+
+  // Trailing-12 historical spend per category, recurring only.
+  const historyRows = await env.DB.prepare(
+    `SELECT c.category_budget AS slug,
+            SUM(-t.amount) AS total,
+            COUNT(*) AS tx_count
+     FROM transactions t
+     JOIN classifications c ON c.transaction_id = t.id
+     WHERE t.user_id = ?
+       AND t.amount < 0
+       AND t.posted_date BETWEEN ? AND ?
+       AND c.category_budget IS NOT NULL
+       AND COALESCE(c.expense_type, 'recurring') != 'one_time'
+     GROUP BY c.category_budget`,
+  ).bind(userId, start, end).all<{ slug: string; total: number; tx_count: number }>();
+
+  const historyBySlug = new Map<string, { total: number; tx_count: number }>();
+  for (const h of historyRows.results) historyBySlug.set(h.slug, { total: h.total, tx_count: h.tx_count });
+
+  // Sum of one-time-tagged transactions in the trailing window — surfaced
+  // for transparency so users can see what was excluded.
+  const oneTimeTx = await env.DB.prepare(
+    `SELECT COUNT(*) AS count, COALESCE(SUM(-t.amount), 0) AS total
+     FROM transactions t
+     JOIN classifications c ON c.transaction_id = t.id
+     WHERE t.user_id = ?
+       AND t.amount < 0
+       AND t.posted_date BETWEEN ? AND ?
+       AND c.expense_type = 'one_time'`,
+  ).bind(userId, start, end).first<{ count: number; total: number }>();
+
+  type ForecastLine = {
+    category_slug: string;
+    category_name: string;
+    source: 'target' | 'history' | 'none';
+    target: { amount: number; cadence: Cadence } | null;
+    history_total_12mo: number | null;
+    monthly_anticipated: number;
+    annual_anticipated: number;
+  };
+
+  const oneTimeLines: Array<{
+    category_slug: string;
+    category_name: string;
+    amount: number;
+    effective_from: string;
+    effective_to: string | null;
+    notes: string | null;
+  }> = [];
+
+  const lines: ForecastLine[] = [];
+
+  // Union of active categories + any slug we've seen via target or history.
+  const slugs = new Set<string>([
+    ...nameBySlug.keys(),
+    ...targetBySlug.keys(),
+    ...historyBySlug.keys(),
+  ]);
+
+  for (const slug of slugs) {
+    const name = nameBySlug.get(slug) ?? slug;
+    const target = targetBySlug.get(slug);
+
+    if (target?.cadence === 'one_time') {
+      oneTimeLines.push({
+        category_slug: slug,
+        category_name: name,
+        amount: target.amount,
+        effective_from: target.effective_from,
+        effective_to: target.effective_to,
+        notes: target.notes,
+      });
+      continue;
+    }
+
+    if (target) {
+      const monthly = targetMonthlyEquivalent(target.amount, target.cadence) ?? 0;
+      const annual = targetAnnualEquivalent(target.amount, target.cadence) ?? 0;
+      lines.push({
+        category_slug: slug,
+        category_name: name,
+        source: 'target',
+        target: { amount: target.amount, cadence: target.cadence },
+        history_total_12mo: historyBySlug.get(slug)?.total ?? null,
+        monthly_anticipated: Math.round(monthly * 100) / 100,
+        annual_anticipated: Math.round(annual * 100) / 100,
+      });
+      continue;
+    }
+
+    const hist = historyBySlug.get(slug);
+    if (hist && hist.total > 0) {
+      lines.push({
+        category_slug: slug,
+        category_name: name,
+        source: 'history',
+        target: null,
+        history_total_12mo: Math.round(hist.total * 100) / 100,
+        monthly_anticipated: Math.round((hist.total / 12) * 100) / 100,
+        annual_anticipated: Math.round(hist.total * 100) / 100,
+      });
+      continue;
+    }
+
+    // Active category with neither a target nor any recurring history —
+    // include with zero so the UI can prompt the user to set a target.
+    lines.push({
+      category_slug: slug,
+      category_name: name,
+      source: 'none',
+      target: null,
+      history_total_12mo: null,
+      monthly_anticipated: 0,
+      annual_anticipated: 0,
+    });
+  }
+
+  lines.sort((a, b) => b.monthly_anticipated - a.monthly_anticipated);
+
+  const monthlyAnticipated = lines.reduce((sum, l) => sum + l.monthly_anticipated, 0);
+  const annualAnticipated = lines.reduce((sum, l) => sum + l.annual_anticipated, 0);
+
+  return jsonOk({
+    trailing_window: { start, end, months: 12 },
+    monthly_anticipated: Math.round(monthlyAnticipated * 100) / 100,
+    annual_anticipated: Math.round(annualAnticipated * 100) / 100,
+    categories: lines,
+    one_time_targets: oneTimeLines,
+    excluded_one_time_transactions: {
+      count: oneTimeTx?.count ?? 0,
+      total: Math.round((oneTimeTx?.total ?? 0) * 100) / 100,
+    },
   });
 }
