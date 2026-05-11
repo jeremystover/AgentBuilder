@@ -33,7 +33,7 @@ import { handleSetup } from './routes/setup';
 import { handleGetBankConfig, handleStartBankConnect, handleCompleteBankConnect, handleBankSync } from './routes/bank';
 import { handleListAccounts, handleUpdateAccount } from './routes/accounts';
 import { handleListTransactions, handleGetTransaction, handleDeleteTransaction, handleManualClassify, handleSplitTransaction } from './routes/transactions';
-import { handleRunClassification, handleClassifySingle, handleReapplyAccountRules, handleReapplyAllRules } from './routes/classify';
+import { handleRunClassification, handleClassifySingle, handleReapplyAccountRules, handleReapplyAllRules, handleBackfillFamilyBudget } from './routes/classify';
 import { handleListReview, handleResolveReview, handleBulkResolveReview, handleNextReviewItem } from './routes/review';
 import { handleScheduleC, handleScheduleE, handleSummary, handleExport, handleSnapshot } from './routes/reports';
 import { handleListImports, handleDeleteAllImports, handleDeleteImport, handleCsvImport } from './routes/imports';
@@ -51,6 +51,7 @@ import {
   handleBudgetStatus,
   handleBudgetForecast,
   handleBudgetCutsReport,
+  handleBudgetHistory,
 } from './routes/budget';
 import { handleIncomeStatus, handleListIncomeTargets, handleUpsertIncomeTarget, handleDeleteIncomeTarget } from './routes/income';
 import { handleListTaxCategories, handleCreateTaxCategory, handleUpdateTaxCategory } from './routes/tax-categories';
@@ -217,6 +218,10 @@ const ROUTES: Route[] = [
   { method: 'GET',    pattern: /^\/budget\/status$/,                     handler: (req, env) => handleBudgetStatus(req, env) },
   { method: 'GET',    pattern: /^\/budget\/forecast$/,                   handler: (req, env) => handleBudgetForecast(req, env) },
   { method: 'GET',    pattern: /^\/budget\/cuts$/,                       handler: (req, env) => handleBudgetCutsReport(req, env) },
+  { method: 'GET',    pattern: /^\/budget\/history$/,                    handler: (req, env) => handleBudgetHistory(req, env) },
+
+  // AI Classification (backfill)
+  { method: 'POST',   pattern: /^\/classify\/backfill-family-budget$/,   handler: (req, env) => handleBackfillFamilyBudget(req, env) },
 
   // Income tracking
   { method: 'GET',    pattern: /^\/income\/status$/,                     handler: (req, env) => handleIncomeStatus(req, env) },

@@ -4,6 +4,7 @@ import { jsonOk, jsonError, getUserId } from '../types';
 import { readBookkeepingNotes, saveBookkeepingNotes } from '../lib/bookkeeping-notes';
 import { maybeLearnRuleFromManualClassification } from '../lib/learned-rules';
 import { backfillUnclassifiedReviewQueue } from '../lib/review-queue';
+import { ensureBudgetCategory } from '../lib/budget';
 
 const VALID_ENTITIES: Entity[] = ['elyse_coaching', 'jeremy_coaching', 'airbnb_activity', 'family_personal'];
 const BATCH_SIZE = 20;
@@ -315,6 +316,10 @@ export async function handleBookkeepingCommit(request: Request, env: Env): Promi
           category_tax: decision.category_tax,
           category_budget: decision.category_budget ?? null,
         });
+
+        if (decision.category_budget) {
+          await ensureBudgetCategory(env, userId, decision.category_budget);
+        }
 
         classified++;
       }

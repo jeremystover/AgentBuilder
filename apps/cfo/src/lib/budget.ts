@@ -152,6 +152,15 @@ export function targetAnnualEquivalent(amount: number, cadence: Cadence): number
   }
 }
 
+export async function ensureBudgetCategory(env: Env, userId: string, slug: string): Promise<void> {
+  const name = slug.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  await env.DB.prepare(
+    `INSERT INTO budget_categories (id, user_id, slug, name, is_active)
+     VALUES (?, ?, ?, ?, 1)
+     ON CONFLICT(user_id, slug) DO NOTHING`,
+  ).bind(crypto.randomUUID(), userId, slug, name).run();
+}
+
 /**
  * Seed budget_categories with FAMILY_CATEGORIES defaults if the user has
  * no categories yet. Idempotent — no-op on subsequent calls.
