@@ -9,7 +9,7 @@ import type {
   Transaction, TransactionListResponse, TransactionDetail, TransactionSplit, EntitySlug,
   ImportRecord, CsvImportResult, AmazonImportResult, TillerImportResult, DeleteImportsResult,
   Rule, RuleMatchField, RuleMatchOperator, AutoCatImportResult,
-  BudgetCategory, BudgetTarget, BudgetStatusResponse, BudgetForecastResponse,
+  TaxCategory, BudgetCategory, BudgetTarget, BudgetStatusResponse, BudgetForecastResponse, CutsReportResponse,
   BudgetCadence, IncomeCadence, BudgetPreset,
   IncomeTarget, IncomeStatusResponse,
   ScheduleReport, ScheduleCEntity, SummaryReport,
@@ -104,6 +104,8 @@ export interface ResolveReviewInput {
   entity?: string;
   category_tax?: string;
   category_budget?: string;
+  expense_type?: "recurring" | "one_time" | null;
+  cut_status?: "flagged" | "complete" | null;
 }
 
 export async function resolveReview(id: string, input: ResolveReviewInput): Promise<{ ok: true }> {
@@ -146,23 +148,29 @@ export async function getBankConfig(): Promise<BankConfig> {
   return request<BankConfig>("/bank/config");
 }
 
-export interface TellerConnectConfig {
-  provider: string;
-  application_id: string;
-  environment: string;
-  products: string[];
-  select_account: string;
+export interface BankConnectStartPayload {
+  provider?: "teller" | "plaid";
+  institution_key?: string; // Plaid only: our internal key (e.g. 'patelco')
 }
 
-export async function startBankConnect(): Promise<TellerConnectConfig> {
-  return request<TellerConnectConfig>("/bank/connect/start", { method: "POST", body: JSON.stringify({}) });
+export type BankConnectConfig = Record<string, unknown>; // varies by provider
+
+export async function startBankConnect(payload: BankConnectStartPayload = {}): Promise<BankConnectConfig> {
+  return request<BankConnectConfig>("/bank/connect/start", { method: "POST", body: JSON.stringify(payload) });
 }
 
 export interface ConnectCompletePayload {
-  access_token: string;
-  enrollment_id: string;
+  provider?: "teller" | "plaid";
+  // Teller fields
+  access_token?: string;
+  enrollment_id?: string;
+  // Plaid fields
+  public_token?: string;
+  institution_key?: string;
+  plaid_institution_id?: string | null;
+  // Shared
   institution_name: string | null;
-  institution_id: string | null;
+  institution_id?: string | null;
 }
 
 export interface ConnectCompleteResult {
@@ -215,6 +223,7 @@ export interface ListTransactionsParams {
   date_to?: string;
   review_required?: boolean;
   unclassified?: boolean;
+  cut_status?: "flagged" | "complete" | "any" | "none";
   q?: string;
   sort_by?: string;
   sort_dir?: "asc" | "desc";
@@ -232,6 +241,7 @@ export async function listTransactions(params: ListTransactionsParams = {}): Pro
   if (params.date_to) qs.set("date_to", params.date_to);
   if (params.review_required != null) qs.set("review_required", String(params.review_required));
   if (params.unclassified) qs.set("unclassified", "true");
+  if (params.cut_status) qs.set("cut_status", params.cut_status);
   if (params.q) qs.set("q", params.q);
   if (params.sort_by) qs.set("sort_by", params.sort_by);
   if (params.sort_dir) qs.set("sort_dir", params.sort_dir);
@@ -249,6 +259,7 @@ export interface ClassifyTransactionInput {
   category_tax: string;
   category_budget?: string;
   expense_type?: "recurring" | "one_time" | null;
+  cut_status?: "flagged" | "complete" | null;
   note?: string;
 }
 
@@ -275,6 +286,24 @@ export async function splitTransaction(id: string, splits: SplitItem[]): Promise
 
 export async function deleteTransaction(id: string): Promise<{ deleted: true; transaction_id: string }> {
   return request(`/transactions/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export interface ReclassifyResult {
+  method: "rule" | "ai";
+  rule?: string;
+  entity?: string;
+  category_tax?: string;
+  category_budget?: string | null;
+  classification?: unknown;
+  _debug?: {
+    userMessage: string;
+    pass: string;
+    rawResponse: unknown;
+  };
+}
+
+export async function reclassifyWithAI(id: string): Promise<ReclassifyResult> {
+  return request<ReclassifyResult>(`/classify/transaction/${encodeURIComponent(id)}`, { method: "POST" });
 }
 
 // ── Imports ───────────────────────────────────────────────────────────────
@@ -363,6 +392,39 @@ export async function importAutoCat(file: File): Promise<AutoCatImportResult> {
   return uploadForm<AutoCatImportResult>("/rules/import-autocat", form);
 }
 
+// ── Tax categories ────────────────────────────────────────────────────────
+
+export async function listTaxCategories(): Promise<{ categories: TaxCategory[] }> {
+  return request<{ categories: TaxCategory[] }>("/tax/categories");
+}
+
+export interface CreateTaxCategoryInput {
+  slug: string;
+  name: string;
+  form_line?: string;
+  category_group: "schedule_c" | "schedule_e";
+}
+
+export async function createTaxCategory(input: CreateTaxCategoryInput): Promise<TaxCategory> {
+  return request<TaxCategory>("/tax/categories", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export interface UpdateTaxCategoryInput {
+  name?: string;
+  form_line?: string | null;
+  is_active?: boolean;
+}
+
+export async function updateTaxCategory(slug: string, patch: UpdateTaxCategoryInput): Promise<{ slug: string; updated: UpdateTaxCategoryInput }> {
+  return request(`/tax/categories/${encodeURIComponent(slug)}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+}
+
 // ── Budget ────────────────────────────────────────────────────────────────
 
 export async function listBudgetCategories(): Promise<{ categories: BudgetCategory[] }> {
@@ -438,6 +500,10 @@ export async function getBudgetStatus(params: BudgetStatusParams = {}): Promise<
 
 export async function getBudgetForecast(): Promise<BudgetForecastResponse> {
   return request<BudgetForecastResponse>("/budget/forecast");
+}
+
+export async function getCutsReport(): Promise<CutsReportResponse> {
+  return request<CutsReportResponse>("/budget/cuts");
 }
 
 // ── Income ────────────────────────────────────────────────────────────────

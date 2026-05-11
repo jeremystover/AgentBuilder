@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, RefreshCw, Sparkles, Building2, CreditCard } from "lucide-react";
+import { Plus, RefreshCw, Sparkles, Building2, CreditCard, ChevronDown } from "lucide-react";
 import { toast } from "sonner";
 import { Button, Card, Badge, Select, PageHeader, EmptyState, humanizeSlug } from "../ui";
 import { useAccounts } from "../../hooks/useAccounts";
@@ -32,7 +32,26 @@ interface TellerConnectSetup {
 declare global {
   interface Window {
     TellerConnect?: { setup(opts: TellerConnectSetup): TellerConnectInstance };
+    Plaid?: {
+      create(opts: PlaidLinkOptions): PlaidLinkHandler;
+    };
   }
+}
+
+// ── Plaid Link ambient type ─────────────────────────────────────────────────
+interface PlaidLinkOptions {
+  token: string;
+  onSuccess(publicToken: string, metadata: PlaidLinkMetadata): void;
+  onExit?(): void;
+}
+
+interface PlaidLinkMetadata {
+  institution: { institution_id: string; name: string } | null;
+}
+
+interface PlaidLinkHandler {
+  open(): void;
+  destroy(): void;
 }
 
 function loadTellerConnectScript(): Promise<NonNullable<typeof window.TellerConnect>> {
@@ -49,23 +68,39 @@ function loadTellerConnectScript(): Promise<NonNullable<typeof window.TellerConn
   });
 }
 
+function loadPlaidLinkScript(): Promise<NonNullable<typeof window.Plaid>> {
+  if (window.Plaid) return Promise.resolve(window.Plaid);
+  return new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "https://cdn.plaid.com/link/v2/stable/link-initialize.js";
+    script.onload = () => {
+      if (window.Plaid) resolve(window.Plaid);
+      else reject(new Error("Plaid Link not available after script load"));
+    };
+    script.onerror = () => reject(new Error("Failed to load Plaid Link script"));
+    document.head.appendChild(script);
+  });
+}
+
 // ── Main view ───────────────────────────────────────────────────────────────
 
 export function AccountsView() {
   const { accounts, config, loading, error, refresh } = useAccounts();
   const [busy, setBusy] = useState(false);
+  const [showPlaidPicker, setShowPlaidPicker] = useState(false);
 
   const tellerConfigured = config?.providers.teller.configured ?? false;
+  const plaidConfigured = config?.providers.plaid?.configured ?? false;
+  const plaidInstitutions = config?.providers.plaid?.institutions ?? [];
   const isSandbox = config?.providers.teller.sandbox_shortcut ?? false;
 
-  // Group accounts by institution
   const groups = groupByInstitution(accounts);
 
-  const handleConnect = async () => {
+  const handleTellerConnect = async () => {
     setBusy(true);
     let connectCfg: Awaited<ReturnType<typeof startBankConnect>>;
     try {
-      connectCfg = await startBankConnect();
+      connectCfg = await startBankConnect({ provider: "teller" });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
       setBusy(false);
@@ -82,14 +117,15 @@ export function AccountsView() {
     }
 
     const instance = tc.setup({
-      applicationId: connectCfg.application_id,
-      environment: connectCfg.environment,
-      products: connectCfg.products,
-      selectAccount: connectCfg.select_account,
+      applicationId: (connectCfg as Record<string, unknown>).application_id as string,
+      environment: (connectCfg as Record<string, unknown>).environment as string,
+      products: (connectCfg as Record<string, unknown>).products as string[],
+      selectAccount: (connectCfg as Record<string, unknown>).select_account as string,
       onSuccess: async (enrollment) => {
         setBusy(true);
         try {
           const result = await completeBankConnect({
+            provider: "teller",
             access_token: enrollment.accessToken,
             enrollment_id: enrollment.enrollment.id,
             institution_name: enrollment.enrollment.institution.name ?? null,
@@ -108,6 +144,56 @@ export function AccountsView() {
       onExit: () => {},
     });
     instance.open();
+  };
+
+  const handlePlaidConnect = async (institutionKey: string, institutionName: string) => {
+    setShowPlaidPicker(false);
+    setBusy(true);
+
+    let linkToken: string;
+    try {
+      const cfg = await startBankConnect({ provider: "plaid", institution_key: institutionKey });
+      linkToken = (cfg as Record<string, unknown>).link_token as string;
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+      setBusy(false);
+      return;
+    }
+    setBusy(false);
+
+    let plaid: NonNullable<typeof window.Plaid>;
+    try {
+      plaid = await loadPlaidLinkScript();
+    } catch {
+      toast.error("Could not load Plaid Link widget. Check your network and try again.");
+      return;
+    }
+
+    const handler = plaid.create({
+      token: linkToken,
+      onSuccess: async (publicToken, metadata) => {
+        setBusy(true);
+        try {
+          const result = await completeBankConnect({
+            provider: "plaid",
+            public_token: publicToken,
+            institution_key: institutionKey,
+            institution_name: metadata.institution?.name ?? institutionName,
+            plaid_institution_id: metadata.institution?.institution_id ?? null,
+          });
+          toast.success(
+            `Connected ${result.institution ?? institutionName} — ${result.accounts_linked} account${result.accounts_linked !== 1 ? "s" : ""} linked`,
+          );
+          await refresh();
+        } catch (e) {
+          toast.error(e instanceof Error ? e.message : String(e));
+        } finally {
+          setBusy(false);
+        }
+      },
+      onExit: () => {},
+    });
+    handler.open();
   };
 
   const handleSyncAll = async () => {
@@ -168,14 +254,40 @@ export function AccountsView() {
             <Button onClick={handleSyncAll} disabled={busy || accounts.length === 0}>
               <RefreshCw className={"w-4 h-4 " + (busy ? "animate-spin" : "")} /> Sync all
             </Button>
-            <Button
-              variant="primary"
-              onClick={() => void handleConnect()}
-              disabled={busy || !tellerConfigured}
-              title={!tellerConfigured ? "TELLER_APPLICATION_ID is not configured" : undefined}
-            >
-              <Plus className="w-4 h-4" /> Connect a bank
-            </Button>
+            {tellerConfigured && (
+              <Button
+                variant="primary"
+                onClick={() => void handleTellerConnect()}
+                disabled={busy}
+              >
+                <Plus className="w-4 h-4" /> Connect bank
+              </Button>
+            )}
+            {plaidConfigured && plaidInstitutions.length > 0 && (
+              <div className="relative">
+                <Button
+                  variant="primary"
+                  onClick={() => setShowPlaidPicker(p => !p)}
+                  disabled={busy}
+                >
+                  <Plus className="w-4 h-4" /> Connect Venmo / CU
+                  <ChevronDown className="w-3 h-3 ml-0.5" />
+                </Button>
+                {showPlaidPicker && (
+                  <div className="absolute right-0 top-full mt-1 z-20 bg-bg-surface border border-border rounded-lg shadow-lg py-1 min-w-[200px]">
+                    {plaidInstitutions.map((inst) => (
+                      <button
+                        key={inst.key}
+                        className="w-full text-left px-4 py-2 text-sm text-text-primary hover:bg-bg-elevated transition-colors"
+                        onClick={() => void handlePlaidConnect(inst.key, inst.name)}
+                      >
+                        {inst.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </>
         }
       />
@@ -196,13 +308,23 @@ export function AccountsView() {
         <Card className="p-10 text-center">
           <Building2 className="w-10 h-10 mx-auto mb-3 text-text-subtle" />
           <p className="text-text-muted text-sm mb-4">No accounts connected yet.</p>
-          <Button
-            variant="primary"
-            onClick={() => void handleConnect()}
-            disabled={busy || !tellerConfigured}
-          >
-            <Plus className="w-4 h-4" /> Connect your first bank
-          </Button>
+          <div className="flex gap-2 justify-center flex-wrap">
+            {tellerConfigured && (
+              <Button variant="primary" onClick={() => void handleTellerConnect()} disabled={busy}>
+                <Plus className="w-4 h-4" /> Connect bank
+              </Button>
+            )}
+            {plaidConfigured && plaidInstitutions.map((inst) => (
+              <Button
+                key={inst.key}
+                variant="primary"
+                onClick={() => void handlePlaidConnect(inst.key, inst.name)}
+                disabled={busy}
+              >
+                <Plus className="w-4 h-4" /> Connect {inst.name}
+              </Button>
+            ))}
+          </div>
         </Card>
       )}
 

@@ -6,9 +6,9 @@ import {
   Button, Card, Badge, Input, Select, Drawer, PageHeader, EmptyState, fmtUsd, humanizeSlug,
 } from "../ui";
 import { useReviewQueue } from "../../hooks/useReviewQueue";
-import { resolveReview, bulkResolveReview, runClassification, createRule, applyRuleRetroactive, type RuleInput } from "../../api";
+import { resolveReview, bulkResolveReview, runClassification, createRule, applyRuleRetroactive, reclassifyWithAI, type RuleInput } from "../../api";
 import type { ReviewItem, ReviewStatus, ResolveAction, RuleMatchField, RuleMatchOperator, EntitySlug } from "../../types";
-import { ENTITY_OPTIONS, TAX_OPTIONS, TRANSFER_OPTION, type OptionCategory } from "../../catalog";
+import { ENTITY_OPTIONS, TRANSFER_OPTION, type OptionCategory } from "../../catalog";
 import { useCategoryOptions } from "../../hooks/useCategoryOptions";
 
 const FIELD_OPTIONS: { value: RuleMatchField; label: string }[] = [
@@ -376,10 +376,10 @@ export function ReviewQueueView() {
           </div>
         </div>
         <div className="flex items-end gap-2 mt-3 flex-wrap">
-          <Button variant="success" disabled={status !== "pending" || busy || (!selectedAllFiltered && selectedCount === 0)} onClick={() => onBulk("accept")}>
+          <Button variant="success" disabled={status !== "pending" || busy || (!selectedAllFiltered && selectedCount === 0)} onClick={() => onBulk("accept", selectedAllFiltered)}>
             Accept selected
           </Button>
-          <Button disabled={(status !== "resolved" && status !== "skipped") || busy || (!selectedAllFiltered && selectedCount === 0)} onClick={() => onBulk("reopen")}>
+          <Button disabled={(status !== "resolved" && status !== "skipped") || busy || (!selectedAllFiltered && selectedCount === 0)} onClick={() => onBulk("reopen", selectedAllFiltered)}>
             Reopen selected
           </Button>
           <div className="h-6 border-l border-border mx-1" />
@@ -400,7 +400,7 @@ export function ReviewQueueView() {
               ))}
             </Select>
           </div>
-          <Button variant="primary" disabled={status !== "pending" || busy || !bulkCategory || (!selectedAllFiltered && selectedCount === 0)} onClick={() => onBulk("classify")}>
+          <Button variant="primary" disabled={status !== "pending" || busy || !bulkCategory || (!selectedAllFiltered && selectedCount === 0)} onClick={() => onBulk("classify", selectedAllFiltered)}>
             Reclassify selected
           </Button>
         </div>
@@ -466,12 +466,31 @@ export function ReviewQueueView() {
         taxOptions={taxOptions}
         onClose={() => setOpenItem(null)}
         onResolve={onResolveOne}
+        onReclassify={async (txId) => {
+          const item = openItem;
+          try {
+            const result = await reclassifyWithAI(txId);
+            if (result._debug) {
+              console.group(`[CFO classify] ${item?.merchant_name ?? item?.description ?? txId}`);
+              console.log('Pass:', result._debug.pass);
+              console.log('Prompt (user message):\n', result._debug.userMessage);
+              console.log('Raw API response:', result._debug.rawResponse);
+              console.groupEnd();
+            }
+            console.log('[CFO classify] result:', result);
+            toast.success(`Reclassified via ${result.method}`);
+            void refresh();
+          } catch (e) {
+            toast.error(e instanceof Error ? e.message : String(e));
+          }
+        }}
         busy={busy}
       />
 
       {pendingRuleProposal && (
         <ProposeRuleModal
           proposal={pendingRuleProposal}
+          taxOptions={taxOptions}
           onDismiss={() => setPendingRuleProposal(null)}
           onSaved={() => { setPendingRuleProposal(null); void refresh(); }}
         />
@@ -534,9 +553,10 @@ function ReviewRow({
 // ── Propose-rule modal ───────────────────────────────────────────────────────
 
 function ProposeRuleModal({
-  proposal, onDismiss, onSaved,
+  proposal, taxOptions, onDismiss, onSaved,
 }: {
   proposal: RuleProposal;
+  taxOptions: OptionCategory[];
   onDismiss(): void;
   onSaved(): void;
 }) {
@@ -629,12 +649,12 @@ function ProposeRuleModal({
                 <option value="">— none —</option>
                 <option value={TRANSFER_OPTION.slug}>{TRANSFER_OPTION.label}</option>
                 <optgroup label="Schedule C">
-                  {TAX_OPTIONS.filter((c) => c.group === "schedule_c").map(({ slug, label }) => (
+                  {taxOptions.filter((c) => c.group === "schedule_c").map(({ slug, label }) => (
                     <option key={slug} value={slug}>{label}</option>
                   ))}
                 </optgroup>
                 <optgroup label="Schedule E">
-                  {TAX_OPTIONS.filter((c) => c.group === "schedule_e").map(({ slug, label }) => (
+                  {taxOptions.filter((c) => c.group === "schedule_e").map(({ slug, label }) => (
                     <option key={slug} value={slug}>{label}</option>
                   ))}
                 </optgroup>
@@ -670,18 +690,20 @@ function ProposeRuleModal({
 // ── Drawer ──────────────────────────────────────────────────────────────────
 
 function ReviewDrawer({
-  item, budgetOptions, taxOptions, onClose, onResolve, busy,
+  item, budgetOptions, taxOptions, onClose, onResolve, onReclassify, busy,
 }: {
   item: ReviewItem | null;
   budgetOptions: OptionCategory[];
   taxOptions: OptionCategory[];
   onClose(): void;
-  onResolve(id: string, input: { action: ResolveAction; entity?: string; category_tax?: string; category_budget?: string }): Promise<void>;
+  onResolve(id: string, input: { action: ResolveAction; entity?: string; category_tax?: string; category_budget?: string; cut_status?: "flagged" | "complete" | null }): Promise<void>;
+  onReclassify(txId: string): Promise<void>;
   busy: boolean;
 }) {
   const [entity, setEntity] = useState(item?.suggested_entity ?? item?.current_entity ?? "elyse_coaching");
   const [categoryTax, setCategoryTax] = useState(item?.suggested_category_tax ?? item?.current_category_tax ?? "");
   const [categoryBudget, setCategoryBudget] = useState(item?.suggested_category_budget ?? "");
+  const [cutStatus, setCutStatus] = useState<"flagged" | "complete" | "">("");
 
   // Sync state when a different item is opened.
   useMemo(() => {
@@ -689,6 +711,7 @@ function ReviewDrawer({
       setEntity(item.suggested_entity ?? item.current_entity ?? "elyse_coaching");
       setCategoryTax(item.suggested_category_tax ?? item.current_category_tax ?? "");
       setCategoryBudget(item.suggested_category_budget ?? "");
+      setCutStatus("");
     }
   }, [item?.id]);
 
@@ -711,6 +734,14 @@ function ReviewDrawer({
             >
               <ArrowLeftRight className="w-4 h-4" /> Transfer
             </Button>
+            <Button
+              variant="ghost"
+              onClick={() => void onReclassify(item.transaction_id)}
+              disabled={busy}
+              title="Re-run AI classifier (check browser console for prompt + response)"
+            >
+              <Sparkles className="w-4 h-4" /> Reclassify
+            </Button>
             <Button variant="ghost" onClick={onClose}>Cancel</Button>
             <Button
               variant="success"
@@ -722,8 +753,14 @@ function ReviewDrawer({
             </Button>
             <Button
               variant="primary"
-              onClick={() => void onResolve(item.id, { action: "classify", entity, category_tax: categoryTax || undefined, category_budget: categoryBudget || undefined })}
-              disabled={busy || !categoryTax}
+              onClick={() => void onResolve(item.id, {
+                action: "classify",
+                entity,
+                category_tax: categoryTax || undefined,
+                category_budget: categoryBudget || undefined,
+                cut_status: cutStatus || null,
+              })}
+              disabled={busy}
             >
               Apply override
             </Button>
@@ -778,6 +815,19 @@ function ReviewDrawer({
             {budgetOptions.map(({ slug, label }) => (
               <option key={slug} value={slug}>{label}</option>
             ))}
+          </Select>
+        </div>
+        <div>
+          <label className="block text-xs text-text-muted mb-1">Cut tracking</label>
+          <Select
+            value={cutStatus}
+            onChange={(e) => setCutStatus(e.target.value as "flagged" | "complete" | "")}
+            className="w-full"
+            title="Mark this expense for elimination — applied when you click Apply override."
+          >
+            <option value="">Unflagged</option>
+            <option value="flagged">Flag to cut</option>
+            <option value="complete">Cut complete</option>
           </Select>
         </div>
       </div>

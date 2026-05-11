@@ -47,9 +47,12 @@ bucket_name = "cfo-files"
 [vars]
 DEFAULT_BANK_PROVIDER = "teller"
 TELLER_ENV = "development"
+PLAID_ENV = "sandbox"
 
 # Secrets — re-enter via `wrangler secret put`:
 #   TELLER_APPLICATION_ID
+#   PLAID_CLIENT_ID          (Plaid API client ID — from dashboard.plaid.com)
+#   PLAID_SECRET             (Plaid API secret — use sandbox secret for dev)
 #   ANTHROPIC_API_KEY
 #   MCP_HTTP_KEY           (for /mcp auth from Claude custom tool)
 #   WEB_UI_PASSWORD        (login password for the React SPA at /)

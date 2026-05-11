@@ -27,6 +27,10 @@ export interface InterviewItem {
   review_id: string;
   transaction_id: string;
   reason: string;
+  /** Why the AI held this for review and what signals it used. */
+  review_details: string | null;
+  /** Actionable hint about what information or decision would resolve this item. */
+  needs_input: string | null;
   transaction: {
     posted_date: string;
     amount: number;
@@ -100,6 +104,8 @@ export async function getNextInterviewItem(
     `SELECT rq.id AS review_id,
             rq.transaction_id,
             rq.reason,
+            rq.details AS review_details,
+            rq.needs_input,
             t.posted_date, t.amount, t.merchant_name, t.description,
             a.name AS account_name, a.owner_tag AS account_owner,
             c.entity AS current_entity,
@@ -118,6 +124,8 @@ export async function getNextInterviewItem(
     review_id: string;
     transaction_id: string;
     reason: string;
+    review_details: string | null;
+    needs_input: string | null;
     posted_date: string;
     amount: number;
     merchant_name: string | null;
@@ -215,6 +223,8 @@ export async function getNextInterviewItem(
     review_id: row.review_id,
     transaction_id: row.transaction_id,
     reason: row.reason,
+    review_details: row.review_details,
+    needs_input: row.needs_input,
     transaction: {
       posted_date: row.posted_date,
       amount: row.amount,

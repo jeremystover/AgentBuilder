@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeftRight, ChevronDown, ChevronUp, Lock, RefreshCw, Trash2 } from "lucide-react";
+import { ArrowLeftRight, ChevronDown, ChevronUp, Lock, RefreshCw, Sparkles, Trash2 } from "lucide-react";
 import { txAmountColor } from "../../utils/txColor";
 import { toast } from "sonner";
 import {
@@ -7,9 +7,9 @@ import {
 } from "../ui";
 import { useTransactions } from "../../hooks/useTransactions";
 import { useAccounts } from "../../hooks/useAccounts";
-import { classifyTransaction, deleteTransaction, getTransaction } from "../../api";
+import { classifyTransaction, deleteTransaction, getTransaction, reclassifyWithAI } from "../../api";
 import type {
-  EntitySlug, Transaction, TransactionDetail,
+  EntitySlug, Transaction, TransactionDetail, CutStatus, ExpenseType,
 } from "../../types";
 import { ENTITY_OPTIONS, type OptionCategory } from "../../catalog";
 import { useCategoryOptions } from "../../hooks/useCategoryOptions";
@@ -43,6 +43,7 @@ interface FiltersState {
   category_tax: string;
   review_only: boolean;
   unclassified_only: boolean;
+  cut_status: "" | "flagged" | "complete" | "any" | "none";
 }
 
 const EMPTY_FILTERS: FiltersState = {
@@ -53,6 +54,7 @@ const EMPTY_FILTERS: FiltersState = {
   category_tax: "",
   review_only: false,
   unclassified_only: false,
+  cut_status: "",
 };
 
 export function TransactionsView() {
@@ -77,6 +79,7 @@ export function TransactionsView() {
     category_tax: filters.category_tax || undefined,
     review_required: filters.review_only ? true : undefined,
     unclassified: filters.unclassified_only || undefined,
+    cut_status: filters.cut_status || undefined,
     q: debouncedSearch || undefined,
     sort_by: sortBy,
     sort_dir: sortDir,
@@ -113,7 +116,8 @@ export function TransactionsView() {
 
   const hasFilters =
     filters.date_from || filters.date_to || filters.account_id || filters.entity ||
-    filters.category_tax || filters.review_only || filters.unclassified_only || search;
+    filters.category_tax || filters.review_only || filters.unclassified_only ||
+    filters.cut_status || search;
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
@@ -208,7 +212,7 @@ export function TransactionsView() {
             />
           </div>
         </div>
-        <div className="flex items-center gap-4 mt-3 text-xs text-text-muted">
+        <div className="flex items-center gap-4 mt-3 text-xs text-text-muted flex-wrap">
           <label className="flex items-center gap-1.5 cursor-pointer">
             <input
               type="checkbox"
@@ -224,6 +228,20 @@ export function TransactionsView() {
               onChange={(e) => updateFilter("unclassified_only", e.target.checked)}
             />
             Unclassified
+          </label>
+          <label className="flex items-center gap-1.5">
+            <span>Cuts:</span>
+            <Select
+              value={filters.cut_status}
+              onChange={(e) => updateFilter("cut_status", e.target.value as FiltersState["cut_status"])}
+              className="text-xs py-1"
+            >
+              <option value="">All</option>
+              <option value="any">Any flag</option>
+              <option value="flagged">Flagged to cut</option>
+              <option value="complete">Cut complete</option>
+              <option value="none">Unflagged only</option>
+            </Select>
           </label>
         </div>
       </Card>
@@ -300,6 +318,8 @@ function TransactionRow({ tx, onOpen }: { tx: Transaction; onOpen(): void }) {
         <div className="text-text-primary truncate flex items-center gap-1.5">
           {tx.is_locked ? <Lock className="w-3 h-3 text-text-subtle flex-none" /> : null}
           {tx.merchant_name ?? tx.description ?? "—"}
+          {tx.cut_status === "flagged" && <Badge tone="warn">Flagged to cut</Badge>}
+          {tx.cut_status === "complete" && <Badge tone="ok">Cut</Badge>}
         </div>
         {tx.description && tx.merchant_name && tx.description !== tx.merchant_name && (
           <div className="text-xs text-text-subtle truncate">{tx.description}</div>
@@ -311,7 +331,14 @@ function TransactionRow({ tx, onOpen }: { tx: Transaction; onOpen(): void }) {
         {tx.entity ? <Badge tone="info">{humanizeSlug(tx.entity)}</Badge> : <span className="text-text-subtle">—</span>}
       </td>
       <td>
-        {tx.category_tax ? <span className="text-text-primary">{humanizeSlug(tx.category_tax)}</span> : <span className="text-text-subtle">—</span>}
+        {tx.category_tax || tx.category_budget ? (
+          <div className="flex flex-col gap-0.5">
+            {tx.category_tax && <span className="text-text-primary">{humanizeSlug(tx.category_tax)}</span>}
+            {tx.category_budget && <span className="text-text-muted italic text-xs">{humanizeSlug(tx.category_budget)}</span>}
+          </div>
+        ) : (
+          <span className="text-text-subtle">—</span>
+        )}
       </td>
       <td className="text-xs text-text-muted">{tx.method ?? "—"}</td>
       <td className="pr-4">
@@ -339,6 +366,8 @@ function TransactionDrawer({
   const [entity, setEntity] = useState<EntitySlug>("family_personal");
   const [categoryTax, setCategoryTax] = useState("");
   const [categoryBudget, setCategoryBudget] = useState("");
+  const [expenseType, setExpenseType] = useState<ExpenseType | null>(null);
+  const [cutStatus, setCutStatus] = useState<CutStatus | null>(null);
 
   useEffect(() => {
     if (!txId) {
@@ -355,6 +384,8 @@ function TransactionDrawer({
         setEntity((d.transaction.entity ?? "family_personal") as EntitySlug);
         setCategoryTax(d.transaction.category_tax ?? "");
         setCategoryBudget(d.transaction.category_budget ?? "");
+        setExpenseType(d.transaction.expense_type ?? null);
+        setCutStatus(d.transaction.cut_status ?? null);
       } catch (e) {
         if (!cancelled) toast.error(e instanceof Error ? e.message : String(e));
       } finally {
@@ -365,13 +396,15 @@ function TransactionDrawer({
   }, [txId]);
 
   const handleSave = async () => {
-    if (!detail || !categoryTax) return;
+    if (!detail) return;
     setBusy(true);
     try {
       await classifyTransaction(detail.transaction.id, {
         entity,
-        category_tax: categoryTax,
+        category_tax: categoryTax || undefined,
         category_budget: categoryBudget || undefined,
+        expense_type: expenseType,
+        cut_status: cutStatus,
       });
       toast.success("Reclassified");
       await onChanged();
@@ -414,6 +447,42 @@ function TransactionDrawer({
     }
   };
 
+  const handleReclassify = async () => {
+    if (!detail) return;
+    setBusy(true);
+    try {
+      const result = await reclassifyWithAI(detail.transaction.id);
+      // Console output for debugging
+      if (result.method === 'rule') {
+        console.log(
+          `[CFO classify] Rule: "${result.rule}" → ${result.entity ?? '—'} / ${result.category_tax ?? '—'}` +
+          (result.category_budget ? ` (budget: ${result.category_budget})` : ''),
+        );
+      } else if (result._debug) {
+        console.group(`[CFO classify] ${detail.transaction.merchant_name ?? detail.transaction.description}`);
+        console.log('Pass:', result._debug.pass);
+        console.log('Prompt (user message):\n', result._debug.userMessage);
+        console.log('Raw API response:', result._debug.rawResponse);
+        console.groupEnd();
+      }
+      // Reload form fields before refreshing the parent list — this ensures
+      // no re-render from onChanged() can run after our state updates.
+      const d = await getTransaction(detail.transaction.id);
+      setDetail(d);
+      setEntity((d.transaction.entity ?? 'family_personal') as EntitySlug);
+      setCategoryTax(d.transaction.category_tax ?? '');
+      setCategoryBudget(d.transaction.category_budget ?? '');
+      setExpenseType(d.transaction.expense_type ?? null);
+      setCutStatus(d.transaction.cut_status ?? null);
+      toast.success(`Reclassified via ${result.method}`);
+      void onChanged();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (!txId) return null;
 
   const tx = detail?.transaction;
@@ -443,11 +512,19 @@ function TransactionDrawer({
             >
               <ArrowLeftRight className="w-4 h-4" /> Transfer
             </Button>
+            <Button
+              variant="ghost"
+              onClick={() => void handleReclassify()}
+              disabled={busy || !tx || locked}
+              title="Re-run AI classifier on this transaction (check browser console for prompt + response)"
+            >
+              <Sparkles className="w-4 h-4" /> Reclassify
+            </Button>
             <Button variant="ghost" onClick={onClose}>Cancel</Button>
             <Button
               variant="primary"
               onClick={() => void handleSave()}
-              disabled={busy || !tx || locked || !categoryTax}
+              disabled={busy || !tx || locked}
               title={locked ? "Locked transactions cannot be reclassified" : undefined}
             >
               Save
@@ -532,6 +609,31 @@ function TransactionDrawer({
                   {budgetOptions.map(({ slug, label }) => (
                     <option key={slug} value={slug}>{label}</option>
                   ))}
+                </Select>
+              </div>
+              <div>
+                <label className="block text-xs text-text-muted mb-1">Frequency</label>
+                <Select
+                  value={expenseType ?? ""}
+                  onChange={(e) => setExpenseType((e.target.value || null) as ExpenseType | null)}
+                  className="w-full"
+                  disabled={locked}
+                >
+                  <option value="">Recurring (default)</option>
+                  <option value="one_time">One-time (exclude from forecast)</option>
+                </Select>
+              </div>
+              <div>
+                <label className="block text-xs text-text-muted mb-1">Cut tracking</label>
+                <Select
+                  value={cutStatus ?? ""}
+                  onChange={(e) => setCutStatus((e.target.value || null) as CutStatus | null)}
+                  className="w-full"
+                  disabled={locked}
+                >
+                  <option value="">Unflagged</option>
+                  <option value="flagged">Flag to cut</option>
+                  <option value="complete">Cut complete</option>
                 </Select>
               </div>
             </div>

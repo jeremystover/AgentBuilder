@@ -51,15 +51,20 @@ function buildNeedsInputHint(tx: Transaction, reasonCodes: string[] | undefined,
   const hints: string[] = [];
   const description = (tx.description ?? '').trim();
   const merchant = (tx.merchant_name ?? '').trim();
+  const codes = reasonCodes ?? [];
 
   if (!merchant) hints.push('merchant name');
   if (!description || description.length < 12) hints.push('a more specific transaction description');
-  if ((reasonCodes ?? []).some(code => code.includes('split'))) hints.push('whether this should be split across business and personal use');
-  if ((reasonCodes ?? []).some(code => code.includes('ambiguous'))) hints.push('the intended business purpose');
+  if (codes.some(code => code.includes('split'))) hints.push('whether this should be split across business and personal use');
+  if (codes.some(code => code.includes('ambiguous'))) hints.push('the intended business purpose');
   if (error) hints.push('a retry after the classifier service error is resolved');
 
   if (!hints.length) {
-    return 'A manual classification for this merchant, or a short note about its purpose, would help future auto-classification.';
+    // Merchant and description are present — the uncertainty is about entity, not missing info.
+    if (codes.includes('geographic_signal_vt')) {
+      return 'The description contains a Vermont location signal. Please confirm whether this is a Whitford House / property expense (airbnb_activity) or a personal expense (family_personal).';
+    }
+    return 'Please confirm which entity this expense belongs to — the merchant is recognizable but the correct classification is uncertain.';
   }
 
   return `Helpful missing context: ${hints.join(', ')}.`;
@@ -324,13 +329,12 @@ export async function handleReapplyAccountRules(request: Request, env: Env): Pro
   ).bind(userId).all<Rule>();
   const rules = rulesResult.results;
 
-  // Transactions from tagged accounts where classification is not locked/manual.
-  // account_owner_tag is included so we can fall back to the account entity when
-  // no merchant/description rule matches — the expected behaviour after a direct
-  // D1 owner_tag assignment that bypassed handleUpdateAccount (which would have
-  // created the account_id rule automatically).
+  // Select only the columns needed by applyRules + the write path.
+  // Avoid t.* to keep the result payload small.
   const rows = await env.DB.prepare(
-    `SELECT t.*, a.owner_tag AS account_owner_tag, c.id AS class_id, c.method, c.is_locked
+    `SELECT t.id, t.account_id, t.description, t.merchant_name, t.amount,
+            a.owner_tag AS account_owner_tag,
+            c.id AS class_id
      FROM transactions t
      JOIN accounts a ON a.id = t.account_id
      LEFT JOIN classifications c ON c.transaction_id = t.id
@@ -339,37 +343,116 @@ export async function handleReapplyAccountRules(request: Request, env: Env): Pro
        AND t.is_pending = 0
        AND (c.id IS NULL OR (c.is_locked = 0 AND c.method != 'manual'))
      ORDER BY t.posted_date DESC`,
-  ).bind(userId).all<Transaction & { account_owner_tag: string; class_id: string | null; method: string | null; is_locked: number | null }>();
+  ).bind(userId).all<Pick<Transaction, 'id' | 'account_id' | 'description' | 'merchant_name' | 'amount'> & {
+    account_owner_tag: string;
+    class_id: string | null;
+  }>();
 
-  let reclassified = 0;
-
+  // Build all prepared statements in memory then execute in batches.
+  // One classify INSERT + one review_queue UPDATE per transaction.
+  const stmts: D1PreparedStatement[] = [];
   for (const tx of rows.results) {
-    const ruleMatch = applyRules(tx as Transaction, rules);
-
-    // Use the matched rule's entity, or fall back to the account's owner_tag so
-    // that every transaction from a tagged account gets classified even when no
-    // merchant/description rule matches.
+    const ruleMatch = applyRules(tx as unknown as Transaction, rules);
     const entity = ruleMatch?.entity ?? tx.account_owner_tag;
     const categoryTax = ruleMatch?.category_tax ?? null;
     const categoryBudget = ruleMatch?.category_budget ?? null;
     const reasonCode = ruleMatch ? `rule:${ruleMatch.rule_name}` : `account_tag:${tx.account_owner_tag}`;
+    const classId = tx.class_id ?? crypto.randomUUID();
+
+    stmts.push(
+      env.DB.prepare(
+        `INSERT OR REPLACE INTO classifications
+           (id, transaction_id, entity, category_tax, category_budget, confidence, method, reason_codes, review_required, classified_by)
+         VALUES (?, ?, ?, ?, ?, 1.0, 'rule', ?, 0, 'system')`,
+      ).bind(classId, tx.id, entity, categoryTax, categoryBudget, JSON.stringify([reasonCode])),
+    );
+    stmts.push(
+      env.DB.prepare(
+        `UPDATE review_queue SET status='resolved', resolved_by='system', resolved_at=datetime('now')
+         WHERE transaction_id = ? AND status = 'pending'`,
+      ).bind(tx.id),
+    );
+  }
+
+  // D1 batch limit is 100 statements; chunk conservatively at 100.
+  for (let i = 0; i < stmts.length; i += 100) {
+    await env.DB.batch(stmts.slice(i, i + 100));
+  }
+
+  return jsonOk({ total_eligible: rows.results.length, reclassified: rows.results.length });
+}
+
+// ── POST /classify/reapply-all-rules ─────────────────────────────────────────
+// Runs built-in TRANSFER_PATTERNS + DB rules against every non-locked
+// transaction regardless of account tag. Classifies matches in place and marks
+// them resolved in the review queue. Leaves non-matches untouched so a
+// subsequent /classify/run call can send them to AI.
+export async function handleReapplyAllRules(request: Request, env: Env): Promise<Response> {
+  const userId = getUserId(request);
+
+  const rulesResult = await env.DB.prepare(
+    'SELECT * FROM rules WHERE user_id = ? AND is_active = 1 ORDER BY priority DESC',
+  ).bind(userId).all<Rule>();
+  const rules = rulesResult.results;
+
+  const rows = await env.DB.prepare(
+    `SELECT t.*, c.id AS class_id
+     FROM transactions t
+     LEFT JOIN classifications c ON c.transaction_id = t.id
+     WHERE t.user_id = ?
+       AND t.is_pending = 0
+       AND (c.id IS NULL OR c.is_locked = 0)
+     ORDER BY t.posted_date DESC`,
+  ).bind(userId).all<Transaction & { class_id: string | null }>();
+
+  let ruleHits = 0;
+  let skipped = 0;
+  const BATCH_SIZE = 50;
+  let batch: D1PreparedStatement[] = [];
+
+  const flush = async () => {
+    if (batch.length > 0) {
+      await env.DB.batch(batch);
+      batch = [];
+    }
+  };
+
+  for (const tx of rows.results) {
+    const ruleMatch = applyRules(tx as Transaction, rules);
+    if (!ruleMatch) {
+      skipped++;
+      continue;
+    }
 
     const classId = tx.class_id ?? crypto.randomUUID();
-    await env.DB.prepare(
-      `INSERT OR REPLACE INTO classifications
-         (id, transaction_id, entity, category_tax, category_budget, confidence, method, reason_codes, review_required, classified_by)
-       VALUES (?, ?, ?, ?, ?, 1.0, 'rule', ?, 0, 'system')`,
-    ).bind(
-      classId, tx.id, entity, categoryTax, categoryBudget,
-      JSON.stringify([reasonCode]),
-    ).run();
-    await resolveReviewQueueItem(env, tx.id, 'system');
-    reclassified++;
+    batch.push(
+      env.DB.prepare(
+        `INSERT OR REPLACE INTO classifications
+           (id, transaction_id, entity, category_tax, category_budget, confidence, method, reason_codes, review_required, classified_by)
+         VALUES (?, ?, ?, ?, ?, 1.0, 'rule', ?, 0, 'system')`,
+      ).bind(
+        classId, tx.id,
+        ruleMatch.entity, ruleMatch.category_tax, ruleMatch.category_budget,
+        JSON.stringify([`rule:${ruleMatch.rule_name}`]),
+      ),
+    );
+    batch.push(
+      env.DB.prepare(
+        `UPDATE review_queue
+         SET status = 'resolved', resolved_by = 'system', resolved_at = datetime('now')
+         WHERE transaction_id = ? AND status = 'pending'`,
+      ).bind(tx.id),
+    );
+    ruleHits++;
+
+    if (batch.length >= BATCH_SIZE) await flush();
   }
+  await flush();
 
   return jsonOk({
     total_eligible: rows.results.length,
-    reclassified,
+    classified_by_rules: ruleHits,
+    unmatched_for_ai: skipped,
   });
 }
 
@@ -406,7 +489,13 @@ export async function handleClassifySingle(request: Request, env: Env, txId: str
       crypto.randomUUID(), txId, ruleMatch.entity, ruleMatch.category_tax, ruleMatch.category_budget,
       JSON.stringify([`rule:${ruleMatch.rule_name}`]),
     ).run();
-    return jsonOk({ method: 'rule', rule: ruleMatch.rule_name });
+    return jsonOk({
+      method: 'rule',
+      rule: ruleMatch.rule_name,
+      entity: ruleMatch.entity,
+      category_tax: ruleMatch.category_tax,
+      category_budget: ruleMatch.category_budget,
+    });
   }
 
   const { classifyTransaction } = await import('../lib/claude');
@@ -426,25 +515,27 @@ export async function handleClassifySingle(request: Request, env: Env, txId: str
     appleContext,
   );
 
+  const { _debug, ...classification } = result;
+
   await env.DB.prepare(
     `INSERT OR REPLACE INTO classifications
        (id, transaction_id, entity, category_tax, category_budget, confidence, method, reason_codes, review_required, classified_by)
      VALUES (?, ?, ?, ?, ?, ?, 'ai', ?, ?, 'system')`,
   ).bind(
-    crypto.randomUUID(), txId, result.entity ?? null, result.category_tax, result.category_budget ?? null,
-    result.confidence, JSON.stringify(result.reason_codes), result.review_required ? 1 : 0,
+    crypto.randomUUID(), txId, classification.entity ?? null, classification.category_tax, classification.category_budget ?? null,
+    classification.confidence, JSON.stringify(classification.reason_codes), classification.review_required ? 1 : 0,
   ).run();
 
-  if (result.review_required) {
-    const reviewContext = buildReviewDetails(tx as Transaction, result);
+  if (classification.review_required) {
+    const reviewContext = buildReviewDetails(tx as Transaction, classification);
     await upsertReviewQueue(
       env,
       txId,
       userId,
       'low_confidence',
-      result.entity ?? null,
-      result.category_tax,
-      result.confidence,
+      classification.entity ?? null,
+      classification.category_tax,
+      classification.confidence,
       reviewContext.details,
       reviewContext.needsInput,
     );
@@ -452,5 +543,5 @@ export async function handleClassifySingle(request: Request, env: Env, txId: str
     await resolveReviewQueueItem(env, txId, 'system');
   }
 
-  return jsonOk({ method: 'ai', classification: result });
+  return jsonOk({ method: 'ai', classification, _debug });
 }

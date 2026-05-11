@@ -33,7 +33,7 @@ import { handleSetup } from './routes/setup';
 import { handleGetBankConfig, handleStartBankConnect, handleCompleteBankConnect, handleBankSync } from './routes/bank';
 import { handleListAccounts, handleUpdateAccount } from './routes/accounts';
 import { handleListTransactions, handleGetTransaction, handleDeleteTransaction, handleManualClassify, handleSplitTransaction } from './routes/transactions';
-import { handleRunClassification, handleClassifySingle, handleReapplyAccountRules } from './routes/classify';
+import { handleRunClassification, handleClassifySingle, handleReapplyAccountRules, handleReapplyAllRules } from './routes/classify';
 import { handleListReview, handleResolveReview, handleBulkResolveReview, handleNextReviewItem } from './routes/review';
 import { handleScheduleC, handleScheduleE, handleSummary, handleExport, handleSnapshot } from './routes/reports';
 import { handleListImports, handleDeleteAllImports, handleDeleteImport, handleCsvImport } from './routes/imports';
@@ -50,8 +50,10 @@ import {
   handleDeleteBudgetTarget,
   handleBudgetStatus,
   handleBudgetForecast,
+  handleBudgetCutsReport,
 } from './routes/budget';
 import { handleIncomeStatus, handleListIncomeTargets, handleUpsertIncomeTarget, handleDeleteIncomeTarget } from './routes/income';
+import { handleListTaxCategories, handleCreateTaxCategory, handleUpdateTaxCategory } from './routes/tax-categories';
 import { handlePnL, handlePnLAll, handlePnLTrend } from './routes/pnl';
 import {
   handleBookkeepingSession,
@@ -176,6 +178,7 @@ const ROUTES: Route[] = [
   // AI Classification
   { method: 'POST',   pattern: /^\/classify\/run$/,                      handler: (req, env) => handleRunClassification(req, env) },
   { method: 'POST',   pattern: /^\/classify\/reapply-account-rules$/,    handler: (req, env) => handleReapplyAccountRules(req, env) },
+  { method: 'POST',   pattern: /^\/classify\/reapply-all-rules$/,        handler: (req, env) => handleReapplyAllRules(req, env) },
   { method: 'POST',   pattern: /^\/classify\/transaction\/([^/]+)$/,     handler: (req, env, id) => handleClassifySingle(req, env, id) },
 
   // Review queue
@@ -199,6 +202,11 @@ const ROUTES: Route[] = [
   { method: 'POST',   pattern: /^\/imports\/amazon$/,                    handler: (req, env) => handleAmazonImport(req, env) },
   { method: 'POST',   pattern: /^\/imports\/tiller$/,                    handler: (req, env) => handleTillerImport(req, env) },
 
+  // Tax categories
+  { method: 'GET',    pattern: /^\/tax\/categories$/,                    handler: (req, env) => handleListTaxCategories(req, env) },
+  { method: 'POST',   pattern: /^\/tax\/categories$/,                    handler: (req, env) => handleCreateTaxCategory(req, env) },
+  { method: 'PATCH',  pattern: /^\/tax\/categories\/([^/]+)$/,           handler: (req, env, slug) => handleUpdateTaxCategory(req, env, slug) },
+
   // Budget
   { method: 'GET',    pattern: /^\/budget\/categories$/,                 handler: (req, env) => handleListBudgetCategories(req, env) },
   { method: 'POST',   pattern: /^\/budget\/categories$/,                 handler: (req, env) => handleCreateBudgetCategory(req, env) },
@@ -208,6 +216,7 @@ const ROUTES: Route[] = [
   { method: 'DELETE', pattern: /^\/budget\/targets\/([^/]+)$/,           handler: (req, env, id) => handleDeleteBudgetTarget(req, env, id) },
   { method: 'GET',    pattern: /^\/budget\/status$/,                     handler: (req, env) => handleBudgetStatus(req, env) },
   { method: 'GET',    pattern: /^\/budget\/forecast$/,                   handler: (req, env) => handleBudgetForecast(req, env) },
+  { method: 'GET',    pattern: /^\/budget\/cuts$/,                       handler: (req, env) => handleBudgetCutsReport(req, env) },
 
   // Income tracking
   { method: 'GET',    pattern: /^\/income\/status$/,                     handler: (req, env) => handleIncomeStatus(req, env) },
