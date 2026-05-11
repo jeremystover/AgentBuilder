@@ -291,6 +291,9 @@ export async function deleteTransaction(id: string): Promise<{ deleted: true; tr
 export interface ReclassifyResult {
   method: "rule" | "ai";
   rule?: string;
+  entity?: string;
+  category_tax?: string;
+  category_budget?: string | null;
   classification?: unknown;
   _debug?: {
     userMessage: string;
