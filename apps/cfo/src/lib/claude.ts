@@ -491,8 +491,6 @@ This section encodes the high-frequency vendors that appear in this household's 
 
 const SYSTEM_PROMPT_FULL = SYSTEM_PROMPT + CATEGORY_GUIDE;
 
-const SYSTEM_PROMPT_FULL = SYSTEM_PROMPT + CATEGORY_GUIDE;
-
 // Cached system block — identical across every call in a batch, so Anthropic
 // reuses the KV cache entry and charges only ~10% of normal input tokens after
 // the first call in a 5-minute window.
