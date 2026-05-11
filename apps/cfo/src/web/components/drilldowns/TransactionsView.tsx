@@ -473,7 +473,7 @@ function TransactionDrawer({
             <Button
               variant="primary"
               onClick={() => void handleSave()}
-              disabled={busy || !tx || locked || !categoryTax}
+              disabled={busy || !tx || locked}
               title={locked ? "Locked transactions cannot be reclassified" : undefined}
             >
               Save
