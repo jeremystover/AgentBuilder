@@ -50,6 +50,14 @@ const TRANSFER_PATTERNS: RegExp[] = [
   /\binternal\s+transfer\b/i,
   /\bdeposit\s+transfer\b/i,
   /\bsweep\b/i,
+  // Owner names appearing as merchant/payee = inter-account or family transfers
+  /^stover\s*j\b/i,
+  /^napolitano\s*e\b/i,
+  /^jeremy\s+s(ean)?\s+stover\b/i,
+  /^stover\s+jeremy/i,
+  // Fidelity MoneyLine = investment/brokerage ACH (not an operating expense)
+  /\bmoneyline\b/i,
+  /\bfid\s+bkg\b/i,                   // "FID BKG SVC LLC" = Fidelity brokerage
 ];
 
 function isBuiltInTransfer(transaction: Transaction): boolean {

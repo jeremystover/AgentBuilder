@@ -50,15 +50,20 @@ function buildNeedsInputHint(tx: Transaction, reasonCodes: string[] | undefined,
   const hints: string[] = [];
   const description = (tx.description ?? '').trim();
   const merchant = (tx.merchant_name ?? '').trim();
+  const codes = reasonCodes ?? [];
 
   if (!merchant) hints.push('merchant name');
   if (!description || description.length < 12) hints.push('a more specific transaction description');
-  if ((reasonCodes ?? []).some(code => code.includes('split'))) hints.push('whether this should be split across business and personal use');
-  if ((reasonCodes ?? []).some(code => code.includes('ambiguous'))) hints.push('the intended business purpose');
+  if (codes.some(code => code.includes('split'))) hints.push('whether this should be split across business and personal use');
+  if (codes.some(code => code.includes('ambiguous'))) hints.push('the intended business purpose');
   if (error) hints.push('a retry after the classifier service error is resolved');
 
   if (!hints.length) {
-    return 'A manual classification for this merchant, or a short note about its purpose, would help future auto-classification.';
+    // Merchant and description are present — the uncertainty is about entity, not missing info.
+    if (codes.includes('geographic_signal_vt')) {
+      return 'The description contains a Vermont location signal. Please confirm whether this is a Whitford House / property expense (airbnb_activity) or a personal expense (family_personal).';
+    }
+    return 'Please confirm which entity this expense belongs to — the merchant is recognizable but the correct classification is uncertain.';
   }
 
   return `Helpful missing context: ${hints.join(', ')}.`;
