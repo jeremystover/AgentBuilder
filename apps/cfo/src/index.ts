@@ -221,7 +221,7 @@ const ROUTES: Route[] = [
   { method: 'GET',    pattern: /^\/budget\/history$/,                    handler: (req, env) => handleBudgetHistory(req, env) },
 
   // AI Classification (backfill)
-  { method: 'POST',   pattern: /^\/classify\/backfill-family-budget$/,   handler: (req, env) => handleBackfillFamilyBudget(req, env, ctx) },
+  { method: 'POST',   pattern: /^\/classify\/backfill-family-budget$/,   handler: (req, env) => handleBackfillFamilyBudget(req, env, {} as ExecutionContext) },
 
   // Income tracking
   { method: 'GET',    pattern: /^\/income\/status$/,                     handler: (req, env) => handleIncomeStatus(req, env) },
@@ -404,6 +404,14 @@ export default {
         const message = err instanceof Error ? err.message : String(err);
         return Response.json({ jsonrpc: '2.0', id: msg.id ?? null, error: { code: -32000, message } });
       }
+    }
+
+    // Routes that need ctx must be handled before the ROUTES loop (ctx is
+    // not in scope inside the module-level ROUTES array).
+    if (path === '/classify/backfill-family-budget' && method === 'POST') {
+      const resp = await handleBackfillFamilyBudget(request, env, ctx);
+      resp.headers.set('Access-Control-Allow-Origin', '*');
+      return resp;
     }
 
     // REST routes — matched by method + regex
