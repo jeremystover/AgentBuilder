@@ -22,7 +22,7 @@ export async function matchAppleReceipt(
   receipt: AppleEmailReceipt,
 ): Promise<{ transactionId: string; score: number } | null> {
   const dateFrom = shiftIsoDate(receipt.date, -2);
-  const dateTo = shiftIsoDate(receipt.date, 2);
+  const dateTo = shiftIsoDate(receipt.date, 5); // receipts arrive day-of; cards post up to 4 days later
   const expectedAmount = -receipt.totalAmount; // expenses stored as negative
 
   const candidates = await env.DB.prepare(
@@ -49,7 +49,7 @@ export async function matchAppleReceipt(
     }
   }
 
-  return best && best.score >= 60 ? best : null;
+  return best && best.score >= 50 ? best : null;
 }
 
 export async function storeAppleMatch(
