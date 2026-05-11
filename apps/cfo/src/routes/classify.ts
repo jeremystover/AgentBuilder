@@ -309,60 +309,72 @@ export async function handleRunClassification(request: Request, env: Env): Promi
 // classification for accounts that have an owner_tag set. Useful after
 // assigning a business to an account for the first time.
 export async function handleReapplyAccountRules(request: Request, env: Env): Promise<Response> {
-  const userId = getUserId(request);
+  try {
+    const userId = getUserId(request);
 
-  const rulesResult = await env.DB.prepare(
-    'SELECT * FROM rules WHERE user_id = ? AND is_active = 1 ORDER BY priority DESC',
-  ).bind(userId).all<Rule>();
-  const rules = rulesResult.results;
+    const rulesResult = await env.DB.prepare(
+      'SELECT * FROM rules WHERE user_id = ? AND is_active = 1 ORDER BY priority DESC',
+    ).bind(userId).all<Rule>();
+    const rules = rulesResult.results;
 
-  // Transactions from tagged accounts where classification is not locked/manual.
-  // account_owner_tag is included so we can fall back to the account entity when
-  // no merchant/description rule matches — the expected behaviour after a direct
-  // D1 owner_tag assignment that bypassed handleUpdateAccount (which would have
-  // created the account_id rule automatically).
-  const rows = await env.DB.prepare(
-    `SELECT t.*, a.owner_tag AS account_owner_tag, c.id AS class_id, c.method, c.is_locked
-     FROM transactions t
-     JOIN accounts a ON a.id = t.account_id
-     LEFT JOIN classifications c ON c.transaction_id = t.id
-     WHERE t.user_id = ?
-       AND a.owner_tag IS NOT NULL
-       AND t.is_pending = 0
-       AND (c.id IS NULL OR (c.is_locked = 0 AND c.method != 'manual'))
-     ORDER BY t.posted_date DESC`,
-  ).bind(userId).all<Transaction & { account_owner_tag: string; class_id: string | null; method: string | null; is_locked: number | null }>();
+    // Transactions from tagged accounts where classification is not locked/manual.
+    // account_owner_tag is included so we can fall back to the account entity when
+    // no merchant/description rule matches — the expected behaviour after a direct
+    // D1 owner_tag assignment that bypassed handleUpdateAccount (which would have
+    // created the account_id rule automatically).
+    const rows = await env.DB.prepare(
+      `SELECT t.*, a.owner_tag AS account_owner_tag, c.id AS class_id, c.method, c.is_locked
+       FROM transactions t
+       JOIN accounts a ON a.id = t.account_id
+       LEFT JOIN classifications c ON c.transaction_id = t.id
+       WHERE t.user_id = ?
+         AND a.owner_tag IS NOT NULL
+         AND t.is_pending = 0
+         AND (c.id IS NULL OR (c.is_locked = 0 AND c.method != 'manual'))
+       ORDER BY t.posted_date DESC`,
+    ).bind(userId).all<Transaction & { account_owner_tag: string; class_id: string | null; method: string | null; is_locked: number | null }>();
 
-  let reclassified = 0;
+    let reclassified = 0;
+    let lastTxId = '(none)';
+    let lastStep = 'query';
 
-  for (const tx of rows.results) {
-    const ruleMatch = applyRules(tx as Transaction, rules);
+    for (const tx of rows.results) {
+      lastTxId = tx.id;
+      lastStep = 'applyRules';
+      const ruleMatch = applyRules(tx as Transaction, rules);
 
-    // Use the matched rule's entity, or fall back to the account's owner_tag so
-    // that every transaction from a tagged account gets classified even when no
-    // merchant/description rule matches.
-    const entity = ruleMatch?.entity ?? tx.account_owner_tag;
-    const categoryTax = ruleMatch?.category_tax ?? null;
-    const categoryBudget = ruleMatch?.category_budget ?? null;
-    const reasonCode = ruleMatch ? `rule:${ruleMatch.rule_name}` : `account_tag:${tx.account_owner_tag}`;
+      // Use the matched rule's entity, or fall back to the account's owner_tag so
+      // that every transaction from a tagged account gets classified even when no
+      // merchant/description rule matches.
+      const entity = ruleMatch?.entity ?? tx.account_owner_tag;
+      const categoryTax = ruleMatch?.category_tax ?? null;
+      const categoryBudget = ruleMatch?.category_budget ?? null;
+      const reasonCode = ruleMatch ? `rule:${ruleMatch.rule_name}` : `account_tag:${tx.account_owner_tag}`;
 
-    const classId = tx.class_id ?? crypto.randomUUID();
-    await env.DB.prepare(
-      `INSERT OR REPLACE INTO classifications
-         (id, transaction_id, entity, category_tax, category_budget, confidence, method, reason_codes, review_required, classified_by)
-       VALUES (?, ?, ?, ?, ?, 1.0, 'rule', ?, 0, 'system')`,
-    ).bind(
-      classId, tx.id, entity, categoryTax, categoryBudget,
-      JSON.stringify([reasonCode]),
-    ).run();
-    await resolveReviewQueueItem(env, tx.id, 'system');
-    reclassified++;
+      const classId = tx.class_id ?? crypto.randomUUID();
+      lastStep = `insert classifications (entity=${entity}, account_owner_tag=${tx.account_owner_tag})`;
+      await env.DB.prepare(
+        `INSERT OR REPLACE INTO classifications
+           (id, transaction_id, entity, category_tax, category_budget, confidence, method, reason_codes, review_required, classified_by)
+         VALUES (?, ?, ?, ?, ?, 1.0, 'rule', ?, 0, 'system')`,
+      ).bind(
+        classId, tx.id, entity, categoryTax, categoryBudget,
+        JSON.stringify([reasonCode]),
+      ).run();
+      lastStep = 'resolveReviewQueueItem';
+      await resolveReviewQueueItem(env, tx.id, 'system');
+      reclassified++;
+    }
+
+    return jsonOk({
+      total_eligible: rows.results.length,
+      reclassified,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const stack = err instanceof Error ? (err.stack ?? '') : '';
+    return jsonOk({ diagnostic_error: message, stack: stack.slice(0, 2000) });
   }
-
-  return jsonOk({
-    total_eligible: rows.results.length,
-    reclassified,
-  });
 }
 
 // ── POST /classify/transaction/:id ────────────────────────────────────────────
