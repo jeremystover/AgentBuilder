@@ -221,7 +221,7 @@ const ROUTES: Route[] = [
   { method: 'GET',    pattern: /^\/budget\/history$/,                    handler: (req, env) => handleBudgetHistory(req, env) },
 
   // AI Classification (backfill)
-  { method: 'POST',   pattern: /^\/classify\/backfill-family-budget$/,   handler: (req, env) => handleBackfillFamilyBudget(req, env) },
+  { method: 'POST',   pattern: /^\/classify\/backfill-family-budget$/,   handler: (req, env) => handleBackfillFamilyBudget(req, env, ctx) },
 
   // Income tracking
   { method: 'GET',    pattern: /^\/income\/status$/,                     handler: (req, env) => handleIncomeStatus(req, env) },
@@ -279,7 +279,7 @@ function requireMcpAuth(
 // ── Worker ────────────────────────────────────────────────────────────────────
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     // CORS preflight
     if (request.method === 'OPTIONS') {
       return new Response(null, {

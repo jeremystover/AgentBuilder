@@ -550,10 +550,9 @@ export async function handleClassifySingle(request: Request, env: Env, txId: str
 // ── POST /classify/backfill-family-budget ─────────────────────────────────────
 // Re-run AI classification to fill in missing category_budget values for
 // family_personal transactions that were classified without one.
-export async function handleBackfillFamilyBudget(request: Request, env: Env): Promise<Response> {
+export async function handleBackfillFamilyBudget(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const userId = getUserId(request);
-  const url = new URL(request.url);
-  const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '10', 10), 25);
+  const limit = 10;
 
   const totalRow = await env.DB.prepare(
     `SELECT COUNT(*) AS total
@@ -633,5 +632,13 @@ export async function handleBackfillFamilyBudget(request: Request, env: Env): Pr
     updated++;
   });
 
-  return jsonOk({ remaining: Math.max(0, remaining_before - eligible.results.length), updated, errors });
+  const remaining = Math.max(0, remaining_before - eligible.results.length);
+
+  if (remaining > 0) {
+    ctx.waitUntil(
+      fetch(request.url, { method: 'POST', headers: { 'x-user-id': userId } }),
+    );
+  }
+
+  return jsonOk({ remaining, updated, errors });
 }
