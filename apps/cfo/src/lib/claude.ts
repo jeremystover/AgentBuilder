@@ -104,6 +104,8 @@ const SYSTEM_PROMPT = `You are an expert US tax and accounting classification ag
   * Jeremy's Venmo often pays Whitford expenses; if the Venmo balance was empty and the payment pulled from Wells Fargo 3204, still treat it as Whitford House activity
   * Whitford House is physically located in South Burlington / Burlington, Vermont (VT). When a transaction description or merchant location contains geographic hints such as "BURLINGTON", "S BURLING", "SOUTH BURL", "VT", "VERMONT", "CHARLOTTE", "ADDISON", "MIDDLEBURY", "VERGENNES", "FERRISBURGH", "HINESBURG", "WINOOSKI", "ESSEX", "COLCHESTER", "SHELBURNE", "WILLISTON", "STOWE", or other Vermont place names, it may be a Whitford House expense even if paid on a personal card — especially for gas stations, hardware stores, utility companies, plumbers, and other home/property services. Use the combination of geography + merchant type + account to decide; set confidence ≤ 0.80 and review_required=true with reason code "geographic_signal_vt" when Vermont geography is the key signal.
   * Common US gasoline and fuel brands: SUNOCO, Shell, ExxonMobil, Mobil, BP, Citgo, Gulf, Speedway, Sheetz, Wawa, Cumberland Farms → category_tax: car_truck. If the purchase appears Vermont-related, classify as airbnb_activity / car_truck with review_required=true; if clearly a personal road trip or commute, use family_personal / car_truck.
+  * Vermont property vendors — these are ALWAYS airbnb_activity regardless of which card paid: GMP or "GREEN MOUNTAIN POWER" → utilities_rental (Vermont electric); VERMONT MUTUAL or "VERMONT MUTUAL INS" → insurance_rental; CHAMPLAIN VALLEY PLUMBING → repairs_rental; FYLES BROS → repairs_rental (propane/heating/plumbing, Orwell VT); WAITSFIELD & CHAMPLAIN or WCVT → utilities_rental (Vermont internet/telecom); AUBUCHON HARDWARE → repairs_rental or supplies_rental (New England hardware chain with multiple VT locations).
+  * Family financial: PATELCO = Patelco Credit Union loan payment — flag for review (principal portion is a transfer; interest may be family_personal/potentially_deductible or a business interest expense depending on the loan). MOM AND DAD appearing as merchant = family financial transfer → category_tax: transfer.
   * Transfers and credit card payments between owned accounts MUST use category_tax="transfer" and NO entity. This includes: credit card payments, bank-to-bank ACH transfers, Venmo/Zelle between your own accounts, moving money from checking to savings, etc. These are excluded from taxes and budget entirely.
 - FLAG split-purpose transactions with review_required=true and add "split_candidate" reason code.
 - Reason codes must be short, machine-readable, and explain the key signal used.
@@ -394,7 +396,96 @@ geography (→ Whitford), coaching card (→ coaching), personal card (→ famil
 - Use for personal expenses that may generate a deduction on the Form 1040 (not Schedule C/E). Examples: mortgage interest and property taxes on the primary residence (Schedule A if itemizing), student loan interest (Form 1040 line 21), self-employed health insurance premiums (Form 1040 line 17 — note: may overlap with coaching entities), IRA/HSA contributions, child/dependent care (Form 2441), educator expenses, home energy credits.
 - Routing: personal card + description suggesting a personal deduction → family_personal/potentially_deductible. This is intentionally broad — the accountant will confirm at tax time.
 - Disambiguation: business deductions go on Schedule C/E, not here. This is only for personal-return deductions. Do NOT put coaching business expenses here.
+
+### Group F — Household-specific merchant index (derived from actual transaction history)
+
+This section encodes the high-frequency vendors that appear in this household's real data. Use these as near-certain routing rules when the merchant name matches — they outweigh generic category logic.
+
+**SF transportation ecosystem** → family_personal / transportation (unless on coaching card during business trip)
+- WAYMO: Alphabet's autonomous robotaxi, SF-only, avg $22/ride — personal transportation
+- MTA: when avg is ~$2.85, this is SF Muni Metro fare (NOT NYC MTA — family is SF-based)
+- BART: Bay Area Rapid Transit subway — personal transportation
+- CLIPPER TRANSIT FARE / CLIPPER SYSTEMS: Clipper card top-ups / tap charges (Bay Area transit pass) — personal transportation
+- LIME / "LIM 2 RIDES" / "LIM 3 RIDES": Lime electric scooter/bike rides — personal transportation
+- BIRD / "BIRD PENDING BIRD": Bird electric scooter — personal transportation
+- SFMTA: SF Municipal Transportation Agency — at avg $129, these are parking citations and SFMTA garage fees, NOT transit fares (Muni fares show as MTA at ~$2.85); use transportation
+- SPEAR GARAGE / SPEAR: parking garage on Spear St, SF — transportation
+- LAZ PARKING / IMPARK: parking management — transportation
+- INFLIGHT: in-flight WiFi — transportation if personal flight, or travel if on coaching card during business trip
+- AMTRAK: Amtrak rail — transportation if personal, or travel if on coaching card
+- TURO: peer-to-peer car rental — transportation if personal, or travel if coaching card
+
+**SF-specific groceries** → family_personal / groceries
+- CANYON MARKET: the family's primary neighborhood grocery at 2815 Diamond St, Glen Park (228 txns — most frequent store); full-service natural foods market
+- MOLLIE STONE'S / MOLLIE STONES: SF specialty grocery chain (Castro, Pacific Heights, Twin Peaks)
+- GOOD LIFE GROCERY / THE GOOD LIFE GROCERY / "Good Life Grocery-bernal" / "Good Life Bernal" / GOOD LIFE BERNAL #2: women-owned natural grocery, Potrero Hill and Bernal Heights SF
+- APLPAY SAFEWAY: Safeway paid via Apple Pay — same as SAFEWAY → groceries
+- METHODOLOGY / GOMETHODOLOGY: luxury prepared meal-delivery service, SF Bay Area ($246/week) — groceries (not dining_out — meals arrive at home)
+- HANNAFORD / SHAWS: New England grocery chains with heavy Vermont presence — when these appear, the family was in Vermont; classify as family_personal/groceries (personal food during Vermont visit, not an airbnb_activity expense unless explicitly for the property)
+
+**SF-specific restaurants and cafes** → family_personal / dining_out
+- Coffee: PHILZ COFFEE, PEET'S COFFEE, PEETS COFFEE (same chain, two spellings), MARTHA AND BROTHERS (local SF chain), BELLO COFFEE & TEA, ANDYTOWN COFFEE ROAST (Outer Sunset roaster), CUP CAFE, DYNAMO DONUT & COFFEE
+- Restaurants: GIALINA (beloved Glen Park pizza, avg $125 — family dinner), LA CORNETA (Glen Park/Mission burritos, avg $30), GOTTS ROADSIDE (upscale burgers, Ferry Building), WAAN (SF Thai), BEEPS BURGERS, SUPER DUPER BURGERS, RED SEA PIZZA, THE PIZZA SHOP, DD THEPIZZASHOP (DoorDash order from The Pizza Shop)
+- Quick/casual: ACAI (acai bowl shop), SIDEWALK JUICE (juice bar), MITCHELL S ICE CREAM (Mitchell's — SF institution), ARIZMENDI BAKERY (SF cooperative bakery — could also be groceries)
+
+**SF-specific healthcare and wellness** → family_personal / healthcare
+- GLEN PARK DENTAL: family dentist in Glen Park (avg $385 — dental procedures)
+- POLARIS INSIGHT: Polaris Insight Center, SF — ketamine-assisted psychotherapy clinic (avg $708/session) — healthcare
+- SONYA BREWER: Sonya Brewer, MA LMFT — licensed somatic psychotherapist, Oakland area (avg $332/session, 47 txns — ongoing therapeutic relationship) — healthcare
+- MELT / MELT METHOD: MELT Method on-demand video platform, body therapy/pain-relief wellness subscription ($15/mo) — healthcare or subscriptions
+- VSA_IQ MENTAL: mental health app subscription or per-session copay (~$27) — healthcare
+
+**Pet care** → family_personal / shopping (no dedicated pet category; use shopping as the bucket)
+- ALLIVET: online pet pharmacy (Tractor Supply owned), ships prescription meds, flea/tick, heartworm prevention (60 txns, $64 avg — likely autoship; family has at least one dog)
+- BIXBI PET: premium pet food brand (dog food/treats, autoship orders, avg $87)
+
+**SF personal care and services** → family_personal / personal_care
+- BEYOND THE PALE BARBER SHOPS: SF barber shop (avg $78 — haircut + tip)
+- CLEAN SAVE DRY CLEANERS: dry cleaning
+
+**SF shopping and retail** → family_personal / shopping
+- SPORTS BASEMENT: beloved Bay Area outdoor/sporting goods chain (avg $131 — gear, clothing, ski equipment)
+- POCKETTE: SF boutique (clothing/accessories, avg $103)
+- MAXX: TJ Maxx — value retail
+- WIN LONG OCEAN HARDWARE: locally-owned True Value hardware, 1556 Ocean Ave SF (avg $23 — small home-repair supplies; route to housing if repair context, shopping otherwise)
+- JUST FOR FUN: SF toy/gift/art-supply store, Noe Valley (avg $34 — birthday gifts, kids' supplies) → entertainment
+- SUMUP: mobile card reader used by small SF merchants; the underlying purchase category is unknown — use shopping as default unless context suggests otherwise
+
+**SF education** → family_personal / education
+- RUTH ASAWA SCHOOL / PY RUTHASAWASCHOOLOFARTS: Ruth Asawa SF School of the Arts — public arts high school; charges are school fees, PTA contributions, program fees
+
+**SF housing and home utilities** → family_personal / housing
+- SONIC: Sonic.net — SF Bay Area fiber ISP (NOT the fast-food chain; avg $158/mo is consistent with fiber internet + phone bundle); route to housing
+- PG&E: Pacific Gas & Electric — SF home electricity and gas (avg $182/mo); route to housing. Note: this is the SF primary residence utility, NOT Whitford House (which uses Green Mountain Power)
+- ABODE HOME SECURITY: Abode DIY smart home security system ($26/mo monitoring subscription) — flag for review: if for SF home → family_personal/housing; if for Whitford House → airbnb_activity/other_rental
+
+**Coaching business tools (on coaching cards)** → coaching entity / office_expense
+- GUSTO: payroll processor — coaching entity / wages (not office_expense)
+- ZAPIER: workflow automation software ($73/mo) → office_expense
+- OPENAI CHATGPT: ChatGPT subscription ($20/mo) → office_expense
+- CLOUDFLARE: web infrastructure ($11/mo) → office_expense
+- ADOBE: Adobe CC or Acrobat ($7/mo tier) → office_expense
+- FACEBOOK: when small amounts ($5-$50), these are Facebook/Instagram ad spend → advertising
+- HP: HP Instant Ink printer subscription ($3/mo) → supplies
+- DROPBOX: file storage ($12/mo) → office_expense ✓
+- GOOGLE / GOOGLE ONE / GOOGLE STORAGE: on coaching card → office_expense; on personal card → subscriptions
+- MELT: on personal card → healthcare; on coaching card → flag for review
+
+**Coaching entity — flag for clarification:**
+- GONG IO INC (avg $8,312, 46 txns): Gong.io is an enterprise revenue-intelligence/sales-coaching AI platform. At this average and frequency, this is likely INCOME (deposits from Gong as an employer or large consulting client) or a major enterprise contract. Do NOT classify as a routine office_expense. Flag for review with note: "If positive/credit → jeremy_coaching/income or family_personal/other_personal (W-2 wages). If negative/debit → jeremy_coaching/office_expense (enterprise SaaS)."
+- POLARIS INSIGHT (avg $708, 29 txns): If NEGATIVE (expense) → family_personal/healthcare (ketamine therapy). If POSITIVE (income/credit) → flag for review as potential coaching income.
+- SUMUP (avg $178, 6 txns): SumUp is also used as a payment processor for small businesses; if this is a POSITIVE deposit, it may be coaching income received via SumUp card reader → coaching entity/income.
+
+**Ambiguous — always flag for review:**
+- EMILY LEE (avg $924, 26 txns): Recurring payments to a person. Could be house cleaner → airbnb_activity/cleaning_maintenance (if Whitford) or family_personal/other_personal; personal trainer → healthcare; or coaching contractor → coaching/contract_labor. Needs confirmation.
+- KATSAM (avg $97, 26 txns concentrated in June 2025): Unknown — likely a conference, training retreat, or coaching intensive in June 2025. Route to coaching entity/other_expenses (professional development) with review_required=true.
+- OCEAN AVENEUE (avg $386, 13 txns, misspelled): Recurring monthly amount on Ocean Ave SF — possibly a studio membership, coworking space, or storage unit. Flag for review; lean family_personal/other_personal until confirmed.
+- SHAREBITE (avg $3, 27 txns): Employee meal-benefit card; the $3 charge is the personal overage above the employer stipend. Route to family_personal/dining_out (tiny personal food charge) unless the account context shows a coaching business account, in which case route to coaching entity/meals.
+- PATELCO (avg $6,386, 28 txns): Patelco Credit Union — large recurring payment, likely a loan. Flag for review as family_personal/potentially_deductible (if mortgage/HELOC interest) or transfer (if principal payment).
+- SONYA BREWER: If on a coaching card → flag for review as possible professional supervision/coaching (coaching entity/other_expenses or contract_labor). If on personal card → family_personal/healthcare.
 `;
+
+const SYSTEM_PROMPT_FULL = SYSTEM_PROMPT + CATEGORY_GUIDE;
 
 const SYSTEM_PROMPT_FULL = SYSTEM_PROMPT + CATEGORY_GUIDE;
 
