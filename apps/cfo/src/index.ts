@@ -53,6 +53,7 @@ import {
   handleBudgetCutsReport,
 } from './routes/budget';
 import { handleIncomeStatus, handleListIncomeTargets, handleUpsertIncomeTarget, handleDeleteIncomeTarget } from './routes/income';
+import { handleListTaxCategories, handleCreateTaxCategory, handleUpdateTaxCategory } from './routes/tax-categories';
 import { handlePnL, handlePnLAll, handlePnLTrend } from './routes/pnl';
 import {
   handleBookkeepingSession,
@@ -200,6 +201,11 @@ const ROUTES: Route[] = [
   { method: 'POST',   pattern: /^\/imports\/csv$/,                       handler: (req, env) => handleCsvImport(req, env) },
   { method: 'POST',   pattern: /^\/imports\/amazon$/,                    handler: (req, env) => handleAmazonImport(req, env) },
   { method: 'POST',   pattern: /^\/imports\/tiller$/,                    handler: (req, env) => handleTillerImport(req, env) },
+
+  // Tax categories
+  { method: 'GET',    pattern: /^\/tax\/categories$/,                    handler: (req, env) => handleListTaxCategories(req, env) },
+  { method: 'POST',   pattern: /^\/tax\/categories$/,                    handler: (req, env) => handleCreateTaxCategory(req, env) },
+  { method: 'PATCH',  pattern: /^\/tax\/categories\/([^/]+)$/,           handler: (req, env, slug) => handleUpdateTaxCategory(req, env, slug) },
 
   // Budget
   { method: 'GET',    pattern: /^\/budget\/categories$/,                 handler: (req, env) => handleListBudgetCategories(req, env) },

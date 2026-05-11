@@ -178,7 +178,7 @@ async function resolveReviewItem(
          confidence=1.0,
          method='manual', review_required=0, classified_by='user',
          classified_at=datetime('now')`,
-    ).bind(crypto.randomUUID(), item.transaction_id, entity ?? null, category_tax, category_budget ?? null, expense_type ?? null, cut_status ?? null).run();
+    ).bind(crypto.randomUUID(), item.transaction_id, entity ?? null, category_tax ?? null, category_budget ?? null, expense_type ?? null, cut_status ?? null).run();
 
     if (entity) {
       await maybeLearnRuleFromManualClassification(env, userId, item.transaction_id, {
@@ -288,8 +288,40 @@ export async function handleBulkResolveReview(request: Request, env: Env): Promi
 
   if (!items.length) return jsonError('No review items found', 404);
 
-  const results: Array<{ review_id: string; transaction_id: string; status?: string; error?: string }> = [];
   let updated = 0;
+
+  if (action === 'reopen') {
+    // Bulk reopen via D1 batch() to avoid per-item sequential query limits.
+    // D1 allows up to 100 statements per batch; 2 statements per item → 50 items/batch.
+    const eligible = items.filter(item => item.status !== 'pending');
+    const CHUNK = 50;
+    for (let i = 0; i < eligible.length; i += CHUNK) {
+      const chunk = eligible.slice(i, i + CHUNK);
+      await env.DB.batch([
+        ...chunk.map(item =>
+          env.DB.prepare(
+            `UPDATE review_queue SET status='pending', resolved_by=NULL, resolved_at=NULL WHERE id=?`,
+          ).bind(item.id),
+        ),
+        ...chunk.map(item =>
+          env.DB.prepare(
+            `UPDATE classifications SET review_required=1 WHERE transaction_id=?`,
+          ).bind(item.transaction_id),
+        ),
+      ]);
+      updated += chunk.length;
+    }
+
+    return jsonOk({
+      action,
+      requested: items.length,
+      updated,
+      failed: items.length - updated,
+      results: [],
+    });
+  }
+
+  const results: Array<{ review_id: string; transaction_id: string; status?: string; error?: string }> = [];
 
   for (const item of items) {
     try {

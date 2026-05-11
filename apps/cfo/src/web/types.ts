@@ -323,6 +323,16 @@ export type BudgetPreset =
   | "ytd" | "trailing_30d" | "trailing_90d";
 export type BudgetStatusTone = "no_target" | "over" | "near" | "under";
 
+export interface TaxCategory {
+  id: string;
+  slug: string;
+  name: string;
+  form_line: string | null;
+  category_group: "schedule_c" | "schedule_e";
+  is_active: number;
+  created_at: string;
+}
+
 export interface BudgetCategory {
   id: string;
   slug: string;

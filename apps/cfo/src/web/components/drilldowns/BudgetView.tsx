@@ -5,12 +5,12 @@ import {
   Button, Card, Badge, Select, Input, Drawer, PageHeader, EmptyState, fmtUsd,
 } from "../ui";
 import { useBudget } from "../../hooks/useBudget";
+import { useCategoryOptions } from "../../hooks/useCategoryOptions";
 import {
   upsertBudgetTarget, deleteBudgetTarget, createBudgetCategory,
   listTransactions, classifyTransaction, getBudgetForecast, getCutsReport,
 } from "../../api";
 import { txAmountColor } from "../../utils/txColor";
-import { CATEGORY_OPTIONS } from "../../catalog";
 import type {
   BudgetCadence, BudgetPreset, BudgetStatusLine, BudgetStatusTone, BudgetTarget,
   BudgetForecastResponse, CutsReportResponse, Transaction, EntitySlug, ExpenseType,
@@ -600,6 +600,7 @@ function BudgetTransactionsDrawer({
   onClose(): void;
   onChanged(): Promise<void>;
 }) {
+  const { allOptions } = useCategoryOptions();
   const [txs, setTxs] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(false);
   const [reclassifying, setReclassifying] = useState<string | null>(null);
@@ -693,7 +694,7 @@ function BudgetTransactionsDrawer({
                   className="w-full text-xs"
                 >
                   <option value="">— no budget category —</option>
-                  {CATEGORY_OPTIONS.map(({ slug: s, label }) => (
+                  {allOptions.map(({ slug: s, label }) => (
                     <option key={s} value={s}>{label}</option>
                   ))}
                 </Select>
