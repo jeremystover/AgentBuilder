@@ -106,6 +106,9 @@ const SYSTEM_PROMPT = `You are an expert US tax and accounting classification ag
   * Common US gasoline and fuel brands: SUNOCO, Shell, ExxonMobil, Mobil, BP, Citgo, Gulf, Speedway, Sheetz, Wawa, Cumberland Farms → category_tax: car_truck. If the purchase appears Vermont-related, classify as airbnb_activity / car_truck with review_required=true; if clearly a personal road trip or commute, use family_personal / car_truck.
   * Vermont property vendors — these are ALWAYS airbnb_activity regardless of which card paid: GMP or "GREEN MOUNTAIN POWER" → utilities_rental (Vermont electric); VERMONT MUTUAL or "VERMONT MUTUAL INS" → insurance_rental; CHAMPLAIN VALLEY PLUMBING → repairs_rental; FYLES BROS → repairs_rental (propane/heating/plumbing, Orwell VT); WAITSFIELD & CHAMPLAIN or WCVT → utilities_rental (Vermont internet/telecom); AUBUCHON HARDWARE → repairs_rental or supplies_rental (New England hardware chain with multiple VT locations).
   * Family financial: PATELCO = Patelco Credit Union loan payment — flag for review (principal portion is a transfer; interest may be family_personal/potentially_deductible or a business interest expense depending on the loan). MOM AND DAD appearing as merchant = family financial transfer → category_tax: transfer.
+  * GONG IO INC = Jeremy's W-2 employer (Gong.io, a revenue-intelligence SaaS company). Positive deposits (payroll) → family_personal / other_personal. Do NOT classify as jeremy_coaching income — this is W-2 wages, not self-employment income. Negative charges (benefits deductions or reimbursements) → flag for review.
+  * EMILY LEE = monthly studio office rent paid by Elyse for her coaching practice ($924/mo recurring) → elyse_coaching / rent_lease_property (Schedule C Line 20b). High confidence; no review required.
+  * ABODE HOME SECURITY = Whitford House smart home security monitoring subscription ($26/mo) → airbnb_activity / other_rental. High confidence; no review required.
   * Transfers and credit card payments between owned accounts MUST use category_tax="transfer" and NO entity. This includes: credit card payments, bank-to-bank ACH transfers, Venmo/Zelle between your own accounts, moving money from checking to savings, etc. These are excluded from taxes and budget entirely.
 - FLAG split-purpose transactions with review_required=true and add "split_candidate" reason code.
 - Reason codes must be short, machine-readable, and explain the key signal used.
@@ -457,7 +460,7 @@ This section encodes the high-frequency vendors that appear in this household's 
 **SF housing and home utilities** → family_personal / housing
 - SONIC: Sonic.net — SF Bay Area fiber ISP (NOT the fast-food chain; avg $158/mo is consistent with fiber internet + phone bundle); route to housing
 - PG&E: Pacific Gas & Electric — SF home electricity and gas (avg $182/mo); route to housing. Note: this is the SF primary residence utility, NOT Whitford House (which uses Green Mountain Power)
-- ABODE HOME SECURITY: Abode DIY smart home security system ($26/mo monitoring subscription) — flag for review: if for SF home → family_personal/housing; if for Whitford House → airbnb_activity/other_rental
+- ABODE HOME SECURITY: Abode DIY smart home security system ($26/mo monitoring subscription) → airbnb_activity/other_rental (confirmed: installed at Whitford House)
 
 **Coaching business tools (on coaching cards)** → coaching entity / office_expense
 - GUSTO: payroll processor — coaching entity / wages (not office_expense)
@@ -472,12 +475,12 @@ This section encodes the high-frequency vendors that appear in this household's 
 - MELT: on personal card → healthcare; on coaching card → flag for review
 
 **Coaching entity — flag for clarification:**
-- GONG IO INC (avg $8,312, 46 txns): Gong.io is an enterprise revenue-intelligence/sales-coaching AI platform. At this average and frequency, this is likely INCOME (deposits from Gong as an employer or large consulting client) or a major enterprise contract. Do NOT classify as a routine office_expense. Flag for review with note: "If positive/credit → jeremy_coaching/income or family_personal/other_personal (W-2 wages). If negative/debit → jeremy_coaching/office_expense (enterprise SaaS)."
+- GONG IO INC (avg $8,312, 46 txns): Confirmed W-2 employer (Jeremy). Positive deposits = payroll → family_personal/other_personal. NOT coaching income. (See hard rules above.)
 - POLARIS INSIGHT (avg $708, 29 txns): If NEGATIVE (expense) → family_personal/healthcare (ketamine therapy). If POSITIVE (income/credit) → flag for review as potential coaching income.
 - SUMUP (avg $178, 6 txns): SumUp is also used as a payment processor for small businesses; if this is a POSITIVE deposit, it may be coaching income received via SumUp card reader → coaching entity/income.
 
 **Ambiguous — always flag for review:**
-- EMILY LEE (avg $924, 26 txns): Recurring payments to a person. Could be house cleaner → airbnb_activity/cleaning_maintenance (if Whitford) or family_personal/other_personal; personal trainer → healthcare; or coaching contractor → coaching/contract_labor. Needs confirmation.
+- EMILY LEE (avg $924, 26 txns): Confirmed — monthly studio office rent for Elyse's coaching practice → elyse_coaching/rent_lease_property. (See hard rules above.)
 - KATSAM (avg $97, 26 txns concentrated in June 2025): Unknown — likely a conference, training retreat, or coaching intensive in June 2025. Route to coaching entity/other_expenses (professional development) with review_required=true.
 - OCEAN AVENEUE (avg $386, 13 txns, misspelled): Recurring monthly amount on Ocean Ave SF — possibly a studio membership, coworking space, or storage unit. Flag for review; lean family_personal/other_personal until confirmed.
 - SHAREBITE (avg $3, 27 txns): Employee meal-benefit card; the $3 charge is the personal overage above the employer stipend. Route to family_personal/dining_out (tiny personal food charge) unless the account context shows a coaching business account, in which case route to coaching entity/meals.
