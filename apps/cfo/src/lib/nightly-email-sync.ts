@@ -1,7 +1,7 @@
 /**
  * Nightly email sync — runs as part of the 0 9 * * * cron.
  *
- * Pulls two categories of emails from the personal Gmail account
+ * Pulls three categories of emails from the personal Gmail account
  * (using GOOGLE_OAUTH_REFRESH_TOKEN) and enriches matching bank transactions:
  *
  *   Amazon — order confirmation emails → match to credit card charge,
@@ -10,7 +10,10 @@
  *   Venmo  — payment emails → match to ACH bank transaction,
  *            store counterparty + memo for AI classification.
  *
- * Both pipelines share a single access-token refresh and write their
+ *   Apple  — purchase receipt emails → match to APPLE.COM/BILL credit card
+ *            charge, store item names for AI classification.
+ *
+ * All pipelines share a single access-token refresh and write their
  * last-run time to email_sync_state so reruns search a tight window.
  * The *_email_processed tables act as dedup: already-seen message IDs
  * are skipped without re-fetching the full message.
@@ -20,8 +23,10 @@ import type { Env } from '../types';
 import { getEnvAccessToken, searchMessages, getMessage } from './gmail';
 import { parseAmazonEmail } from './amazon-email';
 import { parseVenmoEmail } from './venmo-email';
+import { parseAppleEmail } from './apple-email';
 import { processAmazonOrders } from '../routes/amazon';
 import { matchVenmoPayment, storeVenmoMatch } from './venmo';
+import { matchAppleReceipt, storeAppleMatch } from './apple';
 
 export interface NightlyEmailSyncSummary {
   started_at: string;
@@ -39,6 +44,12 @@ export interface NightlyEmailSyncSummary {
     payments_matched: number;
     payments_reclassified: number;
   };
+  apple: {
+    emails_found: number;
+    emails_processed: number;
+    receipts_matched: number;
+    receipts_reclassified: number;
+  };
 }
 
 // lookbackDays overrides the since-last-sync window — useful for one-time backfills.
@@ -50,6 +61,7 @@ export async function runNightlyEmailSync(env: Env, lookbackDays?: number): Prom
     skipped: false,
     amazon: { emails_found: 0, emails_processed: 0, orders_stored: 0, orders_matched: 0 },
     venmo: { emails_found: 0, emails_processed: 0, payments_matched: 0, payments_reclassified: 0 },
+    apple: { emails_found: 0, emails_processed: 0, receipts_matched: 0, receipts_reclassified: 0 },
   };
 
   if (!env.GOOGLE_OAUTH_REFRESH_TOKEN) {
@@ -66,17 +78,24 @@ export async function runNightlyEmailSync(env: Env, lookbackDays?: number): Prom
   ).bind(userId).run();
 
   const state = await env.DB.prepare(
-    `SELECT amazon_last_synced_at, venmo_last_synced_at FROM email_sync_state WHERE user_id = ?`,
-  ).bind(userId).first<{ amazon_last_synced_at: string | null; venmo_last_synced_at: string | null }>();
+    `SELECT amazon_last_synced_at, venmo_last_synced_at, apple_last_synced_at FROM email_sync_state WHERE user_id = ?`,
+  ).bind(userId).first<{
+    amazon_last_synced_at: string | null;
+    venmo_last_synced_at: string | null;
+    apple_last_synced_at: string | null;
+  }>();
 
-  const [amazonResult, venmoResult] = await Promise.all([
+  const [amazonResult, venmoResult, appleResult] = await Promise.all([
     syncAmazonEmails(env, userId, accessToken, state?.amazon_last_synced_at ?? null, lookbackDays),
     syncVenmoEmails(env, userId, accessToken, state?.venmo_last_synced_at ?? null, lookbackDays),
+    syncAppleEmails(env, userId, accessToken, state?.apple_last_synced_at ?? null, lookbackDays),
   ]);
 
   await env.DB.prepare(
     `UPDATE email_sync_state
-     SET amazon_last_synced_at = datetime('now'), venmo_last_synced_at = datetime('now')
+     SET amazon_last_synced_at = datetime('now'),
+         venmo_last_synced_at = datetime('now'),
+         apple_last_synced_at = datetime('now')
      WHERE user_id = ?`,
   ).bind(userId).run();
 
@@ -86,6 +105,7 @@ export async function runNightlyEmailSync(env: Env, lookbackDays?: number): Prom
     skipped: false,
     amazon: amazonResult,
     venmo: venmoResult,
+    apple: appleResult,
   };
 
   console.log('[email-sync] summary', summary);
@@ -216,4 +236,50 @@ async function syncVenmoEmails(
   }
 
   return { emails_found: refs.length, emails_processed: emailsProcessed, payments_matched: paymentsMatched, payments_reclassified: paymentsReclassified };
+}
+
+// ── Apple ─────────────────────────────────────────────────────────────────────
+
+async function syncAppleEmails(
+  env: Env,
+  userId: string,
+  accessToken: string,
+  lastSyncedAt: string | null,
+  lookbackDays?: number,
+) {
+  const sinceDays = lookbackDays ?? (lastSyncedAt
+    ? Math.ceil((Date.now() - new Date(lastSyncedAt).getTime()) / 86_400_000) + 2
+    : 90);
+
+  const query = `from:no_reply@email.apple.com subject:receipt newer_than:${sinceDays}d`;
+  const refs = await searchMessages(accessToken, query);
+
+  let emailsProcessed = 0, receiptsMatched = 0, receiptsReclassified = 0;
+
+  for (const ref of refs) {
+    const already = await env.DB.prepare(
+      `SELECT id FROM apple_email_processed WHERE gmail_message_id = ?`,
+    ).bind(ref.id).first();
+    if (already) continue;
+
+    const message = await getMessage(accessToken, ref.id);
+    const parsed = parseAppleEmail(message);
+
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO apple_email_processed (id, user_id, gmail_message_id, receipt_id)
+       VALUES (?, ?, ?, ?)`,
+    ).bind(crypto.randomUUID(), userId, ref.id, parsed?.receiptId ?? null).run();
+
+    if (!parsed) continue;
+    emailsProcessed++;
+
+    const match = await matchAppleReceipt(env, userId, parsed);
+    if (!match) continue;
+
+    receiptsMatched++;
+    const { reclassified } = await storeAppleMatch(env, userId, parsed, match.transactionId);
+    if (reclassified) receiptsReclassified++;
+  }
+
+  return { emails_found: refs.length, emails_processed: emailsProcessed, receipts_matched: receiptsMatched, receipts_reclassified: receiptsReclassified };
 }

@@ -1,4 +1,4 @@
-import type { Env, Transaction, AIClassification, AmazonContext, VenmoContext } from '../types';
+import type { Env, Transaction, AIClassification, AmazonContext, VenmoContext, AppleContext } from '../types';
 import { SCHEDULE_C_CATEGORIES, AIRBNB_CATEGORIES, FAMILY_CATEGORIES } from '../types';
 
 function describeApiKey(value: string | undefined): {
@@ -118,6 +118,7 @@ export async function classifyTransaction(
   historicalExamples: Array<{ merchant: string; entity: string; category_tax: string }>,
   amazonContext?: AmazonContext | null,
   venmoContext?: VenmoContext | null,
+  appleContext?: AppleContext | null,
 ): Promise<AIClassification> {
   // DB convention: expenses stored as negative, income as positive
   // (Teller-native, and Chase/Venmo importers normalize to match).
@@ -157,6 +158,15 @@ export async function classifyTransaction(
 - Amount:       $${venmoContext.amount.toFixed(2)}`
     : '';
 
+  const appleBlock = appleContext
+    ? `\nApple receipt context:
+- Receipt ID:   ${appleContext.receipt_id ?? '(unknown)'}
+- Total:        $${appleContext.total_amount.toFixed(2)}
+- Items:        ${appleContext.items.length > 0
+        ? appleContext.items.map(i => `${i.name} ($${i.price.toFixed(2)})`).join(', ')
+        : '(unknown)'}`
+    : '';
+
   const userMessage = `Classify this transaction:
 - Merchant:     ${transaction.merchant_name ?? '(unknown)'}
 - Description:  ${transaction.description}
@@ -166,6 +176,7 @@ export async function classifyTransaction(
 ${exampleBlock}
 ${amazonBlock}
 ${venmoBlock}
+${appleBlock}
 
 Call the classify_transaction tool with your classification.`;
 
@@ -226,6 +237,7 @@ export async function classifyBatch(
     historicalExamples: Array<{ merchant: string; entity: string; category_tax: string }>;
     amazonContext?: AmazonContext | null;
     venmoContext?: VenmoContext | null;
+    appleContext?: AppleContext | null;
   }>,
   onResult: (txId: string, result: AIClassification | null, error?: string) => Promise<void>,
 ): Promise<void> {
@@ -238,6 +250,7 @@ export async function classifyBatch(
         item.historicalExamples,
         item.amazonContext,
         item.venmoContext,
+        item.appleContext,
       );
       await onResult(item.transaction.id, result);
     } catch (err) {

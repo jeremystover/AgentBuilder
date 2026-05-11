@@ -17,14 +17,15 @@ export async function handleGmailStatus(request: Request, env: Env): Promise<Res
 
   const state = configured
     ? await env.DB.prepare(
-        `SELECT amazon_last_synced_at, venmo_last_synced_at FROM email_sync_state WHERE user_id = ?`,
-      ).bind(userId).first<{ amazon_last_synced_at: string | null; venmo_last_synced_at: string | null }>()
+        `SELECT amazon_last_synced_at, venmo_last_synced_at, apple_last_synced_at FROM email_sync_state WHERE user_id = ?`,
+      ).bind(userId).first<{ amazon_last_synced_at: string | null; venmo_last_synced_at: string | null; apple_last_synced_at: string | null }>()
     : null;
 
   return jsonOk({
     configured,
     amazon_last_synced_at: state?.amazon_last_synced_at ?? null,
     venmo_last_synced_at: state?.venmo_last_synced_at ?? null,
+    apple_last_synced_at: state?.apple_last_synced_at ?? null,
     setup_hint: configured
       ? null
       : 'Set GOOGLE_OAUTH_REFRESH_TOKEN via `wrangler secret put GOOGLE_OAUTH_REFRESH_TOKEN`. Reuse the same token as the chief-of-staff.',
