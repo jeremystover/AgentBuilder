@@ -6,7 +6,7 @@ import {
   Button, Card, Badge, Input, Select, Drawer, PageHeader, EmptyState, fmtUsd, humanizeSlug,
 } from "../ui";
 import { useReviewQueue } from "../../hooks/useReviewQueue";
-import { resolveReview, bulkResolveReview, runClassification, createRule, applyRuleRetroactive, type RuleInput } from "../../api";
+import { resolveReview, bulkResolveReview, runClassification, createRule, applyRuleRetroactive, reclassifyWithAI, type RuleInput } from "../../api";
 import type { ReviewItem, ReviewStatus, ResolveAction, RuleMatchField, RuleMatchOperator, EntitySlug } from "../../types";
 import { ENTITY_OPTIONS, TAX_OPTIONS, TRANSFER_OPTION, type OptionCategory } from "../../catalog";
 import { useCategoryOptions } from "../../hooks/useCategoryOptions";
@@ -466,6 +466,24 @@ export function ReviewQueueView() {
         taxOptions={taxOptions}
         onClose={() => setOpenItem(null)}
         onResolve={onResolveOne}
+        onReclassify={async (txId) => {
+          const item = openItem;
+          try {
+            const result = await reclassifyWithAI(txId);
+            if (result._debug) {
+              console.group(`[CFO classify] ${item?.merchant_name ?? item?.description ?? txId}`);
+              console.log('Pass:', result._debug.pass);
+              console.log('Prompt (user message):\n', result._debug.userMessage);
+              console.log('Raw API response:', result._debug.rawResponse);
+              console.groupEnd();
+            }
+            console.log('[CFO classify] result:', result);
+            toast.success(`Reclassified via ${result.method}`);
+            void refresh();
+          } catch (e) {
+            toast.error(e instanceof Error ? e.message : String(e));
+          }
+        }}
         busy={busy}
       />
 
@@ -670,13 +688,14 @@ function ProposeRuleModal({
 // ── Drawer ──────────────────────────────────────────────────────────────────
 
 function ReviewDrawer({
-  item, budgetOptions, taxOptions, onClose, onResolve, busy,
+  item, budgetOptions, taxOptions, onClose, onResolve, onReclassify, busy,
 }: {
   item: ReviewItem | null;
   budgetOptions: OptionCategory[];
   taxOptions: OptionCategory[];
   onClose(): void;
   onResolve(id: string, input: { action: ResolveAction; entity?: string; category_tax?: string; category_budget?: string; cut_status?: "flagged" | "complete" | null }): Promise<void>;
+  onReclassify(txId: string): Promise<void>;
   busy: boolean;
 }) {
   const [entity, setEntity] = useState(item?.suggested_entity ?? item?.current_entity ?? "elyse_coaching");
@@ -712,6 +731,14 @@ function ReviewDrawer({
               title="Mark as a transfer between accounts — excluded from taxes and budget"
             >
               <ArrowLeftRight className="w-4 h-4" /> Transfer
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() => void onReclassify(item.transaction_id)}
+              disabled={busy}
+              title="Re-run AI classifier (check browser console for prompt + response)"
+            >
+              <Sparkles className="w-4 h-4" /> Reclassify
             </Button>
             <Button variant="ghost" onClick={onClose}>Cancel</Button>
             <Button

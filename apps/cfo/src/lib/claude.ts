@@ -509,7 +509,7 @@ type ContentBlock = {
 async function callClaudeFirstPass(
   env: Env,
   userMessage: string,
-): Promise<{ result: AIClassification; diagnostics: ReturnType<typeof getClaudeDiagnostics> }> {
+): Promise<{ result: AIClassification; diagnostics: ReturnType<typeof getClaudeDiagnostics>; rawResponse: unknown }> {
   const diagnostics = getClaudeDiagnostics(env);
 
   const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -544,7 +544,7 @@ async function callClaudeFirstPass(
   const toolUse = data.content.find(b => b.type === 'tool_use' && b.name === 'classify_transaction');
   if (!toolUse?.input) throw new Error('Claude did not return a classification tool call');
 
-  return { result: toolUse.input, diagnostics };
+  return { result: toolUse.input, diagnostics, rawResponse: data };
 }
 
 // ── Second-pass: web search enabled for unknown merchants ─────────────────────
@@ -619,6 +619,12 @@ async function callClaudeWithWebSearch(
   return null;
 }
 
+export interface ClassifyDebug {
+  userMessage: string;
+  pass: 'first' | 'web_search' | 'first_fallback';
+  rawResponse: unknown;
+}
+
 export async function classifyTransaction(
   env: Env,
   transaction: Transaction,
@@ -626,7 +632,7 @@ export async function classifyTransaction(
   historicalExamples: Array<{ merchant: string; entity: string; category_tax: string }>,
   amazonContext?: AmazonContext | null,
   venmoContext?: VenmoContext | null,
-): Promise<AIClassification> {
+): Promise<AIClassification & { _debug: ClassifyDebug }> {
   // DB convention: expenses stored as negative, income as positive
   const isExpense = transaction.amount < 0;
   const amountStr = `$${Math.abs(transaction.amount).toFixed(2)} (${isExpense ? 'expense/debit' : 'income/credit'})`;
@@ -677,12 +683,12 @@ ${venmoBlock}
 Call the classify_transaction tool with your classification.`;
 
   // ── Pass 1: fast forced single tool call ────────────────────────────────────
-  const { result: first } = await callClaudeFirstPass(env, userMessage);
+  const { result: first, rawResponse: firstRaw } = await callClaudeFirstPass(env, userMessage);
 
   // Auto-accept if confidence is high enough — skip the search pass entirely
   if (first.confidence >= 0.75) {
     if (first.confidence < 0.9) first.review_required = true;
-    return first;
+    return { ...first, _debug: { userMessage, pass: 'first', rawResponse: firstRaw } };
   }
 
   // ── Pass 2: web search for unknown merchants (only when confidence < 0.75) ──
@@ -690,7 +696,7 @@ Call the classify_transaction tool with your classification.`;
     const searched = await callClaudeWithWebSearch(env, userMessage);
     if (searched && searched.confidence > first.confidence) {
       if (searched.confidence < 0.9) searched.review_required = true;
-      return searched;
+      return { ...searched, _debug: { userMessage, pass: 'web_search', rawResponse: null } };
     }
   } catch (err) {
     // Web search pass failed — not fatal, fall through to first result
@@ -699,7 +705,7 @@ Call the classify_transaction tool with your classification.`;
 
   // Fall back to first-pass result
   if (first.confidence < 0.9) first.review_required = true;
-  return first;
+  return { ...first, _debug: { userMessage, pass: 'first_fallback', rawResponse: firstRaw } };
 }
 
 // ── Batch classification with rate-limit awareness ────────────────────────────
