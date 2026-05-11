@@ -109,6 +109,7 @@ const SYSTEM_PROMPT = `You are an expert US tax and accounting classification ag
   * GONG IO INC = Jeremy's W-2 employer (Gong.io, a revenue-intelligence SaaS company). Positive deposits (payroll) → family_personal / other_personal. Do NOT classify as jeremy_coaching income — this is W-2 wages, not self-employment income. Negative charges (benefits deductions or reimbursements) → flag for review.
   * EMILY LEE = monthly studio office rent paid by Elyse for her coaching practice ($924/mo recurring) → elyse_coaching / rent_lease_property (Schedule C Line 20b). High confidence; no review required.
   * ABODE HOME SECURITY = Whitford House smart home security monitoring subscription ($26/mo) → airbnb_activity / other_rental. High confidence; no review required.
+  * KATSAM = furniture retailer; purchases were for Whitford House setup → airbnb_activity / other_rental. High confidence; no review required.
   * Transfers and credit card payments between owned accounts MUST use category_tax="transfer" and NO entity. This includes: credit card payments, bank-to-bank ACH transfers, Venmo/Zelle between your own accounts, moving money from checking to savings, etc. These are excluded from taxes and budget entirely.
 - FLAG split-purpose transactions with review_required=true and add "split_candidate" reason code.
 - Reason codes must be short, machine-readable, and explain the key signal used.
@@ -481,7 +482,7 @@ This section encodes the high-frequency vendors that appear in this household's 
 
 **Ambiguous — always flag for review:**
 - EMILY LEE (avg $924, 26 txns): Confirmed — monthly studio office rent for Elyse's coaching practice → elyse_coaching/rent_lease_property. (See hard rules above.)
-- KATSAM (avg $97, 26 txns concentrated in June 2025): Unknown — likely a conference, training retreat, or coaching intensive in June 2025. Route to coaching entity/other_expenses (professional development) with review_required=true.
+- KATSAM (avg $97, 26 txns concentrated in June 2025): Confirmed — furniture purchased for Whitford House setup → airbnb_activity/other_rental. High confidence; no review required.
 - OCEAN AVENEUE (avg $386, 13 txns, misspelled): Recurring monthly amount on Ocean Ave SF — possibly a studio membership, coworking space, or storage unit. Flag for review; lean family_personal/other_personal until confirmed.
 - SHAREBITE (avg $3, 27 txns): Employee meal-benefit card; the $3 charge is the personal overage above the employer stipend. Route to family_personal/dining_out (tiny personal food charge) unless the account context shows a coaching business account, in which case route to coaching entity/meals.
 - PATELCO (avg $6,386, 28 txns): Patelco Credit Union — large recurring payment, likely a loan. Flag for review as family_personal/potentially_deductible (if mortgage/HELOC interest) or transfer (if principal payment).
