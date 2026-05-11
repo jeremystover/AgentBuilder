@@ -389,7 +389,7 @@ function TransactionDrawer({
   }, [txId]);
 
   const handleSave = async () => {
-    if (!detail || !categoryTax) return;
+    if (!detail) return;
     setBusy(true);
     try {
       await classifyTransaction(detail.transaction.id, {
