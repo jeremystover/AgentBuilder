@@ -331,7 +331,14 @@ function TransactionRow({ tx, onOpen }: { tx: Transaction; onOpen(): void }) {
         {tx.entity ? <Badge tone="info">{humanizeSlug(tx.entity)}</Badge> : <span className="text-text-subtle">—</span>}
       </td>
       <td>
-        {tx.category_tax ? <span className="text-text-primary">{humanizeSlug(tx.category_tax)}</span> : <span className="text-text-subtle">—</span>}
+        {tx.category_tax || tx.category_budget ? (
+          <div className="flex flex-col gap-0.5">
+            {tx.category_tax && <span className="text-text-primary">{humanizeSlug(tx.category_tax)}</span>}
+            {tx.category_budget && <span className="text-text-muted italic text-xs">{humanizeSlug(tx.category_budget)}</span>}
+          </div>
+        ) : (
+          <span className="text-text-subtle">—</span>
+        )}
       </td>
       <td className="text-xs text-text-muted">{tx.method ?? "—"}</td>
       <td className="pr-4">
