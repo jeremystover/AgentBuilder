@@ -43,6 +43,7 @@ interface BookkeepingTransaction {
   review_id: string | null;
   suggested_entity: string | null;
   suggested_category_tax: string | null;
+  suggested_category_budget: string | null;
 }
 
 // ── GET /bookkeeping/session ──────────────────────────────────────────────────
@@ -153,7 +154,7 @@ export async function handleBookkeepingBatch(request: Request, env: Env): Promis
        c.category_budget AS current_category_budget,
        c.confidence AS current_confidence, c.method AS current_method,
        rq.id AS review_id,
-       rq.suggested_entity, rq.suggested_category_tax
+       rq.suggested_entity, rq.suggested_category_tax, rq.suggested_category_budget
      FROM transactions t
      LEFT JOIN classifications c ON c.transaction_id = t.id
      LEFT JOIN review_queue rq ON rq.transaction_id = t.id
@@ -185,6 +186,7 @@ export async function handleBookkeepingBatch(request: Request, env: Env): Promis
     review_id: string | null;
     suggested_entity: string | null;
     suggested_category_tax: string | null;
+    suggested_category_budget: string | null;
   }>();
 
   const totalRow = await env.DB.prepare(
