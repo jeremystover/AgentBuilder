@@ -8,7 +8,7 @@ import {
 import { useReviewQueue } from "../../hooks/useReviewQueue";
 import { resolveReview, bulkResolveReview, runClassification, createRule, applyRuleRetroactive, reclassifyWithAI, type RuleInput } from "../../api";
 import type { ReviewItem, ReviewStatus, ResolveAction, RuleMatchField, RuleMatchOperator, EntitySlug } from "../../types";
-import { ENTITY_OPTIONS, TAX_OPTIONS, TRANSFER_OPTION, type OptionCategory } from "../../catalog";
+import { ENTITY_OPTIONS, TRANSFER_OPTION, type OptionCategory } from "../../catalog";
 import { useCategoryOptions } from "../../hooks/useCategoryOptions";
 
 const FIELD_OPTIONS: { value: RuleMatchField; label: string }[] = [
@@ -376,10 +376,10 @@ export function ReviewQueueView() {
           </div>
         </div>
         <div className="flex items-end gap-2 mt-3 flex-wrap">
-          <Button variant="success" disabled={status !== "pending" || busy || (!selectedAllFiltered && selectedCount === 0)} onClick={() => onBulk("accept")}>
+          <Button variant="success" disabled={status !== "pending" || busy || (!selectedAllFiltered && selectedCount === 0)} onClick={() => onBulk("accept", selectedAllFiltered)}>
             Accept selected
           </Button>
-          <Button disabled={(status !== "resolved" && status !== "skipped") || busy || (!selectedAllFiltered && selectedCount === 0)} onClick={() => onBulk("reopen")}>
+          <Button disabled={(status !== "resolved" && status !== "skipped") || busy || (!selectedAllFiltered && selectedCount === 0)} onClick={() => onBulk("reopen", selectedAllFiltered)}>
             Reopen selected
           </Button>
           <div className="h-6 border-l border-border mx-1" />
@@ -400,7 +400,7 @@ export function ReviewQueueView() {
               ))}
             </Select>
           </div>
-          <Button variant="primary" disabled={status !== "pending" || busy || !bulkCategory || (!selectedAllFiltered && selectedCount === 0)} onClick={() => onBulk("classify")}>
+          <Button variant="primary" disabled={status !== "pending" || busy || !bulkCategory || (!selectedAllFiltered && selectedCount === 0)} onClick={() => onBulk("classify", selectedAllFiltered)}>
             Reclassify selected
           </Button>
         </div>
@@ -490,6 +490,7 @@ export function ReviewQueueView() {
       {pendingRuleProposal && (
         <ProposeRuleModal
           proposal={pendingRuleProposal}
+          taxOptions={taxOptions}
           onDismiss={() => setPendingRuleProposal(null)}
           onSaved={() => { setPendingRuleProposal(null); void refresh(); }}
         />
@@ -552,9 +553,10 @@ function ReviewRow({
 // ── Propose-rule modal ───────────────────────────────────────────────────────
 
 function ProposeRuleModal({
-  proposal, onDismiss, onSaved,
+  proposal, taxOptions, onDismiss, onSaved,
 }: {
   proposal: RuleProposal;
+  taxOptions: OptionCategory[];
   onDismiss(): void;
   onSaved(): void;
 }) {
@@ -647,12 +649,12 @@ function ProposeRuleModal({
                 <option value="">— none —</option>
                 <option value={TRANSFER_OPTION.slug}>{TRANSFER_OPTION.label}</option>
                 <optgroup label="Schedule C">
-                  {TAX_OPTIONS.filter((c) => c.group === "schedule_c").map(({ slug, label }) => (
+                  {taxOptions.filter((c) => c.group === "schedule_c").map(({ slug, label }) => (
                     <option key={slug} value={slug}>{label}</option>
                   ))}
                 </optgroup>
                 <optgroup label="Schedule E">
-                  {TAX_OPTIONS.filter((c) => c.group === "schedule_e").map(({ slug, label }) => (
+                  {taxOptions.filter((c) => c.group === "schedule_e").map(({ slug, label }) => (
                     <option key={slug} value={slug}>{label}</option>
                   ))}
                 </optgroup>

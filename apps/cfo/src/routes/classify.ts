@@ -326,13 +326,12 @@ export async function handleReapplyAccountRules(request: Request, env: Env): Pro
   ).bind(userId).all<Rule>();
   const rules = rulesResult.results;
 
-  // Transactions from tagged accounts where classification is not locked/manual.
-  // account_owner_tag is included so we can fall back to the account entity when
-  // no merchant/description rule matches — the expected behaviour after a direct
-  // D1 owner_tag assignment that bypassed handleUpdateAccount (which would have
-  // created the account_id rule automatically).
+  // Select only the columns needed by applyRules + the write path.
+  // Avoid t.* to keep the result payload small.
   const rows = await env.DB.prepare(
-    `SELECT t.*, a.owner_tag AS account_owner_tag, c.id AS class_id, c.method, c.is_locked
+    `SELECT t.id, t.account_id, t.description, t.merchant_name, t.amount,
+            a.owner_tag AS account_owner_tag,
+            c.id AS class_id
      FROM transactions t
      JOIN accounts a ON a.id = t.account_id
      LEFT JOIN classifications c ON c.transaction_id = t.id
@@ -341,38 +340,43 @@ export async function handleReapplyAccountRules(request: Request, env: Env): Pro
        AND t.is_pending = 0
        AND (c.id IS NULL OR (c.is_locked = 0 AND c.method != 'manual'))
      ORDER BY t.posted_date DESC`,
-  ).bind(userId).all<Transaction & { account_owner_tag: string; class_id: string | null; method: string | null; is_locked: number | null }>();
+  ).bind(userId).all<Pick<Transaction, 'id' | 'account_id' | 'description' | 'merchant_name' | 'amount'> & {
+    account_owner_tag: string;
+    class_id: string | null;
+  }>();
 
-  let reclassified = 0;
-
+  // Build all prepared statements in memory then execute in batches.
+  // One classify INSERT + one review_queue UPDATE per transaction.
+  const stmts: D1PreparedStatement[] = [];
   for (const tx of rows.results) {
-    const ruleMatch = applyRules(tx as Transaction, rules);
-
-    // Use the matched rule's entity, or fall back to the account's owner_tag so
-    // that every transaction from a tagged account gets classified even when no
-    // merchant/description rule matches.
+    const ruleMatch = applyRules(tx as unknown as Transaction, rules);
     const entity = ruleMatch?.entity ?? tx.account_owner_tag;
     const categoryTax = ruleMatch?.category_tax ?? null;
     const categoryBudget = ruleMatch?.category_budget ?? null;
     const reasonCode = ruleMatch ? `rule:${ruleMatch.rule_name}` : `account_tag:${tx.account_owner_tag}`;
-
     const classId = tx.class_id ?? crypto.randomUUID();
-    await env.DB.prepare(
-      `INSERT OR REPLACE INTO classifications
-         (id, transaction_id, entity, category_tax, category_budget, confidence, method, reason_codes, review_required, classified_by)
-       VALUES (?, ?, ?, ?, ?, 1.0, 'rule', ?, 0, 'system')`,
-    ).bind(
-      classId, tx.id, entity, categoryTax, categoryBudget,
-      JSON.stringify([reasonCode]),
-    ).run();
-    await resolveReviewQueueItem(env, tx.id, 'system');
-    reclassified++;
+
+    stmts.push(
+      env.DB.prepare(
+        `INSERT OR REPLACE INTO classifications
+           (id, transaction_id, entity, category_tax, category_budget, confidence, method, reason_codes, review_required, classified_by)
+         VALUES (?, ?, ?, ?, ?, 1.0, 'rule', ?, 0, 'system')`,
+      ).bind(classId, tx.id, entity, categoryTax, categoryBudget, JSON.stringify([reasonCode])),
+    );
+    stmts.push(
+      env.DB.prepare(
+        `UPDATE review_queue SET status='resolved', resolved_by='system', resolved_at=datetime('now')
+         WHERE transaction_id = ? AND status = 'pending'`,
+      ).bind(tx.id),
+    );
   }
 
-  return jsonOk({
-    total_eligible: rows.results.length,
-    reclassified,
-  });
+  // D1 batch limit is 100 statements; chunk conservatively at 100.
+  for (let i = 0; i < stmts.length; i += 100) {
+    await env.DB.batch(stmts.slice(i, i + 100));
+  }
+
+  return jsonOk({ total_eligible: rows.results.length, reclassified: rows.results.length });
 }
 
 // ── POST /classify/reapply-all-rules ─────────────────────────────────────────
