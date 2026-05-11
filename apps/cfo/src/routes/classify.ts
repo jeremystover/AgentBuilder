@@ -7,6 +7,7 @@ import { backfillUnclassifiedReviewQueue, resolveReviewQueueItem, upsertReviewQu
 import { buildAmazonSearchText, loadAmazonContext } from '../lib/amazon';
 import { loadVenmoContext } from '../lib/venmo';
 import { loadAppleContext } from '../lib/apple';
+import { ensureBudgetCategory } from '../lib/budget';
 
 function buildAccountContext(tx: {
   account_name?: string | null;
@@ -544,4 +545,77 @@ export async function handleClassifySingle(request: Request, env: Env, txId: str
   }
 
   return jsonOk({ method: 'ai', classification, _debug });
+}
+
+// ── POST /classify/backfill-family-budget ─────────────────────────────────────
+// Re-run AI classification to fill in missing category_budget values for
+// family_personal transactions that were classified without one.
+export async function handleBackfillFamilyBudget(request: Request, env: Env): Promise<Response> {
+  const userId = getUserId(request);
+
+  const eligible = await env.DB.prepare(
+    `SELECT t.*, c.id AS class_id,
+            a.name AS account_name, a.mask AS account_mask, a.type AS account_type,
+            a.subtype AS account_subtype, a.owner_tag
+     FROM transactions t
+     JOIN classifications c ON c.transaction_id = t.id
+     LEFT JOIN accounts a ON a.id = t.account_id
+     WHERE t.user_id = ?
+       AND c.entity = 'family_personal'
+       AND c.category_budget IS NULL
+       AND c.method != 'manual'
+       AND c.is_locked = 0
+       AND t.is_pending = 0`,
+  ).bind(userId).all<Transaction & {
+    class_id: string;
+    account_name: string | null;
+    account_mask: string | null;
+    account_type: string | null;
+    account_subtype: string | null;
+    owner_tag: string | null;
+  }>();
+
+  if (!eligible.results.length) {
+    return jsonOk({ total_eligible: 0, updated: 0, errors: 0 });
+  }
+
+  const batchItems = await Promise.all(
+    eligible.results.map(async tx => {
+      const accountContext = buildAccountContext(tx);
+      const [historicalExamples, amazonContext, venmoContext, appleContext] = await Promise.all([
+        loadHistoricalExamples(env, userId, tx as Transaction),
+        loadAmazonContext(env, tx.id),
+        loadVenmoContext(env, tx.id),
+        loadAppleContext(env, tx.id),
+      ]);
+
+      return {
+        transaction: tx as Transaction,
+        accountContext,
+        historicalExamples,
+        amazonContext,
+        venmoContext,
+        appleContext,
+      };
+    }),
+  );
+
+  let updated = 0;
+  let errors = 0;
+
+  await classifyBatch(env, batchItems, async (txId, result, error) => {
+    if (error || !result?.category_budget) {
+      errors++;
+      return;
+    }
+
+    await env.DB.prepare(
+      `UPDATE classifications SET category_budget = ? WHERE transaction_id = ?`,
+    ).bind(result.category_budget, txId).run();
+
+    await ensureBudgetCategory(env, userId, result.category_budget);
+    updated++;
+  });
+
+  return jsonOk({ total_eligible: eligible.results.length, updated, errors });
 }

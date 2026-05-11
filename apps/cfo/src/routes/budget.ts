@@ -289,7 +289,11 @@ export async function handleBudgetStatus(request: Request, env: Env): Promise<Re
   const spendBySlug = new Map<string, { spent: number; tx_count: number }>();
   for (const s of spendRows.results) spendBySlug.set(s.category_slug, { spent: s.spent, tx_count: s.tx_count });
 
-  const slugs = new Set<string>([...targetBySlug.keys(), ...spendBySlug.keys()]);
+  const slugs = new Set<string>([
+    ...categoryRows.results.map(r => r.slug),
+    ...targetBySlug.keys(),
+    ...spendBySlug.keys(),
+  ]);
   if (categorySlug) {
     // Ensure the filter still shows up even with no data.
     slugs.add(categorySlug);
@@ -654,4 +658,45 @@ export async function handleBudgetCutsReport(request: Request, env: Env): Promis
     annual_savings_breakdown: annualBreakdown,
     trailing_window: { start: trailingStart, end: trailingEnd, months: 12 },
   });
+}
+
+// ── GET /budget/history ───────────────────────────────────────────────────────
+// Historical spend for a category across multiple lookback windows, used by
+// the "Calculate" dialog to suggest a budget target.
+export async function handleBudgetHistory(request: Request, env: Env): Promise<Response> {
+  const userId = getUserId(request);
+  const url = new URL(request.url);
+  const categorySlug = url.searchParams.get('category_slug');
+
+  if (!categorySlug) return jsonError('category_slug is required');
+
+  const PERIODS = [
+    { label: '1 month',  days: 30 },
+    { label: '3 months', days: 91 },
+    { label: '1 year',   days: 365 },
+    { label: '2 years',  days: 730 },
+  ];
+
+  const periods = await Promise.all(
+    PERIODS.map(async ({ label, days }) => {
+      const row = await env.DB.prepare(
+        `SELECT SUM(-t.amount) AS total_spent, COUNT(*) AS tx_count
+         FROM transactions t
+         JOIN classifications c ON c.transaction_id = t.id
+         WHERE t.user_id = ?
+           AND t.amount < 0
+           AND c.category_budget = ?
+           AND t.posted_date >= date('now', '-${days} days')`,
+      ).bind(userId, categorySlug).first<{ total_spent: number | null; tx_count: number }>();
+
+      const totalSpent = Math.round((row?.total_spent ?? 0) * 100) / 100;
+      const txCount = row?.tx_count ?? 0;
+      const monthlyAvg = Math.round((totalSpent / days * (365.25 / 12)) * 100) / 100;
+      const annualAvg = Math.round((totalSpent / days * 365.25) * 100) / 100;
+
+      return { label, days, total_spent: totalSpent, tx_count: txCount, monthly_avg: monthlyAvg, annual_avg: annualAvg };
+    }),
+  );
+
+  return jsonOk({ category_slug: categorySlug, periods });
 }

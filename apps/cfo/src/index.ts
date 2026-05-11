@@ -33,7 +33,7 @@ import { handleSetup } from './routes/setup';
 import { handleGetBankConfig, handleStartBankConnect, handleCompleteBankConnect, handleBankSync } from './routes/bank';
 import { handleListAccounts, handleUpdateAccount } from './routes/accounts';
 import { handleListTransactions, handleGetTransaction, handleDeleteTransaction, handleManualClassify, handleSplitTransaction } from './routes/transactions';
-import { handleRunClassification, handleClassifySingle, handleReapplyAccountRules, handleReapplyAllRules } from './routes/classify';
+import { handleRunClassification, handleClassifySingle, handleReapplyAccountRules, handleReapplyAllRules, handleBackfillFamilyBudget } from './routes/classify';
 import { handleListReview, handleResolveReview, handleBulkResolveReview, handleNextReviewItem } from './routes/review';
 import { handleScheduleC, handleScheduleE, handleSummary, handleExport, handleSnapshot } from './routes/reports';
 import { handleListImports, handleDeleteAllImports, handleDeleteImport, handleCsvImport } from './routes/imports';
@@ -51,6 +51,7 @@ import {
   handleBudgetStatus,
   handleBudgetForecast,
   handleBudgetCutsReport,
+  handleBudgetHistory,
 } from './routes/budget';
 import { handleIncomeStatus, handleListIncomeTargets, handleUpsertIncomeTarget, handleDeleteIncomeTarget } from './routes/income';
 import { handleListTaxCategories, handleCreateTaxCategory, handleUpdateTaxCategory } from './routes/tax-categories';
