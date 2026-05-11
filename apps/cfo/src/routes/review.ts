@@ -178,7 +178,7 @@ async function resolveReviewItem(
          confidence=1.0,
          method='manual', review_required=0, classified_by='user',
          classified_at=datetime('now')`,
-    ).bind(crypto.randomUUID(), item.transaction_id, entity ?? null, category_tax, category_budget ?? null, expense_type ?? null, cut_status ?? null).run();
+    ).bind(crypto.randomUUID(), item.transaction_id, entity ?? null, category_tax ?? null, category_budget ?? null, expense_type ?? null, cut_status ?? null).run();
 
     if (entity) {
       await maybeLearnRuleFromManualClassification(env, userId, item.transaction_id, {
