@@ -30,7 +30,7 @@ import { handleBankSync } from './routes/bank';
 import { handleCsvImport } from './routes/imports';
 import { handleAmazonImport } from './routes/amazon';
 import { handleTillerImport } from './routes/tiller';
-import { handleRunClassification, handleReapplyAccountRules } from './routes/classify';
+import { handleRunClassification, handleReapplyAccountRules, handleBackfillFamilyBudget } from './routes/classify';
 import { handleListReview, handleResolveReview, handleNextReviewItem } from './routes/review';
 import { handleScheduleC, handleScheduleE, handleSummary } from './routes/reports';
 import {
@@ -397,6 +397,17 @@ export const MCP_TOOLS = [
     },
   },
 
+  {
+    name: 'backfill_budget_categories',
+    description:
+      'Re-run AI classification to fill in missing category_budget values for family_personal transactions that were classified without a budget category. Only touches AI/rule-classified transactions — manual decisions are preserved. Returns counts of updated/errors.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+
   // ── Bookkeeping session tools ───────────────────────────────────────────────
   {
     name: 'start_bookkeeping_session',
@@ -607,6 +618,11 @@ export async function dispatchTool(
     case 'reapply_account_rules': {
       const req = jsonRequest('POST', 'https://cfo.invalid/classify/reapply-account-rules', {});
       return respondText(await handleReapplyAccountRules(req, env));
+    }
+
+    case 'backfill_budget_categories': {
+      const req = jsonRequest('POST', 'https://cfo.invalid/classify/backfill-family-budget', {});
+      return respondText(await handleBackfillFamilyBudget(req, env));
     }
 
     case 'list_review_queue': {

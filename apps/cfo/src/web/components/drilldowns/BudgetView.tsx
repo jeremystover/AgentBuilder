@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Calculator, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   Button, Card, Badge, Select, Input, Drawer, PageHeader, EmptyState, fmtUsd,
@@ -8,12 +8,13 @@ import { useBudget } from "../../hooks/useBudget";
 import { useCategoryOptions } from "../../hooks/useCategoryOptions";
 import {
   upsertBudgetTarget, deleteBudgetTarget, createBudgetCategory,
-  listTransactions, classifyTransaction, getBudgetForecast, getCutsReport,
+  listTransactions, classifyTransaction, getBudgetForecast, getCutsReport, getBudgetHistory,
 } from "../../api";
 import { txAmountColor } from "../../utils/txColor";
 import type {
   BudgetCadence, BudgetPreset, BudgetStatusLine, BudgetStatusTone, BudgetTarget,
   BudgetForecastResponse, CutsReportResponse, Transaction, EntitySlug, ExpenseType,
+  BudgetHistoryResponse,
 } from "../../types";
 
 const PRESETS: { value: BudgetPreset; label: string }[] = [
@@ -55,8 +56,13 @@ export function BudgetView() {
   const { status, categories, targets, loading, error, refresh } = useBudget({ status: statusParams });
 
   const [openSlug, setOpenSlug] = useState<string | null>(null);
+  const [openSlugPrefill, setOpenSlugPrefill] = useState<number | null>(null);
   const [openTxSlug, setOpenTxSlug] = useState<string | null>(null);
   const [creatingCategory, setCreatingCategory] = useState(false);
+
+  const [calcSlug, setCalcSlug] = useState<string | null>(null);
+  const [history, setHistory] = useState<BudgetHistoryResponse | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   const [forecast, setForecast] = useState<BudgetForecastResponse | null>(null);
   const [forecastLoading, setForecastLoading] = useState(false);
@@ -82,6 +88,19 @@ export function BudgetView() {
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
       setCutsLoading(false);
+    }
+  };
+
+  const openCalc = async (slug: string) => {
+    setCalcSlug(slug);
+    setHistory(null);
+    setHistoryLoading(true);
+    try {
+      setHistory(await getBudgetHistory(slug));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setHistoryLoading(false);
     }
   };
 
@@ -233,6 +252,7 @@ export function BudgetView() {
                   line={line}
                   onClick={() => setOpenSlug(line.category_slug)}
                   onSpentClick={() => setOpenTxSlug(line.category_slug)}
+                  onCalcClick={() => void openCalc(line.category_slug)}
                 />
               ))}
             </tbody>
@@ -253,8 +273,9 @@ export function BudgetView() {
         slug={openSlug}
         categoryName={openSlug ? (status?.categories.find((c) => c.category_slug === openSlug)?.category_name ?? openSlug) : null}
         existingTarget={openSlug ? targetByCategory.get(openSlug) ?? null : null}
-        onClose={() => setOpenSlug(null)}
-        onSaved={async () => { await refreshAll(); setOpenSlug(null); }}
+        prefillAmount={openSlugPrefill}
+        onClose={() => { setOpenSlug(null); setOpenSlugPrefill(null); }}
+        onSaved={async () => { await refreshAll(); setOpenSlug(null); setOpenSlugPrefill(null); }}
       />
 
       <NewCategoryDrawer
@@ -262,6 +283,21 @@ export function BudgetView() {
         existingSlugs={categories.map((c) => c.slug)}
         onClose={() => setCreatingCategory(false)}
         onSaved={async () => { await refreshAll(); setCreatingCategory(false); }}
+      />
+
+      <BudgetHistoryModal
+        slug={calcSlug}
+        categoryName={calcSlug ? (status?.categories.find((c) => c.category_slug === calcSlug)?.category_name ?? calcSlug) : null}
+        history={history}
+        loading={historyLoading}
+        onClose={() => setCalcSlug(null)}
+        onUseTarget={(monthlyAvg) => {
+          if (calcSlug) {
+            setOpenSlugPrefill(monthlyAvg);
+            setOpenSlug(calcSlug);
+          }
+          setCalcSlug(null);
+        }}
       />
     </div>
   );
@@ -519,7 +555,7 @@ const STATUS_LABEL: Record<BudgetStatusTone, string> = {
   no_target: "No target",
 };
 
-function BudgetRow({ line, onClick, onSpentClick }: { line: BudgetStatusLine; onClick(): void; onSpentClick(): void }) {
+function BudgetRow({ line, onClick, onSpentClick, onCalcClick }: { line: BudgetStatusLine; onClick(): void; onSpentClick(): void; onCalcClick(): void }) {
   const pct = line.percent_used ?? 0;
   const barCls =
     line.status === "over" ? "bg-accent-danger" :
@@ -537,7 +573,16 @@ function BudgetRow({ line, onClick, onSpentClick }: { line: BudgetStatusLine; on
       onClick={onClick}
     >
       <td className="pl-4 py-2.5">
-        <div className="text-text-primary">{line.category_name}</div>
+        <div className="flex items-center gap-1.5">
+          <span className="text-text-primary">{line.category_name}</span>
+          <button
+            className="text-text-subtle hover:text-text-muted"
+            onClick={(e) => { e.stopPropagation(); onCalcClick(); }}
+            title="Calculate budget"
+          >
+            <Calculator className="w-3.5 h-3.5" />
+          </button>
+        </div>
         <div className="text-xs text-text-muted">{line.tx_count} tx</div>
       </td>
       <td className="text-right tabular-nums">
@@ -719,11 +764,12 @@ function BudgetTransactionsDrawer({
 // ── Target editor ───────────────────────────────────────────────────────────
 
 function TargetEditor({
-  slug, categoryName, existingTarget, onClose, onSaved,
+  slug, categoryName, existingTarget, prefillAmount, onClose, onSaved,
 }: {
   slug: string | null;
   categoryName: string | null;
   existingTarget: BudgetTarget | null;
+  prefillAmount?: number | null;
   onClose(): void;
   onSaved(): Promise<void>;
 }) {
@@ -737,8 +783,8 @@ function TargetEditor({
   // Reset form whenever a different category is opened.
   if (slug !== editKey) {
     setEditKey(slug);
-    setCadence(existingTarget?.cadence ?? "monthly");
-    setAmount(existingTarget?.amount?.toString() ?? "");
+    setCadence(prefillAmount != null ? "monthly" : (existingTarget?.cadence ?? "monthly"));
+    setAmount(prefillAmount != null ? String(prefillAmount) : (existingTarget?.amount?.toString() ?? ""));
     setEffectiveFrom(existingTarget?.effective_from ?? "");
     setNotes(existingTarget?.notes ?? "");
   }
@@ -950,6 +996,69 @@ function NewCategoryDrawer({
           </div>
         </div>
       </div>
+    </Drawer>
+  );
+}
+
+// ── Budget history modal ───────────────────────────────────────────────────
+
+function BudgetHistoryModal({
+  slug, categoryName, history, loading, onClose, onUseTarget,
+}: {
+  slug: string | null;
+  categoryName: string | null;
+  history: BudgetHistoryResponse | null;
+  loading: boolean;
+  onClose(): void;
+  onUseTarget(monthlyAvg: number): void;
+}) {
+  return (
+    <Drawer
+      open={!!slug}
+      onClose={onClose}
+      title={`Calculate Budget${categoryName ? ` — ${categoryName}` : ""}`}
+    >
+      {loading ? (
+        <div className="text-sm text-text-muted">Loading…</div>
+      ) : !history ? (
+        <div className="text-sm text-text-muted">No data.</div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-text-muted uppercase tracking-wide border-b border-border">
+                <th className="py-2">Period</th>
+                <th className="text-right">Total Spent</th>
+                <th className="text-right">Monthly Avg</th>
+                <th className="text-right">Suggested Target</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {history.periods.map((p) => (
+                <tr key={p.label} className="border-b border-border last:border-b-0">
+                  <td className="py-2.5 text-text-primary">{p.label}</td>
+                  <td className="text-right tabular-nums text-text-muted">
+                    {fmtUsd(p.total_spent)}
+                    <div className="text-xs text-text-subtle">{p.tx_count} tx</div>
+                  </td>
+                  <td className="text-right tabular-nums">{fmtUsd(p.monthly_avg)}</td>
+                  <td className="text-right tabular-nums font-medium">{fmtUsd(p.monthly_avg)}</td>
+                  <td className="pl-3">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => onUseTarget(p.monthly_avg)}
+                    >
+                      Use this
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </Drawer>
   );
 }

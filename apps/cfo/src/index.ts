@@ -218,6 +218,10 @@ const ROUTES: Route[] = [
   { method: 'GET',    pattern: /^\/budget\/status$/,                     handler: (req, env) => handleBudgetStatus(req, env) },
   { method: 'GET',    pattern: /^\/budget\/forecast$/,                   handler: (req, env) => handleBudgetForecast(req, env) },
   { method: 'GET',    pattern: /^\/budget\/cuts$/,                       handler: (req, env) => handleBudgetCutsReport(req, env) },
+  { method: 'GET',    pattern: /^\/budget\/history$/,                    handler: (req, env) => handleBudgetHistory(req, env) },
+
+  // AI Classification (backfill)
+  { method: 'POST',   pattern: /^\/classify\/backfill-family-budget$/,   handler: (req, env) => handleBackfillFamilyBudget(req, env) },
 
   // Income tracking
   { method: 'GET',    pattern: /^\/income\/status$/,                     handler: (req, env) => handleIncomeStatus(req, env) },
