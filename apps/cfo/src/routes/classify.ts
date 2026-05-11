@@ -550,8 +550,27 @@ export async function handleClassifySingle(request: Request, env: Env, txId: str
 // ── POST /classify/backfill-family-budget ─────────────────────────────────────
 // Re-run AI classification to fill in missing category_budget values for
 // family_personal transactions that were classified without one.
-export async function handleBackfillFamilyBudget(request: Request, env: Env): Promise<Response> {
+export async function handleBackfillFamilyBudget(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const userId = getUserId(request);
+  const limit = 10;
+
+  const totalRow = await env.DB.prepare(
+    `SELECT COUNT(*) AS total
+     FROM transactions t
+     JOIN classifications c ON c.transaction_id = t.id
+     WHERE t.user_id = ?
+       AND c.entity = 'family_personal'
+       AND c.category_budget IS NULL
+       AND c.method != 'manual'
+       AND c.is_locked = 0
+       AND t.is_pending = 0`,
+  ).bind(userId).first<{ total: number }>();
+
+  const remaining_before = totalRow?.total ?? 0;
+
+  if (!remaining_before) {
+    return jsonOk({ remaining: 0, updated: 0, errors: 0 });
+  }
 
   const eligible = await env.DB.prepare(
     `SELECT t.*, c.id AS class_id,
@@ -565,8 +584,9 @@ export async function handleBackfillFamilyBudget(request: Request, env: Env): Pr
        AND c.category_budget IS NULL
        AND c.method != 'manual'
        AND c.is_locked = 0
-       AND t.is_pending = 0`,
-  ).bind(userId).all<Transaction & {
+       AND t.is_pending = 0
+     LIMIT ?`,
+  ).bind(userId, limit).all<Transaction & {
     class_id: string;
     account_name: string | null;
     account_mask: string | null;
@@ -575,30 +595,25 @@ export async function handleBackfillFamilyBudget(request: Request, env: Env): Pr
     owner_tag: string | null;
   }>();
 
-  if (!eligible.results.length) {
-    return jsonOk({ total_eligible: 0, updated: 0, errors: 0 });
+  const batchItems: Array<{
+    transaction: Transaction;
+    accountContext: string;
+    historicalExamples: Array<{ merchant: string; entity: string; category_tax: string }>;
+    amazonContext: Awaited<ReturnType<typeof loadAmazonContext>>;
+    venmoContext: Awaited<ReturnType<typeof loadVenmoContext>>;
+    appleContext: Awaited<ReturnType<typeof loadAppleContext>>;
+  }> = [];
+
+  for (const tx of eligible.results) {
+    const accountContext = buildAccountContext(tx);
+    const [historicalExamples, amazonContext, venmoContext, appleContext] = await Promise.all([
+      loadHistoricalExamples(env, userId, tx as Transaction),
+      loadAmazonContext(env, tx.id),
+      loadVenmoContext(env, tx.id),
+      loadAppleContext(env, tx.id),
+    ]);
+    batchItems.push({ transaction: tx as Transaction, accountContext, historicalExamples, amazonContext, venmoContext, appleContext });
   }
-
-  const batchItems = await Promise.all(
-    eligible.results.map(async tx => {
-      const accountContext = buildAccountContext(tx);
-      const [historicalExamples, amazonContext, venmoContext, appleContext] = await Promise.all([
-        loadHistoricalExamples(env, userId, tx as Transaction),
-        loadAmazonContext(env, tx.id),
-        loadVenmoContext(env, tx.id),
-        loadAppleContext(env, tx.id),
-      ]);
-
-      return {
-        transaction: tx as Transaction,
-        accountContext,
-        historicalExamples,
-        amazonContext,
-        venmoContext,
-        appleContext,
-      };
-    }),
-  );
 
   let updated = 0;
   let errors = 0;
@@ -617,5 +632,13 @@ export async function handleBackfillFamilyBudget(request: Request, env: Env): Pr
     updated++;
   });
 
-  return jsonOk({ total_eligible: eligible.results.length, updated, errors });
+  const remaining = Math.max(0, remaining_before - eligible.results.length);
+
+  if (remaining > 0) {
+    ctx.waitUntil(
+      fetch(request.url, { method: 'POST', headers: { 'x-user-id': userId } }),
+    );
+  }
+
+  return jsonOk({ remaining, updated, errors });
 }
