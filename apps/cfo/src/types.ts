@@ -159,6 +159,13 @@ export interface AmazonContext {
   inferred_destination: 'whitford_house' | 'family_home' | null;
 }
 
+export interface AppleContext {
+  receipt_id: string | null;
+  items: Array<{ name: string; price: number }>;
+  total_amount: number;
+  date: string | null;
+}
+
 export interface BusinessEntity {
   id: string;
   user_id: string;
