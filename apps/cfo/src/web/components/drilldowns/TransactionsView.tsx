@@ -445,17 +445,28 @@ function TransactionDrawer({
     setBusy(true);
     try {
       const result = await reclassifyWithAI(detail.transaction.id);
-      if (result._debug) {
+      // Console output for debugging
+      if (result.method === 'rule') {
+        console.log(
+          `[CFO classify] Rule: "${result.rule}" → ${result.entity ?? '—'} / ${result.category_tax ?? '—'}` +
+          (result.category_budget ? ` (budget: ${result.category_budget})` : ''),
+        );
+      } else if (result._debug) {
         console.group(`[CFO classify] ${detail.transaction.merchant_name ?? detail.transaction.description}`);
         console.log('Pass:', result._debug.pass);
         console.log('Prompt (user message):\n', result._debug.userMessage);
         console.log('Raw API response:', result._debug.rawResponse);
         console.groupEnd();
       }
-      console.log('[CFO classify] result:', result);
       toast.success(`Reclassified via ${result.method}`);
+      // Reload the transaction and sync all form fields
       const d = await getTransaction(detail.transaction.id);
       setDetail(d);
+      setEntity((d.transaction.entity ?? 'family_personal') as EntitySlug);
+      setCategoryTax(d.transaction.category_tax ?? '');
+      setCategoryBudget(d.transaction.category_budget ?? '');
+      setExpenseType(d.transaction.expense_type ?? null);
+      setCutStatus(d.transaction.cut_status ?? null);
       await onChanged();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));

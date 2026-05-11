@@ -486,7 +486,13 @@ export async function handleClassifySingle(request: Request, env: Env, txId: str
       crypto.randomUUID(), txId, ruleMatch.entity, ruleMatch.category_tax, ruleMatch.category_budget,
       JSON.stringify([`rule:${ruleMatch.rule_name}`]),
     ).run();
-    return jsonOk({ method: 'rule', rule: ruleMatch.rule_name });
+    return jsonOk({
+      method: 'rule',
+      rule: ruleMatch.rule_name,
+      entity: ruleMatch.entity,
+      category_tax: ruleMatch.category_tax,
+      category_budget: ruleMatch.category_budget,
+    });
   }
 
   const { classifyTransaction } = await import('../lib/claude');
