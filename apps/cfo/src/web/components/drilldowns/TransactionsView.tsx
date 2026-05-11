@@ -389,12 +389,12 @@ function TransactionDrawer({
   }, [txId]);
 
   const handleSave = async () => {
-    if (!detail || !categoryTax) return;
+    if (!detail) return;
     setBusy(true);
     try {
       await classifyTransaction(detail.transaction.id, {
         entity,
-        category_tax: categoryTax,
+        category_tax: categoryTax || undefined,
         category_budget: categoryBudget || undefined,
         expense_type: expenseType,
         cut_status: cutStatus,
@@ -458,8 +458,8 @@ function TransactionDrawer({
         console.log('Raw API response:', result._debug.rawResponse);
         console.groupEnd();
       }
-      toast.success(`Reclassified via ${result.method}`);
-      // Reload the transaction and sync all form fields
+      // Reload form fields before refreshing the parent list — this ensures
+      // no re-render from onChanged() can run after our state updates.
       const d = await getTransaction(detail.transaction.id);
       setDetail(d);
       setEntity((d.transaction.entity ?? 'family_personal') as EntitySlug);
@@ -467,7 +467,8 @@ function TransactionDrawer({
       setCategoryBudget(d.transaction.category_budget ?? '');
       setExpenseType(d.transaction.expense_type ?? null);
       setCutStatus(d.transaction.cut_status ?? null);
-      await onChanged();
+      toast.success(`Reclassified via ${result.method}`);
+      void onChanged();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {

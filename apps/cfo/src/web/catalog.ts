@@ -65,7 +65,7 @@ const SCHEDULE_E: OptionCategory[] = [
   { slug: "other_rental",           label: "Other (rental)",            kind: "tax",    group: "schedule_e" },
 ];
 
-const FAMILY: OptionCategory[] = [
+export const FAMILY_BUDGET_OPTIONS: OptionCategory[] = [
   { slug: "groceries",              label: "Groceries",                 kind: "budget", group: "family" },
   { slug: "dining_out",             label: "Dining out",                kind: "budget", group: "family" },
   { slug: "entertainment",          label: "Entertainment",             kind: "budget", group: "family" },
@@ -88,5 +88,5 @@ export const TRANSFER_OPTION: OptionCategory = {
 export const TAX_OPTIONS: OptionCategory[] = [...SCHEDULE_C, ...SCHEDULE_E];
 
 export const CATEGORY_OPTIONS: OptionCategory[] = [
-  ...SCHEDULE_C, ...SCHEDULE_E, ...FAMILY,
+  ...SCHEDULE_C, ...SCHEDULE_E, ...FAMILY_BUDGET_OPTIONS,
 ];

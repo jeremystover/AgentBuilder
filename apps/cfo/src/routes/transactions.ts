@@ -158,7 +158,7 @@ export async function handleDeleteTransaction(request: Request, env: Env, txId: 
 // ── PATCH /transactions/:id/classify ─────────────────────────────────────────
 const ClassifySchema = z.object({
   entity: z.enum(['elyse_coaching', 'jeremy_coaching', 'airbnb_activity', 'family_personal']).optional(),
-  category_tax: z.string().min(1),
+  category_tax: z.string().min(1).optional(),
   category_budget: z.string().optional(),
   expense_type: z.enum(['recurring', 'one_time']).nullable().optional(),
   cut_status: z.enum(['flagged', 'complete']).nullable().optional(),
