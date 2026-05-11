@@ -288,6 +288,21 @@ export async function deleteTransaction(id: string): Promise<{ deleted: true; tr
   return request(`/transactions/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
+export interface ReclassifyResult {
+  method: "rule" | "ai";
+  rule?: string;
+  classification?: unknown;
+  _debug?: {
+    userMessage: string;
+    pass: string;
+    rawResponse: unknown;
+  };
+}
+
+export async function reclassifyWithAI(id: string): Promise<ReclassifyResult> {
+  return request<ReclassifyResult>(`/classify/transaction/${encodeURIComponent(id)}`, { method: "POST" });
+}
+
 // ── Imports ───────────────────────────────────────────────────────────────
 
 export async function listImports(): Promise<{ imports: ImportRecord[] }> {

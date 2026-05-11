@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeftRight, ChevronDown, ChevronUp, Lock, RefreshCw, Trash2 } from "lucide-react";
+import { ArrowLeftRight, ChevronDown, ChevronUp, Lock, RefreshCw, Sparkles, Trash2 } from "lucide-react";
 import { txAmountColor } from "../../utils/txColor";
 import { toast } from "sonner";
 import {
@@ -7,7 +7,7 @@ import {
 } from "../ui";
 import { useTransactions } from "../../hooks/useTransactions";
 import { useAccounts } from "../../hooks/useAccounts";
-import { classifyTransaction, deleteTransaction, getTransaction } from "../../api";
+import { classifyTransaction, deleteTransaction, getTransaction, reclassifyWithAI } from "../../api";
 import type {
   EntitySlug, Transaction, TransactionDetail, CutStatus, ExpenseType,
 } from "../../types";
@@ -440,6 +440,30 @@ function TransactionDrawer({
     }
   };
 
+  const handleReclassify = async () => {
+    if (!detail) return;
+    setBusy(true);
+    try {
+      const result = await reclassifyWithAI(detail.transaction.id);
+      if (result._debug) {
+        console.group(`[CFO classify] ${detail.transaction.merchant_name ?? detail.transaction.description}`);
+        console.log('Pass:', result._debug.pass);
+        console.log('Prompt (user message):\n', result._debug.userMessage);
+        console.log('Raw API response:', result._debug.rawResponse);
+        console.groupEnd();
+      }
+      console.log('[CFO classify] result:', result);
+      toast.success(`Reclassified via ${result.method}`);
+      const d = await getTransaction(detail.transaction.id);
+      setDetail(d);
+      await onChanged();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (!txId) return null;
 
   const tx = detail?.transaction;
@@ -468,6 +492,14 @@ function TransactionDrawer({
               title="Mark as a transfer between accounts"
             >
               <ArrowLeftRight className="w-4 h-4" /> Transfer
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() => void handleReclassify()}
+              disabled={busy || !tx || locked}
+              title="Re-run AI classifier on this transaction (check browser console for prompt + response)"
+            >
+              <Sparkles className="w-4 h-4" /> Reclassify
             </Button>
             <Button variant="ghost" onClick={onClose}>Cancel</Button>
             <Button

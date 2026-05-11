@@ -504,25 +504,27 @@ export async function handleClassifySingle(request: Request, env: Env, txId: str
     venmoContext,
   );
 
+  const { _debug, ...classification } = result;
+
   await env.DB.prepare(
     `INSERT OR REPLACE INTO classifications
        (id, transaction_id, entity, category_tax, category_budget, confidence, method, reason_codes, review_required, classified_by)
      VALUES (?, ?, ?, ?, ?, ?, 'ai', ?, ?, 'system')`,
   ).bind(
-    crypto.randomUUID(), txId, result.entity ?? null, result.category_tax, result.category_budget ?? null,
-    result.confidence, JSON.stringify(result.reason_codes), result.review_required ? 1 : 0,
+    crypto.randomUUID(), txId, classification.entity ?? null, classification.category_tax, classification.category_budget ?? null,
+    classification.confidence, JSON.stringify(classification.reason_codes), classification.review_required ? 1 : 0,
   ).run();
 
-  if (result.review_required) {
-    const reviewContext = buildReviewDetails(tx as Transaction, result);
+  if (classification.review_required) {
+    const reviewContext = buildReviewDetails(tx as Transaction, classification);
     await upsertReviewQueue(
       env,
       txId,
       userId,
       'low_confidence',
-      result.entity ?? null,
-      result.category_tax,
-      result.confidence,
+      classification.entity ?? null,
+      classification.category_tax,
+      classification.confidence,
       reviewContext.details,
       reviewContext.needsInput,
     );
@@ -530,5 +532,5 @@ export async function handleClassifySingle(request: Request, env: Env, txId: str
     await resolveReviewQueueItem(env, txId, 'system');
   }
 
-  return jsonOk({ method: 'ai', classification: result });
+  return jsonOk({ method: 'ai', classification, _debug });
 }
