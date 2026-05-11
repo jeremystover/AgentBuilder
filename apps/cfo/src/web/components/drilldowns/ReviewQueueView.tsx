@@ -376,10 +376,10 @@ export function ReviewQueueView() {
           </div>
         </div>
         <div className="flex items-end gap-2 mt-3 flex-wrap">
-          <Button variant="success" disabled={status !== "pending" || busy || (!selectedAllFiltered && selectedCount === 0)} onClick={() => onBulk("accept")}>
+          <Button variant="success" disabled={status !== "pending" || busy || (!selectedAllFiltered && selectedCount === 0)} onClick={() => onBulk("accept", selectedAllFiltered)}>
             Accept selected
           </Button>
-          <Button disabled={(status !== "resolved" && status !== "skipped") || busy || (!selectedAllFiltered && selectedCount === 0)} onClick={() => onBulk("reopen")}>
+          <Button disabled={(status !== "resolved" && status !== "skipped") || busy || (!selectedAllFiltered && selectedCount === 0)} onClick={() => onBulk("reopen", selectedAllFiltered)}>
             Reopen selected
           </Button>
           <div className="h-6 border-l border-border mx-1" />
@@ -400,7 +400,7 @@ export function ReviewQueueView() {
               ))}
             </Select>
           </div>
-          <Button variant="primary" disabled={status !== "pending" || busy || !bulkCategory || (!selectedAllFiltered && selectedCount === 0)} onClick={() => onBulk("classify")}>
+          <Button variant="primary" disabled={status !== "pending" || busy || !bulkCategory || (!selectedAllFiltered && selectedCount === 0)} onClick={() => onBulk("classify", selectedAllFiltered)}>
             Reclassify selected
           </Button>
         </div>
