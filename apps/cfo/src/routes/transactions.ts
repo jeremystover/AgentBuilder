@@ -211,9 +211,9 @@ export async function handleManualClassify(request: Request, env: Env, txId: str
        confidence=1.0,
        method='manual', review_required=0, classified_by='user',
        classified_at=datetime('now')`,
-  ).bind(classId, txId, entity, category_tax, category_budget ?? null, expense_type ?? null, cut_status ?? null).run();
+  ).bind(classId, txId, entity, category_tax ?? null, category_budget ?? null, expense_type ?? null, cut_status ?? null).run();
 
-  if (entity) {
+  if (entity && category_tax) {
     await maybeLearnRuleFromManualClassification(env, userId, txId, {
       entity,
       category_tax,
