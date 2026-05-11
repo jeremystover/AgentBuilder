@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { listBudgetCategories } from "../api";
-import { TAX_OPTIONS, type OptionCategory } from "../catalog";
+import { listBudgetCategories, listTaxCategories } from "../api";
+import type { OptionCategory } from "../catalog";
 
 export function useCategoryOptions() {
   const [budgetOptions, setBudgetOptions] = useState<OptionCategory[]>([]);
+  const [taxOptions, setTaxOptions] = useState<OptionCategory[]>([]);
 
   useEffect(() => {
     listBudgetCategories()
@@ -15,11 +16,21 @@ export function useCategoryOptions() {
         );
       })
       .catch(() => {});
+
+    listTaxCategories()
+      .then(({ categories }) => {
+        setTaxOptions(
+          categories
+            .filter((c) => c.is_active)
+            .map((c) => ({ slug: c.slug, label: c.name, kind: "tax" as const, group: c.category_group }))
+        );
+      })
+      .catch(() => {});
   }, []);
 
   return {
     budgetOptions,
-    taxOptions: TAX_OPTIONS,
-    allOptions: [...TAX_OPTIONS, ...budgetOptions] as OptionCategory[],
+    taxOptions,
+    allOptions: [...taxOptions, ...budgetOptions] as OptionCategory[],
   };
 }

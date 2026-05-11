@@ -9,7 +9,7 @@ import type {
   Transaction, TransactionListResponse, TransactionDetail, TransactionSplit, EntitySlug,
   ImportRecord, CsvImportResult, AmazonImportResult, TillerImportResult, DeleteImportsResult,
   Rule, RuleMatchField, RuleMatchOperator, AutoCatImportResult,
-  BudgetCategory, BudgetTarget, BudgetStatusResponse, BudgetForecastResponse, CutsReportResponse,
+  TaxCategory, BudgetCategory, BudgetTarget, BudgetStatusResponse, BudgetForecastResponse, CutsReportResponse,
   BudgetCadence, IncomeCadence, BudgetPreset,
   IncomeTarget, IncomeStatusResponse,
   ScheduleReport, ScheduleCEntity, SummaryReport,
@@ -372,6 +372,39 @@ export async function importAutoCat(file: File): Promise<AutoCatImportResult> {
   const form = new FormData();
   form.append("file", file);
   return uploadForm<AutoCatImportResult>("/rules/import-autocat", form);
+}
+
+// ── Tax categories ────────────────────────────────────────────────────────
+
+export async function listTaxCategories(): Promise<{ categories: TaxCategory[] }> {
+  return request<{ categories: TaxCategory[] }>("/tax/categories");
+}
+
+export interface CreateTaxCategoryInput {
+  slug: string;
+  name: string;
+  form_line?: string;
+  category_group: "schedule_c" | "schedule_e";
+}
+
+export async function createTaxCategory(input: CreateTaxCategoryInput): Promise<TaxCategory> {
+  return request<TaxCategory>("/tax/categories", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export interface UpdateTaxCategoryInput {
+  name?: string;
+  form_line?: string | null;
+  is_active?: boolean;
+}
+
+export async function updateTaxCategory(slug: string, patch: UpdateTaxCategoryInput): Promise<{ slug: string; updated: UpdateTaxCategoryInput }> {
+  return request(`/tax/categories/${encodeURIComponent(slug)}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
 }
 
 // ── Budget ────────────────────────────────────────────────────────────────
