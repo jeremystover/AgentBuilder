@@ -488,7 +488,9 @@ export async function handleReapplyAllRules(request: Request, env: Env): Promise
 }
 
 // ── POST /classify/transaction/:id ────────────────────────────────────────────
-export async function handleClassifySingle(request: Request, env: Env, txId: string): Promise<Response> {
+// forceReviewNote: if supplied, the transaction is always left pending in the
+// review queue (never auto-resolved) and the note appears in the details field.
+export async function handleClassifySingle(request: Request, env: Env, txId: string, forceReviewNote?: string): Promise<Response> {
   const userId = getUserId(request);
 
   const tx = await env.DB.prepare(
@@ -515,11 +517,18 @@ export async function handleClassifySingle(request: Request, env: Env, txId: str
     await env.DB.prepare(
       `INSERT OR REPLACE INTO classifications
          (id, transaction_id, entity, category_tax, category_budget, confidence, method, reason_codes, review_required, classified_by)
-       VALUES (?, ?, ?, ?, ?, 1.0, 'rule', ?, 0, 'system')`,
+       VALUES (?, ?, ?, ?, ?, 1.0, 'rule', ?, ?, 'system')`,
     ).bind(
       crypto.randomUUID(), txId, ruleMatch.entity, ruleMatch.category_tax, ruleMatch.category_budget,
       JSON.stringify([`rule:${ruleMatch.rule_name}`]),
+      forceReviewNote ? 1 : 0,
     ).run();
+    if (forceReviewNote) {
+      await upsertReviewQueue(env, txId, userId, 'low_confidence', ruleMatch.entity, ruleMatch.category_tax, 1.0,
+        forceReviewNote, 'Please confirm these categories look correct.');
+    } else {
+      await resolveReviewQueueItem(env, txId, 'system');
+    }
     return jsonOk({
       method: 'rule',
       rule: ruleMatch.rule_name,
@@ -559,7 +568,7 @@ export async function handleClassifySingle(request: Request, env: Env, txId: str
     classification.confidence, JSON.stringify(classification.reason_codes), classification.review_required ? 1 : 0,
   ).run();
 
-  if (classification.review_required) {
+  if (forceReviewNote || classification.review_required) {
     const reviewContext = buildReviewDetails(tx as Transaction, classification);
     await upsertReviewQueue(
       env,
@@ -569,7 +578,9 @@ export async function handleClassifySingle(request: Request, env: Env, txId: str
       classification.entity ?? null,
       classification.category_tax,
       classification.confidence,
-      reviewContext.details,
+      forceReviewNote
+        ? `${forceReviewNote}\n\nAI: ${reviewContext.details}`
+        : reviewContext.details,
       reviewContext.needsInput,
     );
   } else {

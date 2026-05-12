@@ -85,10 +85,19 @@ export async function storeAppleMatch(
     await env.DB.prepare('DELETE FROM classifications WHERE transaction_id = ?').bind(transactionId).run();
   }
 
+  const itemList = receipt.items.map(i => i.name).filter(Boolean).join(', ');
+  const note = [
+    `Apple receipt matched`,
+    receipt.receiptId ? `Receipt #${receipt.receiptId}` : null,
+    itemList ? `Items: ${itemList}` : null,
+    `Total: $${receipt.totalAmount.toFixed(2)}`,
+  ].filter(Boolean).join(' · ');
+
   const resp = await handleClassifySingle(
     new Request('https://internal/classify', { headers: { 'x-user-id': userId } }),
     env,
     transactionId,
+    note,
   );
   return { reclassified: resp.ok };
 }
