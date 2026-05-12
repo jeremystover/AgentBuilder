@@ -23,7 +23,9 @@ export async function matchAppleReceipt(
 ): Promise<{ transactionId: string; score: number } | null> {
   const dateFrom = shiftIsoDate(receipt.date, -2);
   const dateTo = shiftIsoDate(receipt.date, 5); // receipts arrive day-of; cards post up to 4 days later
-  const expectedAmount = -receipt.totalAmount; // expenses stored as negative
+  // Match on absolute value — credit card purchases are stored as positive
+  // (increasing the balance owed), unlike bank account debits which are negative.
+  const absAmount = receipt.totalAmount;
 
   const candidates = await env.DB.prepare(
     `SELECT t.*
@@ -31,11 +33,11 @@ export async function matchAppleReceipt(
      LEFT JOIN apple_email_matches am ON am.transaction_id = t.id
      WHERE t.user_id = ?
        AND am.id IS NULL
-       AND ABS(t.amount - ?) < 0.01
+       AND ABS(ABS(t.amount) - ?) < 0.01
        AND t.posted_date BETWEEN ? AND ?
        AND t.is_pending = 0
      ORDER BY t.posted_date ASC`,
-  ).bind(userId, expectedAmount, dateFrom, dateTo).all<Transaction>();
+  ).bind(userId, absAmount, dateFrom, dateTo).all<Transaction>();
 
   let best: { transactionId: string; score: number } | null = null;
 
