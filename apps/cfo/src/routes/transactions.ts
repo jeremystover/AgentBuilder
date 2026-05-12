@@ -58,8 +58,12 @@ export async function handleListTransactions(request: Request, env: Env): Promis
 
   const [rows, countRow] = await Promise.all([
     env.DB.prepare(
-      `SELECT t.*, c.entity, c.category_tax, c.category_budget, c.expense_type, c.cut_status, c.confidence,
-              c.method, c.reason_codes, c.review_required, c.is_locked,
+      `SELECT t.id, t.user_id, t.account_id, t.import_id, t.plaid_transaction_id,
+              t.teller_transaction_id, t.posted_date, t.amount, t.currency,
+              t.merchant_name, t.description, t.description_clean, t.category_plaid,
+              t.is_pending, t.dedup_hash, t.note, t.created_at,
+              c.entity, c.category_tax, c.category_budget, c.expense_type, c.cut_status,
+              c.confidence, c.method, c.reason_codes, c.review_required, c.is_locked,
               a.name AS account_name, a.owner_tag, a.type AS account_type
        FROM transactions t
        LEFT JOIN classifications c ON c.transaction_id = t.id
@@ -90,8 +94,12 @@ export async function handleGetTransaction(request: Request, env: Env, txId: str
 
   const [tx, splits, history, attachments, amazon] = await Promise.all([
     env.DB.prepare(
-      `SELECT t.*, c.entity, c.category_tax, c.category_budget, c.expense_type, c.cut_status, c.confidence,
-              c.method, c.reason_codes, c.review_required, c.is_locked,
+      `SELECT t.id, t.user_id, t.account_id, t.import_id, t.plaid_transaction_id,
+              t.teller_transaction_id, t.posted_date, t.amount, t.currency,
+              t.merchant_name, t.description, t.description_clean, t.category_plaid,
+              t.is_pending, t.dedup_hash, t.note, t.created_at,
+              c.entity, c.category_tax, c.category_budget, c.expense_type, c.cut_status,
+              c.confidence, c.method, c.reason_codes, c.review_required, c.is_locked,
               a.name AS account_name, a.owner_tag, a.type AS account_type
        FROM transactions t
        LEFT JOIN classifications c ON c.transaction_id = t.id
@@ -162,7 +170,7 @@ const ClassifySchema = z.object({
   category_budget: z.string().optional(),
   expense_type: z.enum(['recurring', 'one_time']).nullable().optional(),
   cut_status: z.enum(['flagged', 'complete']).nullable().optional(),
-  note: z.string().optional(),
+  note: z.string().nullable().optional(),
 });
 
 export async function handleManualClassify(request: Request, env: Env, txId: string): Promise<Response> {
@@ -198,7 +206,12 @@ export async function handleManualClassify(request: Request, env: Env, txId: str
     ).run();
   }
 
-  const { entity = null, category_tax, category_budget, expense_type, cut_status } = parsed.data;
+  const { entity = null, category_tax, category_budget, expense_type, cut_status, note } = parsed.data;
+
+  if (note !== undefined) {
+    await env.DB.prepare('UPDATE transactions SET note = ? WHERE id = ? AND user_id = ?').bind(note || null, txId, userId).run();
+  }
+
   const classId = crypto.randomUUID();
   await env.DB.prepare(
     `INSERT INTO classifications
@@ -234,6 +247,33 @@ export async function handleManualClassify(request: Request, env: Env, txId: str
   ).bind(txId).first();
 
   return jsonOk({ transaction: updated });
+}
+
+// ── PATCH /transactions/:id/note ─────────────────────────────────────────────
+const NoteSchema = z.object({
+  note: z.string().nullable(),
+});
+
+export async function handleUpdateTransactionNote(request: Request, env: Env, txId: string): Promise<Response> {
+  const userId = getUserId(request);
+
+  let body: unknown;
+  try { body = await request.json(); }
+  catch { return jsonError('Invalid JSON'); }
+
+  const parsed = NoteSchema.safeParse(body);
+  if (!parsed.success) return jsonError(parsed.error.message);
+
+  const tx = await env.DB.prepare(
+    'SELECT id FROM transactions WHERE id = ? AND user_id = ?',
+  ).bind(txId, userId).first();
+  if (!tx) return jsonError('Transaction not found', 404);
+
+  await env.DB.prepare(
+    'UPDATE transactions SET note = ? WHERE id = ? AND user_id = ?',
+  ).bind(parsed.data.note, txId, userId).run();
+
+  return jsonOk({ transaction_id: txId, note: parsed.data.note });
 }
 
 // ── POST /transactions/:id/split ──────────────────────────────────────────────

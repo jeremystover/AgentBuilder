@@ -26,6 +26,7 @@
 
 import type { Env } from './types';
 import { handleUpdateAccount } from './routes/accounts';
+import { handleUpdateTransactionNote } from './routes/transactions';
 import { handleBankSync } from './routes/bank';
 import { handleCsvImport } from './routes/imports';
 import { handleAmazonImport } from './routes/amazon';
@@ -500,6 +501,24 @@ export const MCP_TOOLS = [
     },
   },
   {
+    name: 'set_transaction_note',
+    description:
+      "Set or clear a free-text note on a transaction. Use this to annotate a transaction with context that isn't captured by the classification (e.g. 'reimbursed by client', 'shared with Elyse', 'confirmed grocery run not dining'). Pass note=null to clear an existing note.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        transaction_id: { type: 'string' as const, description: 'The transaction ID.' },
+        note: {
+          type: 'string' as const,
+          description: 'The note text to save. Pass an empty string or omit to clear.',
+          nullable: true,
+        },
+      },
+      required: ['transaction_id'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'save_bookkeeping_notes',
     description:
       "Write the bookkeeping notes file for a business. Replaces the entire file. Use this during or after a bookkeeping session to record: (1) merchant categorization patterns learned (e.g. 'Kajabi charges are elyse_coaching / office_expense'), (2) edge cases or ambiguous merchants to watch for, (3) session summaries. Keep notes concise and structured so they're useful for future sessions.",
@@ -745,6 +764,14 @@ export async function dispatchTool(
         notes: args.notes,
       });
       return respondText(await handleSaveBookkeepingNotes(req, env));
+    }
+
+    case 'set_transaction_note': {
+      const txId = String(args.transaction_id ?? '');
+      const req = jsonRequest('PATCH', `https://cfo.invalid/transactions/${txId}/note`, {
+        note: args.note ?? null,
+      });
+      return respondText(await handleUpdateTransactionNote(req, env, txId));
     }
 
     default:
