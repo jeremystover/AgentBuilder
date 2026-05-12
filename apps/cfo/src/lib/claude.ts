@@ -1,4 +1,4 @@
-import type { Env, Transaction, AIClassification, AmazonContext, VenmoContext, AppleContext } from '../types';
+import type { Env, Transaction, AIClassification, AmazonContext, VenmoContext, AppleContext, EtsyContext } from '../types';
 import { SCHEDULE_C_CATEGORIES, AIRBNB_CATEGORIES, FAMILY_CATEGORIES } from '../types';
 
 function describeApiKey(value: string | undefined): {
@@ -635,6 +635,7 @@ export async function classifyTransaction(
   amazonContext?: AmazonContext | null,
   venmoContext?: VenmoContext | null,
   appleContext?: AppleContext | null,
+  etsyContext?: EtsyContext | null,
 ): Promise<AIClassification & { _debug: ClassifyDebug }> {
   // DB convention: expenses stored as negative, income as positive
   const isExpense = transaction.amount < 0;
@@ -682,6 +683,16 @@ export async function classifyTransaction(
         : '(unknown)'}`
     : '';
 
+  const etsyBlock = etsyContext
+    ? `\nEtsy receipt context:
+- Order ID:     ${etsyContext.order_id ?? '(unknown)'}
+- Shop:         ${etsyContext.shop_name ?? '(unknown)'}
+- Total:        $${etsyContext.total_amount.toFixed(2)}
+- Items:        ${etsyContext.items.length > 0
+        ? etsyContext.items.map(i => `${i.name} ($${i.price.toFixed(2)})`).join(', ')
+        : '(unknown)'}`
+    : '';
+
   const userMessage = `Classify this transaction:
 - Merchant:     ${transaction.merchant_name ?? '(unknown)'}
 - Description:  ${transaction.description}
@@ -692,6 +703,7 @@ ${exampleBlock}
 ${amazonBlock}
 ${venmoBlock}
 ${appleBlock}
+${etsyBlock}
 
 Call the classify_transaction tool with your classification.`;
 
@@ -731,6 +743,7 @@ export async function classifyBatch(
     amazonContext?: AmazonContext | null;
     venmoContext?: VenmoContext | null;
     appleContext?: AppleContext | null;
+    etsyContext?: EtsyContext | null;
   }>,
   onResult: (txId: string, result: AIClassification | null, error?: string) => Promise<void>,
 ): Promise<void> {
@@ -744,6 +757,7 @@ export async function classifyBatch(
         item.amazonContext,
         item.venmoContext,
         item.appleContext,
+        item.etsyContext,
       );
       await onResult(item.transaction.id, result);
     } catch (err) {

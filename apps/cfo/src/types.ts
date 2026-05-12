@@ -166,6 +166,14 @@ export interface AppleContext {
   date: string | null;
 }
 
+export interface EtsyContext {
+  order_id: string | null;
+  shop_name: string | null;
+  items: Array<{ name: string; price: number }>;
+  total_amount: number;
+  date: string | null;
+}
+
 export interface BusinessEntity {
   id: string;
   user_id: string;
