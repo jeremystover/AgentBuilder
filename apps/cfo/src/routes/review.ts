@@ -254,15 +254,20 @@ export async function handleBulkResolveReview(request: Request, env: Env): Promi
   let items: ReviewItem[] = [];
 
   if (review_ids?.length) {
-    const placeholders = review_ids.map(() => '?').join(', ');
-    const rows = await env.DB.prepare(
-      `SELECT rq.id, rq.transaction_id, rq.status, rq.reason, COALESCE(c.is_locked, 0) AS is_locked
-       FROM review_queue rq
-       LEFT JOIN classifications c ON c.transaction_id = rq.transaction_id
-       WHERE rq.user_id = ?
-         AND rq.id IN (${placeholders})`,
-    ).bind(userId, ...review_ids).all<ReviewItem>();
-    items = rows.results;
+    // D1 limits bound parameters to ~100 per query; chunk to stay well under that.
+    const CHUNK_SIZE = 50;
+    for (let i = 0; i < review_ids.length; i += CHUNK_SIZE) {
+      const chunk = review_ids.slice(i, i + CHUNK_SIZE);
+      const placeholders = chunk.map(() => '?').join(', ');
+      const rows = await env.DB.prepare(
+        `SELECT rq.id, rq.transaction_id, rq.status, rq.reason, COALESCE(c.is_locked, 0) AS is_locked
+         FROM review_queue rq
+         LEFT JOIN classifications c ON c.transaction_id = rq.transaction_id
+         WHERE rq.user_id = ?
+           AND rq.id IN (${placeholders})`,
+      ).bind(userId, ...chunk).all<ReviewItem>();
+      items.push(...rows.results);
+    }
   } else if (apply_to_filtered) {
     const conditions = ['rq.user_id = ?', 'rq.status = ?'];
     const values: unknown[] = [userId, effectiveStatus];

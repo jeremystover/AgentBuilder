@@ -174,37 +174,64 @@ export async function handleRunClassification(request: Request, env: Env): Promi
   const rules = rulesResult.results;
 
   // Fetch pending unclassified items. If transaction_ids were supplied, restrict
-  // to those; otherwise fall back to the 500-item default batch.
-  const idClause = transactionIds
-    ? `AND t.id IN (${transactionIds.map(() => '?').join(',')})`
-    : '';
-  const limitClause = transactionIds ? '' : 'LIMIT 500';
-  const baseBinds: unknown[] = transactionIds ? [userId, ...transactionIds] : [userId];
-
-  const unclassified = await env.DB.prepare(
-    `SELECT t.*, a.name AS account_name, a.mask AS account_mask, a.type AS account_type, a.subtype AS account_subtype, a.owner_tag
-     FROM review_queue rq
-     JOIN transactions t ON t.id = rq.transaction_id
-     LEFT JOIN accounts a ON a.id = t.account_id
-     LEFT JOIN classifications c ON c.transaction_id = t.id
-     WHERE rq.user_id = ?
-       AND rq.status = 'pending'
-       AND t.is_pending = 0
-       AND (
-         (rq.reason = 'unclassified' AND c.id IS NULL)
-         OR trim(COALESCE(rq.suggested_category_tax, c.category_tax, '')) = ''
-         OR lower(trim(COALESCE(rq.suggested_category_tax, c.category_tax, ''))) = 'unclassified'
-       )
-       ${idClause}
-     ORDER BY rq.created_at ASC
-     ${limitClause}`,
-  ).bind(...baseBinds).all<Transaction & {
+  // to those (chunked to stay under D1's ~100 bound-parameter limit); otherwise
+  // fall back to the 500-item default batch.
+  type UnclassifiedRow = Transaction & {
     account_name: string | null;
     account_mask: string | null;
     account_type: string | null;
     account_subtype: string | null;
     owner_tag: string | null;
-  }>();
+  };
+
+  let unclassifiedRows: UnclassifiedRow[];
+
+  if (transactionIds) {
+    unclassifiedRows = [];
+    const CHUNK_SIZE = 50;
+    for (let i = 0; i < transactionIds.length; i += CHUNK_SIZE) {
+      const chunk = transactionIds.slice(i, i + CHUNK_SIZE);
+      const rows = await env.DB.prepare(
+        `SELECT t.*, a.name AS account_name, a.mask AS account_mask, a.type AS account_type, a.subtype AS account_subtype, a.owner_tag
+         FROM review_queue rq
+         JOIN transactions t ON t.id = rq.transaction_id
+         LEFT JOIN accounts a ON a.id = t.account_id
+         LEFT JOIN classifications c ON c.transaction_id = t.id
+         WHERE rq.user_id = ?
+           AND rq.status = 'pending'
+           AND t.is_pending = 0
+           AND (
+             (rq.reason = 'unclassified' AND c.id IS NULL)
+             OR trim(COALESCE(rq.suggested_category_tax, c.category_tax, '')) = ''
+             OR lower(trim(COALESCE(rq.suggested_category_tax, c.category_tax, ''))) = 'unclassified'
+           )
+           AND t.id IN (${chunk.map(() => '?').join(',')})
+         ORDER BY rq.created_at ASC`,
+      ).bind(userId, ...chunk).all<UnclassifiedRow>();
+      unclassifiedRows.push(...rows.results);
+    }
+  } else {
+    const rows = await env.DB.prepare(
+      `SELECT t.*, a.name AS account_name, a.mask AS account_mask, a.type AS account_type, a.subtype AS account_subtype, a.owner_tag
+       FROM review_queue rq
+       JOIN transactions t ON t.id = rq.transaction_id
+       LEFT JOIN accounts a ON a.id = t.account_id
+       LEFT JOIN classifications c ON c.transaction_id = t.id
+       WHERE rq.user_id = ?
+         AND rq.status = 'pending'
+         AND t.is_pending = 0
+         AND (
+           (rq.reason = 'unclassified' AND c.id IS NULL)
+           OR trim(COALESCE(rq.suggested_category_tax, c.category_tax, '')) = ''
+           OR lower(trim(COALESCE(rq.suggested_category_tax, c.category_tax, ''))) = 'unclassified'
+         )
+       ORDER BY rq.created_at ASC
+       LIMIT 500`,
+    ).bind(userId).all<UnclassifiedRow>();
+    unclassifiedRows = rows.results;
+  }
+
+  const unclassified = { results: unclassifiedRows };
 
   if (!unclassified.results.length) {
     return jsonOk({
