@@ -14,6 +14,7 @@ import { z } from 'zod';
 import type { Env } from '../types';
 import { getUserId, jsonError, jsonOk } from '../types';
 import {
+  ensureBudgetCategory,
   ensureDefaultBudgetCategories,
   prorateTarget,
   resolvePeriod,
@@ -21,6 +22,13 @@ import {
   targetMonthlyEquivalent,
   type Cadence,
 } from '../lib/budget';
+
+// Effective budget category for any classified transaction.
+// Explicit category_budget wins; if unset, fall back to category_tax
+// (excluding 'transfer' which has no budget meaning).
+// Using this everywhere means new tax categories automatically appear
+// in the budget screen without any backfill.
+const EFF_CAT = `COALESCE(c.category_budget, NULLIF(c.category_tax, 'transfer'))`;
 
 const CadenceSchema = z.enum(['weekly', 'monthly', 'annual', 'one_time']);
 
@@ -259,22 +267,22 @@ export async function handleBudgetStatus(request: Request, env: Env): Promise<Re
     't.user_id = ?',
     't.amount < 0',
     't.posted_date BETWEEN ? AND ?',
+    `${EFF_CAT} IS NOT NULL`,
   ];
   const spendVals: unknown[] = [userId, period.start, period.end];
   if (categorySlug) {
-    spendConds.push('c.category_budget = ?');
+    spendConds.push(`${EFF_CAT} = ?`);
     spendVals.push(categorySlug);
   }
 
   const spendRows = await env.DB.prepare(
-    `SELECT c.category_budget AS category_slug,
+    `SELECT ${EFF_CAT} AS category_slug,
             SUM(-t.amount) AS spent,
             COUNT(*) AS tx_count
      FROM transactions t
      JOIN classifications c ON c.transaction_id = t.id
      WHERE ${spendConds.join(' AND ')}
-       AND c.category_budget IS NOT NULL
-     GROUP BY c.category_budget`,
+     GROUP BY ${EFF_CAT}`,
   ).bind(...spendVals).all<{ category_slug: string; spent: number; tx_count: number }>();
 
   // Join categories (for names), targets (for pro-rating), and spend.
@@ -289,8 +297,18 @@ export async function handleBudgetStatus(request: Request, env: Env): Promise<Re
   const spendBySlug = new Map<string, { spent: number; tx_count: number }>();
   for (const s of spendRows.results) spendBySlug.set(s.category_slug, { spent: s.spent, tx_count: s.tx_count });
 
+  // Auto-create budget_categories entries for any slugs derived from
+  // category_tax that don't have an explicit entry yet.
+  const knownSlugs = new Set(categoryRows.results.map(r => r.slug));
+  for (const slug of spendBySlug.keys()) {
+    if (!knownSlugs.has(slug)) {
+      await ensureBudgetCategory(env, userId, slug);
+      knownSlugs.add(slug);
+    }
+  }
+
   const slugs = new Set<string>([
-    ...categoryRows.results.map(r => r.slug),
+    ...knownSlugs,
     ...targetBySlug.keys(),
     ...spendBySlug.keys(),
   ]);
@@ -383,7 +401,7 @@ export async function handleBudgetForecast(request: Request, env: Env): Promise<
 
   // Trailing-12 historical spend per category, recurring only.
   const historyRows = await env.DB.prepare(
-    `SELECT c.category_budget AS slug,
+    `SELECT ${EFF_CAT} AS slug,
             SUM(-t.amount) AS total,
             COUNT(*) AS tx_count
      FROM transactions t
@@ -391,9 +409,9 @@ export async function handleBudgetForecast(request: Request, env: Env): Promise<
      WHERE t.user_id = ?
        AND t.amount < 0
        AND t.posted_date BETWEEN ? AND ?
-       AND c.category_budget IS NOT NULL
+       AND ${EFF_CAT} IS NOT NULL
        AND COALESCE(c.expense_type, 'recurring') != 'one_time'
-     GROUP BY c.category_budget`,
+     GROUP BY ${EFF_CAT}`,
   ).bind(userId, start, end).all<{ slug: string; total: number; tx_count: number }>();
 
   const historyBySlug = new Map<string, { total: number; tx_count: number }>();
@@ -546,7 +564,7 @@ export async function handleBudgetCutsReport(request: Request, env: Env): Promis
   const rows = await env.DB.prepare(
     `SELECT t.id AS transaction_id, t.posted_date, t.amount,
             t.merchant_name, t.description,
-            c.category_budget, c.expense_type, c.cut_status
+            ${EFF_CAT} AS category_budget, c.expense_type, c.cut_status
      FROM transactions t
      JOIN classifications c ON c.transaction_id = t.id
      WHERE t.user_id = ?
@@ -685,7 +703,7 @@ export async function handleBudgetHistory(request: Request, env: Env): Promise<R
          JOIN classifications c ON c.transaction_id = t.id
          WHERE t.user_id = ?
            AND t.amount < 0
-           AND c.category_budget = ?
+           AND ${EFF_CAT} = ?
            AND t.posted_date >= date('now', '-${days} days')`,
       ).bind(userId, categorySlug).first<{ total_spent: number | null; tx_count: number }>();
 
