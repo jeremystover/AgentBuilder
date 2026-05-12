@@ -1,5 +1,5 @@
 import type { Env, Transaction, Rule } from '../types';
-import { jsonOk, jsonError, getUserId, FAMILY_CATEGORIES } from '../types';
+import { jsonOk, jsonError, getUserId } from '../types';
 import { classifyBatch } from '../lib/claude';
 import { applyRules } from '../lib/rules';
 import { cleanDescription } from '../lib/dedup';
@@ -553,14 +553,8 @@ export async function handleClassifySingle(request: Request, env: Env, txId: str
 export async function handleBackfillFamilyBudget(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
   const userId = getUserId(request);
 
-  // Known FAMILY_CATEGORIES slugs. If category_tax already matches one of
-  // these (some older AI classifications put the budget slug in category_tax),
-  // use it directly. Otherwise fall back to 'other_personal' so the transaction
-  // shows up on the budget screen and can be corrected via the bookkeeping flow.
-  const KNOWN_SLUGS = Object.keys(FAMILY_CATEGORIES);
-  const slugList = KNOWN_SLUGS.map(() => '?').join(',');
-
-  // Pass 1: where category_tax is already a valid budget slug, use it directly.
+  // Pass 1: category_tax is set → use it as category_budget (any value, not
+  // just known slugs). Skips transfers since they have no budget meaning.
   const pass1 = await env.DB.prepare(
     `UPDATE classifications
      SET category_budget = category_tax
@@ -570,16 +564,16 @@ export async function handleBackfillFamilyBudget(request: Request, env: Env, _ct
        WHERE t.user_id = ?
          AND c2.entity = 'family_personal'
          AND c2.category_budget IS NULL
+         AND c2.category_tax IS NOT NULL
+         AND c2.category_tax != 'transfer'
          AND c2.method != 'manual'
          AND c2.is_locked = 0
          AND t.is_pending = 0
          AND t.amount < 0
-         AND COALESCE(c2.category_tax, '') != 'transfer'
-         AND c2.category_tax IN (${slugList})
      )`,
-  ).bind(userId, ...KNOWN_SLUGS).run();
+  ).bind(userId).run();
 
-  // Pass 2: everything else gets 'other_personal' as a placeholder.
+  // Pass 2: neither category_budget nor category_tax → fall back to other_personal.
   const pass2 = await env.DB.prepare(
     `UPDATE classifications
      SET category_budget = 'other_personal'
@@ -589,16 +583,26 @@ export async function handleBackfillFamilyBudget(request: Request, env: Env, _ct
        WHERE t.user_id = ?
          AND c2.entity = 'family_personal'
          AND c2.category_budget IS NULL
+         AND (c2.category_tax IS NULL OR c2.category_tax = 'transfer')
          AND c2.method != 'manual'
          AND c2.is_locked = 0
          AND t.is_pending = 0
          AND t.amount < 0
-         AND COALESCE(c2.category_tax, '') != 'transfer'
      )`,
   ).bind(userId).run();
 
-  // Ensure all standard budget categories exist.
-  for (const slug of KNOWN_SLUGS) {
+  // Ensure a budget_categories row exists for every distinct slug now in use,
+  // including any category_tax values that just became budget slugs.
+  const usedSlugs = await env.DB.prepare(
+    `SELECT DISTINCT c.category_budget AS slug
+     FROM classifications c
+     JOIN transactions t ON t.id = c.transaction_id
+     WHERE t.user_id = ?
+       AND c.entity = 'family_personal'
+       AND c.category_budget IS NOT NULL`,
+  ).bind(userId).all<{ slug: string }>();
+
+  for (const { slug } of usedSlugs.results) {
     await ensureBudgetCategory(env, userId, slug);
   }
 
