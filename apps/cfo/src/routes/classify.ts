@@ -7,6 +7,7 @@ import { backfillUnclassifiedReviewQueue, resolveReviewQueueItem, upsertReviewQu
 import { buildAmazonSearchText, loadAmazonContext } from '../lib/amazon';
 import { loadVenmoContext } from '../lib/venmo';
 import { loadAppleContext } from '../lib/apple';
+import { loadEtsyContext } from '../lib/etsy';
 
 function buildAccountContext(tx: {
   account_name?: string | null;
@@ -245,11 +246,12 @@ export async function handleRunClassification(request: Request, env: Env): Promi
   const batchItems = await Promise.all(
     needsAI.map(async tx => {
       const accountContext = buildAccountContext(tx);
-      const [historicalExamples, amazonContext, venmoContext, appleContext] = await Promise.all([
+      const [historicalExamples, amazonContext, venmoContext, appleContext, etsyContext] = await Promise.all([
         loadHistoricalExamples(env, userId, tx as Transaction),
         loadAmazonContext(env, tx.id),
         loadVenmoContext(env, tx.id),
         loadAppleContext(env, tx.id),
+        loadEtsyContext(env, tx.id),
       ]);
 
       return {
@@ -259,6 +261,7 @@ export async function handleRunClassification(request: Request, env: Env): Promi
         amazonContext,
         venmoContext,
         appleContext,
+        etsyContext,
       };
     }),
   );
@@ -500,11 +503,12 @@ export async function handleClassifySingle(request: Request, env: Env, txId: str
 
   const { classifyTransaction } = await import('../lib/claude');
   const accountContext = buildAccountContext(tx);
-  const [historicalExamples, amazonContext, venmoContext, appleContext] = await Promise.all([
+  const [historicalExamples, amazonContext, venmoContext, appleContext, etsyContext] = await Promise.all([
     loadHistoricalExamples(env, userId, tx as Transaction),
     loadAmazonContext(env, txId),
     loadVenmoContext(env, txId),
     loadAppleContext(env, txId),
+    loadEtsyContext(env, txId),
   ]);
 
   const result = await classifyTransaction(
@@ -513,6 +517,7 @@ export async function handleClassifySingle(request: Request, env: Env, txId: str
     amazonContext,
     venmoContext,
     appleContext,
+    etsyContext,
   );
 
   const { _debug, ...classification } = result;
