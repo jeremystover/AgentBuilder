@@ -552,7 +552,14 @@ export async function handleClassifySingle(request: Request, env: Env, txId: str
 // family_personal transactions that were classified without one.
 export async function handleBackfillFamilyBudget(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const userId = getUserId(request);
-  const limit = 10;
+  const limit = 15;
+
+  // Only expense transactions (amount < 0) that aren't transfers need a
+  // category_budget. Income and transfers correctly have null category_budget,
+  // so running AI on them just wastes calls and inflates the error count.
+  const EXPENSE_FILTER = `
+    AND t.amount < 0
+    AND COALESCE(c.category_tax, '') != 'transfer'`;
 
   const totalRow = await env.DB.prepare(
     `SELECT COUNT(*) AS total
@@ -563,7 +570,8 @@ export async function handleBackfillFamilyBudget(request: Request, env: Env, ctx
        AND c.category_budget IS NULL
        AND c.method != 'manual'
        AND c.is_locked = 0
-       AND t.is_pending = 0`,
+       AND t.is_pending = 0
+       ${EXPENSE_FILTER}`,
   ).bind(userId).first<{ total: number }>();
 
   const remaining_before = totalRow?.total ?? 0;
@@ -585,6 +593,7 @@ export async function handleBackfillFamilyBudget(request: Request, env: Env, ctx
        AND c.method != 'manual'
        AND c.is_locked = 0
        AND t.is_pending = 0
+       ${EXPENSE_FILTER}
      LIMIT ?`,
   ).bind(userId, limit).all<Transaction & {
     class_id: string;
