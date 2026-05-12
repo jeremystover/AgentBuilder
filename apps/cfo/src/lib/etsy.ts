@@ -17,8 +17,10 @@ export async function matchEtsyReceipt(
   userId: string,
   receipt: EtsyEmailReceipt,
 ): Promise<{ transactionId: string; score: number } | null> {
-  const dateFrom = shiftIsoDate(receipt.date, -2);
-  const dateTo = shiftIsoDate(receipt.date, 5);
+  // For forwarded emails the date is when Jeremy received it, not the purchase date.
+  // Use a wider window when we couldn't extract the order date from the body.
+  const dateFrom = shiftIsoDate(receipt.date, receipt.dateIsFromBody ? -2 : -60);
+  const dateTo = shiftIsoDate(receipt.date, receipt.dateIsFromBody ? 5 : 5);
 
   // Credit card purchases are stored as positive; match on absolute value.
   const candidates = await env.DB.prepare(
