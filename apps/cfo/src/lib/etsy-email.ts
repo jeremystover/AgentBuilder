@@ -35,15 +35,20 @@ function parsePrice(raw: string): number | null {
 }
 
 // Extract order ID from subject or body.
-// Etsy uses formats like "#1234567890" or "Order #1234567890".
+// Etsy uses "#1234567890", "Order #1234567890", or "(3606814426)" in subject.
 function extractOrderId(text: string): string | null {
-  return text.match(/(?:order\s*)?#(\d{9,})/i)?.[1] ?? null;
+  return (
+    text.match(/(?:order\s*)?#(\d{9,})/i)?.[1] ??
+    text.match(/\((\d{9,})\)/)?.[1] ??
+    null
+  );
 }
 
 // Extract the grand total — prefer labeled "Order total" / "Total" over item prices.
 // Use last match so "Order total" wins over any "Subtotal" line.
 function extractTotal(text: string): number | null {
-  const re = /(?<![a-zA-Z])total[:\s]+\$?([\d,]+\.\d{2})/gi;
+  // Handle formats like "Total $24.39" and "Total (1 item) $24.39"
+  const re = /(?<![a-zA-Z])total[^$\n]{0,20}\$?([\d,]+\.\d{2})/gi;
   let last: string | null = null;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) last = m[1];
@@ -113,12 +118,12 @@ function extractItemsFromText(text: string): EtsyReceiptItem[] {
 
 export function parseEtsyEmail(message: GmailMessage): EtsyEmailReceipt | null {
   const from = getHeader(message, 'from');
-  // Etsy sends receipts from transaction@etsy.com
-  if (!/transaction@etsy\.com/i.test(from)) return null;
+// Etsy sends from transaction@account.etsy.com (not transaction@etsy.com)
+  if (!/@etsy\.com/i.test(from)) return null;
 
   const subject = getHeader(message, 'subject');
-  // Only process purchase receipts, not shipping notifications etc.
-  if (!/receipt|you just bought|order confirmed/i.test(subject)) return null;
+  // Match order confirmations: "Your Etsy Purchase from...", "Your order is confirmed", etc.
+  if (!/receipt|you just bought|order confirmed|etsy purchase|purchase from/i.test(subject)) return null;
 
   const { text, html } = getMessageBody(message);
   const bodyText = text || stripHtml(html);
