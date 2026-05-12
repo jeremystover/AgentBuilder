@@ -400,7 +400,7 @@ export const MCP_TOOLS = [
   {
     name: 'backfill_budget_categories',
     description:
-      'Re-run AI classification to fill in missing category_budget values for family_personal transactions that were classified without a budget category. Only touches AI/rule-classified transactions — manual decisions are preserved. Returns counts of updated/errors.',
+      'One-time migration: populate category_budget on older family_personal expense transactions that are missing it. Uses category_tax as the budget slug where set, falls back to other_personal. The budget screen now resolves category_budget dynamically so this is only needed once to clean up historical data. Returns counts of mapped_from_category_tax, defaulted_to_other_personal, total_updated.',
     inputSchema: {
       type: 'object' as const,
       properties: {},
