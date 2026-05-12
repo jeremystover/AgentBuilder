@@ -1,5 +1,5 @@
 import type { Env, Transaction, Rule } from '../types';
-import { jsonOk, jsonError, getUserId } from '../types';
+import { jsonOk, jsonError, getUserId, FAMILY_CATEGORIES } from '../types';
 import { classifyBatch } from '../lib/claude';
 import { applyRules } from '../lib/rules';
 import { cleanDescription } from '../lib/dedup';
@@ -550,104 +550,61 @@ export async function handleClassifySingle(request: Request, env: Env, txId: str
 // ── POST /classify/backfill-family-budget ─────────────────────────────────────
 // Re-run AI classification to fill in missing category_budget values for
 // family_personal transactions that were classified without one.
-export async function handleBackfillFamilyBudget(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+export async function handleBackfillFamilyBudget(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
   const userId = getUserId(request);
-  const limit = 15;
 
-  // Only expense transactions (amount < 0) that aren't transfers need a
-  // category_budget. Income and transfers correctly have null category_budget,
-  // so running AI on them just wastes calls and inflates the error count.
-  const EXPENSE_FILTER = `
-    AND t.amount < 0
-    AND COALESCE(c.category_tax, '') != 'transfer'`;
+  // Known FAMILY_CATEGORIES slugs. If category_tax already matches one of
+  // these (some older AI classifications put the budget slug in category_tax),
+  // use it directly. Otherwise fall back to 'other_personal' so the transaction
+  // shows up on the budget screen and can be corrected via the bookkeeping flow.
+  const KNOWN_SLUGS = Object.keys(FAMILY_CATEGORIES);
+  const slugList = KNOWN_SLUGS.map(() => '?').join(',');
 
-  const totalRow = await env.DB.prepare(
-    `SELECT COUNT(*) AS total
-     FROM transactions t
-     JOIN classifications c ON c.transaction_id = t.id
-     WHERE t.user_id = ?
-       AND c.entity = 'family_personal'
-       AND c.category_budget IS NULL
-       AND c.method != 'manual'
-       AND c.is_locked = 0
-       AND t.is_pending = 0
-       ${EXPENSE_FILTER}`,
-  ).bind(userId).first<{ total: number }>();
+  // Pass 1: where category_tax is already a valid budget slug, use it directly.
+  const pass1 = await env.DB.prepare(
+    `UPDATE classifications
+     SET category_budget = category_tax
+     WHERE transaction_id IN (
+       SELECT t.id FROM transactions t
+       JOIN classifications c2 ON c2.transaction_id = t.id
+       WHERE t.user_id = ?
+         AND c2.entity = 'family_personal'
+         AND c2.category_budget IS NULL
+         AND c2.method != 'manual'
+         AND c2.is_locked = 0
+         AND t.is_pending = 0
+         AND t.amount < 0
+         AND COALESCE(c2.category_tax, '') != 'transfer'
+         AND c2.category_tax IN (${slugList})
+     )`,
+  ).bind(userId, ...KNOWN_SLUGS).run();
 
-  const remaining_before = totalRow?.total ?? 0;
+  // Pass 2: everything else gets 'other_personal' as a placeholder.
+  const pass2 = await env.DB.prepare(
+    `UPDATE classifications
+     SET category_budget = 'other_personal'
+     WHERE transaction_id IN (
+       SELECT t.id FROM transactions t
+       JOIN classifications c2 ON c2.transaction_id = t.id
+       WHERE t.user_id = ?
+         AND c2.entity = 'family_personal'
+         AND c2.category_budget IS NULL
+         AND c2.method != 'manual'
+         AND c2.is_locked = 0
+         AND t.is_pending = 0
+         AND t.amount < 0
+         AND COALESCE(c2.category_tax, '') != 'transfer'
+     )`,
+  ).bind(userId).run();
 
-  if (!remaining_before) {
-    return jsonOk({ remaining: 0, updated: 0, errors: 0 });
+  // Ensure all standard budget categories exist.
+  for (const slug of KNOWN_SLUGS) {
+    await ensureBudgetCategory(env, userId, slug);
   }
 
-  const eligible = await env.DB.prepare(
-    `SELECT t.*, c.id AS class_id,
-            a.name AS account_name, a.mask AS account_mask, a.type AS account_type,
-            a.subtype AS account_subtype, a.owner_tag
-     FROM transactions t
-     JOIN classifications c ON c.transaction_id = t.id
-     LEFT JOIN accounts a ON a.id = t.account_id
-     WHERE t.user_id = ?
-       AND c.entity = 'family_personal'
-       AND c.category_budget IS NULL
-       AND c.method != 'manual'
-       AND c.is_locked = 0
-       AND t.is_pending = 0
-       ${EXPENSE_FILTER}
-     LIMIT ?`,
-  ).bind(userId, limit).all<Transaction & {
-    class_id: string;
-    account_name: string | null;
-    account_mask: string | null;
-    account_type: string | null;
-    account_subtype: string | null;
-    owner_tag: string | null;
-  }>();
-
-  const batchItems: Array<{
-    transaction: Transaction;
-    accountContext: string;
-    historicalExamples: Array<{ merchant: string; entity: string; category_tax: string }>;
-    amazonContext: Awaited<ReturnType<typeof loadAmazonContext>>;
-    venmoContext: Awaited<ReturnType<typeof loadVenmoContext>>;
-    appleContext: Awaited<ReturnType<typeof loadAppleContext>>;
-  }> = [];
-
-  for (const tx of eligible.results) {
-    const accountContext = buildAccountContext(tx);
-    const [historicalExamples, amazonContext, venmoContext, appleContext] = await Promise.all([
-      loadHistoricalExamples(env, userId, tx as Transaction),
-      loadAmazonContext(env, tx.id),
-      loadVenmoContext(env, tx.id),
-      loadAppleContext(env, tx.id),
-    ]);
-    batchItems.push({ transaction: tx as Transaction, accountContext, historicalExamples, amazonContext, venmoContext, appleContext });
-  }
-
-  let updated = 0;
-  let errors = 0;
-
-  await classifyBatch(env, batchItems, async (txId, result, error) => {
-    if (error || !result?.category_budget) {
-      errors++;
-      return;
-    }
-
-    await env.DB.prepare(
-      `UPDATE classifications SET category_budget = ? WHERE transaction_id = ?`,
-    ).bind(result.category_budget, txId).run();
-
-    await ensureBudgetCategory(env, userId, result.category_budget);
-    updated++;
+  return jsonOk({
+    mapped_from_category_tax: pass1.meta.changes,
+    defaulted_to_other_personal: pass2.meta.changes,
+    total_updated: (pass1.meta.changes ?? 0) + (pass2.meta.changes ?? 0),
   });
-
-  const remaining = Math.max(0, remaining_before - eligible.results.length);
-
-  if (remaining > 0) {
-    ctx.waitUntil(
-      fetch(request.url, { method: 'POST', headers: { 'x-user-id': userId } }),
-    );
-  }
-
-  return jsonOk({ remaining, updated, errors });
 }
