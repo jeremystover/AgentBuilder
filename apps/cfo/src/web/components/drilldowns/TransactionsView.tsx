@@ -13,6 +13,7 @@ import type {
 } from "../../types";
 import { ENTITY_OPTIONS, type OptionCategory } from "../../catalog";
 import { useCategoryOptions } from "../../hooks/useCategoryOptions";
+import { ProposeRuleModal, buildRuleProposal, type RuleProposal } from "../ProposeRuleModal";
 
 const PAGE_SIZE = 100;
 
@@ -65,6 +66,12 @@ export function TransactionsView() {
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [sortBy, setSortBy] = useState("posted_date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
+  const [suggestRules, setSuggestRules] = useState(() => {
+    try { return localStorage.getItem("cfo_suggest_rules") !== "false"; }
+    catch { return true; }
+  });
+  const [pendingRuleProposal, setPendingRuleProposal] = useState<RuleProposal | null>(null);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search), 400);
@@ -133,6 +140,21 @@ export function TransactionsView() {
             {hasFilters && (
               <Button onClick={clearFilters}>Clear filters</Button>
             )}
+            <label className="flex items-center gap-1.5 text-sm text-text-muted cursor-pointer select-none" title="After reclassifying, propose a rule for future transactions">
+              <button
+                role="switch"
+                aria-checked={suggestRules}
+                onClick={() => {
+                  const next = !suggestRules;
+                  setSuggestRules(next);
+                  try { localStorage.setItem("cfo_suggest_rules", next ? "true" : "false"); } catch {}
+                }}
+                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${suggestRules ? "bg-accent-primary" : "bg-bg-elevated border border-border"}`}
+              >
+                <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${suggestRules ? "translate-x-4" : "translate-x-0.5"}`} />
+              </button>
+              Suggest rules
+            </label>
             <Button onClick={() => void refresh()} title="Refresh">
               <RefreshCw className={"w-4 h-4 " + (loading ? "animate-spin" : "")} />
             </Button>
@@ -294,7 +316,16 @@ export function TransactionsView() {
         taxOptions={taxOptions}
         onClose={() => setOpenId(null)}
         onChanged={refresh}
+        onPropose={suggestRules ? (p) => setPendingRuleProposal(p) : undefined}
       />
+
+      {pendingRuleProposal && (
+        <ProposeRuleModal
+          proposal={pendingRuleProposal}
+          onDismiss={() => setPendingRuleProposal(null)}
+          onSaved={() => { setPendingRuleProposal(null); void refresh(); }}
+        />
+      )}
     </div>
   );
 }
@@ -351,13 +382,14 @@ function TransactionRow({ tx, onOpen }: { tx: Transaction; onOpen(): void }) {
 // ── Drawer ──────────────────────────────────────────────────────────────────
 
 function TransactionDrawer({
-  txId, budgetOptions, taxOptions, onClose, onChanged,
+  txId, budgetOptions, taxOptions, onClose, onChanged, onPropose,
 }: {
   txId: string | null;
   budgetOptions: OptionCategory[];
   taxOptions: OptionCategory[];
   onClose(): void;
   onChanged(): Promise<void>;
+  onPropose?: (proposal: RuleProposal) => void;
 }) {
   const [detail, setDetail] = useState<TransactionDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
@@ -398,8 +430,9 @@ function TransactionDrawer({
   const handleSave = async () => {
     if (!detail) return;
     setBusy(true);
+    const tx = detail.transaction;
     try {
-      await classifyTransaction(detail.transaction.id, {
+      await classifyTransaction(tx.id, {
         entity,
         category_tax: categoryTax || undefined,
         category_budget: categoryBudget || undefined,
@@ -409,6 +442,16 @@ function TransactionDrawer({
       toast.success("Reclassified");
       await onChanged();
       onClose();
+      if (onPropose) {
+        const proposal = buildRuleProposal({
+          merchantName: tx.merchant_name,
+          description: tx.description,
+          entity,
+          categoryTax,
+          categoryBudget: categoryBudget || null,
+        });
+        if (proposal) onPropose(proposal);
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {

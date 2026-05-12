@@ -111,6 +111,8 @@ const SYSTEM_PROMPT = `You are an expert US tax and accounting classification ag
   * ABODE HOME SECURITY = Whitford House smart home security monitoring subscription ($26/mo) → airbnb_activity / other_rental. High confidence; no review required.
   * KATSAM = furniture retailer; purchases were for Whitford House setup → airbnb_activity / other_rental. High confidence; no review required.
   * Transfers and credit card payments between owned accounts MUST use category_tax="transfer" and NO entity. This includes: credit card payments, bank-to-bank ACH transfers, Venmo/Zelle between your own accounts, moving money from checking to savings, etc. These are excluded from taxes and budget entirely.
+  * For family_personal transactions: ALWAYS set category_budget to one of the valid budget slugs above. Never omit it. Budget tracking is broken without it.
+  * For business entities (elyse_coaching, jeremy_coaching, airbnb_activity): NEVER set category_budget — leave it unset entirely.
 - FLAG split-purpose transactions with review_required=true and add "split_candidate" reason code.
 - Reason codes must be short, machine-readable, and explain the key signal used.
 

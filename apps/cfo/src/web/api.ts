@@ -10,7 +10,7 @@ import type {
   ImportRecord, CsvImportResult, AmazonImportResult, TillerImportResult, DeleteImportsResult,
   Rule, RuleMatchField, RuleMatchOperator, AutoCatImportResult,
   TaxCategory, BudgetCategory, BudgetTarget, BudgetStatusResponse, BudgetForecastResponse, CutsReportResponse,
-  BudgetCadence, IncomeCadence, BudgetPreset,
+  BudgetCadence, IncomeCadence, BudgetPreset, BudgetHistoryResponse,
   IncomeTarget, IncomeStatusResponse,
   ScheduleReport, ScheduleCEntity, SummaryReport,
 } from "./types";
@@ -504,6 +504,11 @@ export async function getBudgetForecast(): Promise<BudgetForecastResponse> {
 
 export async function getCutsReport(): Promise<CutsReportResponse> {
   return request<CutsReportResponse>("/budget/cuts");
+}
+
+export async function getBudgetHistory(category_slug: string): Promise<BudgetHistoryResponse> {
+  const qs = new URLSearchParams({ category_slug });
+  return request<BudgetHistoryResponse>(`/budget/history?${qs.toString()}`);
 }
 
 // ── Income ────────────────────────────────────────────────────────────────

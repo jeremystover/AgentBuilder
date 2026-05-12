@@ -30,7 +30,7 @@ import { handleBankSync } from './routes/bank';
 import { handleCsvImport } from './routes/imports';
 import { handleAmazonImport } from './routes/amazon';
 import { handleTillerImport } from './routes/tiller';
-import { handleRunClassification, handleReapplyAccountRules } from './routes/classify';
+import { handleRunClassification, handleReapplyAccountRules, handleBackfillFamilyBudget } from './routes/classify';
 import { handleListReview, handleResolveReview, handleNextReviewItem } from './routes/review';
 import { handleScheduleC, handleScheduleE, handleSummary } from './routes/reports';
 import {
@@ -397,6 +397,17 @@ export const MCP_TOOLS = [
     },
   },
 
+  {
+    name: 'backfill_budget_categories',
+    description:
+      'One-time migration: populate category_budget on older family_personal expense transactions that are missing it. Uses category_tax as the budget slug where set, falls back to other_personal. The budget screen now resolves category_budget dynamically so this is only needed once to clean up historical data. Returns counts of mapped_from_category_tax, defaulted_to_other_personal, total_updated.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+
   // ── Bookkeeping session tools ───────────────────────────────────────────────
   {
     name: 'start_bookkeeping_session',
@@ -443,7 +454,7 @@ export const MCP_TOOLS = [
   {
     name: 'commit_bookkeeping_decisions',
     description:
-      "Commit a batch of bookkeeping decisions. Each decision is { transaction_id, action, entity?, category_tax?, category_budget?, expense_type?, cut_status? }. Actions: 'classify' (set entity + category_tax, feeds the learning loop), 'accept' (keep existing AI suggestion), 'skip' (defer to later). Pass expense_type='one_time' on a classify decision to exclude it from forecasts; pass cut_status='flagged' to earmark it for elimination or 'complete' once cancelled. Returns counts of classified/accepted/skipped/errors. Every classify decision trains the auto-categorization rules — after 3+ consistent manual decisions for the same merchant, a rule is auto-created.",
+      "Commit a batch of bookkeeping decisions. Each decision is { transaction_id, action, entity?, category_tax?, category_budget?, expense_type?, cut_status? }. Actions: 'classify' (set entity + category_tax, feeds the learning loop), 'accept' (keep existing AI suggestion), 'skip' (defer to later). IMPORTANT: For family_personal classify decisions, ALWAYS include category_budget (one of the FAMILY_CATEGORIES slugs: groceries, dining_out, entertainment, healthcare, housing, transportation, education, personal_care, shopping, subscriptions, charitable_giving, potentially_deductible, other_personal, or any custom slug the user has created). Omitting category_budget for family_personal transactions means they will NOT appear in the budget screen. For business entities, omit category_budget. Pass expense_type='one_time' on a classify decision to exclude it from forecasts; pass cut_status='flagged' to earmark it for elimination or 'complete' once cancelled. Returns counts of classified/accepted/skipped/errors. Every classify decision trains the auto-categorization rules — after 3+ consistent manual decisions for the same merchant, a rule is auto-created.",
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -459,7 +470,7 @@ export const MCP_TOOLS = [
                 enum: ['elyse_coaching', 'jeremy_coaching', 'airbnb_activity', 'family_personal'],
               },
               category_tax: { type: 'string' as const },
-              category_budget: { type: 'string' as const },
+              category_budget: { type: 'string' as const, description: 'Required for family_personal transactions. One of the FAMILY_CATEGORIES slugs or a custom budget category slug. Omitting this for family_personal will hide the transaction from the budget screen.' },
               expense_type: { type: 'string' as const, enum: ['recurring', 'one_time'] },
               cut_status: { type: 'string' as const, enum: ['flagged', 'complete'] },
             },
@@ -607,6 +618,11 @@ export async function dispatchTool(
     case 'reapply_account_rules': {
       const req = jsonRequest('POST', 'https://cfo.invalid/classify/reapply-account-rules', {});
       return respondText(await handleReapplyAccountRules(req, env));
+    }
+
+    case 'backfill_budget_categories': {
+      const req = jsonRequest('POST', 'https://cfo.invalid/classify/backfill-family-budget', {});
+      return respondText(await handleBackfillFamilyBudget(req, env));
     }
 
     case 'list_review_queue': {

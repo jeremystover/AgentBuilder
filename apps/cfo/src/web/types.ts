@@ -416,6 +416,20 @@ export interface CutsReportResponse {
   trailing_window: { start: string; end: string; months: number };
 }
 
+export interface BudgetHistoryPeriod {
+  label: string;
+  days: number;
+  total_spent: number;
+  tx_count: number;
+  monthly_avg: number;
+  annual_avg: number;
+}
+
+export interface BudgetHistoryResponse {
+  category_slug: string;
+  periods: BudgetHistoryPeriod[];
+}
+
 // ── Reports ──────────────────────────────────────────────────────────────
 
 export type ScheduleCEntity = "elyse_coaching" | "jeremy_coaching";

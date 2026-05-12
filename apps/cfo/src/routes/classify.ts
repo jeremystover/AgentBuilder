@@ -8,6 +8,7 @@ import { buildAmazonSearchText, loadAmazonContext } from '../lib/amazon';
 import { loadVenmoContext } from '../lib/venmo';
 import { loadAppleContext } from '../lib/apple';
 import { loadEtsyContext } from '../lib/etsy';
+import { ensureBudgetCategory } from '../lib/budget';
 
 function buildAccountContext(tx: {
   account_name?: string | null;
@@ -174,37 +175,64 @@ export async function handleRunClassification(request: Request, env: Env): Promi
   const rules = rulesResult.results;
 
   // Fetch pending unclassified items. If transaction_ids were supplied, restrict
-  // to those; otherwise fall back to the 500-item default batch.
-  const idClause = transactionIds
-    ? `AND t.id IN (${transactionIds.map(() => '?').join(',')})`
-    : '';
-  const limitClause = transactionIds ? '' : 'LIMIT 500';
-  const baseBinds: unknown[] = transactionIds ? [userId, ...transactionIds] : [userId];
-
-  const unclassified = await env.DB.prepare(
-    `SELECT t.*, a.name AS account_name, a.mask AS account_mask, a.type AS account_type, a.subtype AS account_subtype, a.owner_tag
-     FROM review_queue rq
-     JOIN transactions t ON t.id = rq.transaction_id
-     LEFT JOIN accounts a ON a.id = t.account_id
-     LEFT JOIN classifications c ON c.transaction_id = t.id
-     WHERE rq.user_id = ?
-       AND rq.status = 'pending'
-       AND t.is_pending = 0
-       AND (
-         (rq.reason = 'unclassified' AND c.id IS NULL)
-         OR trim(COALESCE(rq.suggested_category_tax, c.category_tax, '')) = ''
-         OR lower(trim(COALESCE(rq.suggested_category_tax, c.category_tax, ''))) = 'unclassified'
-       )
-       ${idClause}
-     ORDER BY rq.created_at ASC
-     ${limitClause}`,
-  ).bind(...baseBinds).all<Transaction & {
+  // to those (chunked to stay under D1's ~100 bound-parameter limit); otherwise
+  // fall back to the 500-item default batch.
+  type UnclassifiedRow = Transaction & {
     account_name: string | null;
     account_mask: string | null;
     account_type: string | null;
     account_subtype: string | null;
     owner_tag: string | null;
-  }>();
+  };
+
+  let unclassifiedRows: UnclassifiedRow[];
+
+  if (transactionIds) {
+    unclassifiedRows = [];
+    const CHUNK_SIZE = 50;
+    for (let i = 0; i < transactionIds.length; i += CHUNK_SIZE) {
+      const chunk = transactionIds.slice(i, i + CHUNK_SIZE);
+      const rows = await env.DB.prepare(
+        `SELECT t.*, a.name AS account_name, a.mask AS account_mask, a.type AS account_type, a.subtype AS account_subtype, a.owner_tag
+         FROM review_queue rq
+         JOIN transactions t ON t.id = rq.transaction_id
+         LEFT JOIN accounts a ON a.id = t.account_id
+         LEFT JOIN classifications c ON c.transaction_id = t.id
+         WHERE rq.user_id = ?
+           AND rq.status = 'pending'
+           AND t.is_pending = 0
+           AND (
+             (rq.reason = 'unclassified' AND c.id IS NULL)
+             OR trim(COALESCE(rq.suggested_category_tax, c.category_tax, '')) = ''
+             OR lower(trim(COALESCE(rq.suggested_category_tax, c.category_tax, ''))) = 'unclassified'
+           )
+           AND t.id IN (${chunk.map(() => '?').join(',')})
+         ORDER BY rq.created_at ASC`,
+      ).bind(userId, ...chunk).all<UnclassifiedRow>();
+      unclassifiedRows.push(...rows.results);
+    }
+  } else {
+    const rows = await env.DB.prepare(
+      `SELECT t.*, a.name AS account_name, a.mask AS account_mask, a.type AS account_type, a.subtype AS account_subtype, a.owner_tag
+       FROM review_queue rq
+       JOIN transactions t ON t.id = rq.transaction_id
+       LEFT JOIN accounts a ON a.id = t.account_id
+       LEFT JOIN classifications c ON c.transaction_id = t.id
+       WHERE rq.user_id = ?
+         AND rq.status = 'pending'
+         AND t.is_pending = 0
+         AND (
+           (rq.reason = 'unclassified' AND c.id IS NULL)
+           OR trim(COALESCE(rq.suggested_category_tax, c.category_tax, '')) = ''
+           OR lower(trim(COALESCE(rq.suggested_category_tax, c.category_tax, ''))) = 'unclassified'
+         )
+       ORDER BY rq.created_at ASC
+       LIMIT 500`,
+    ).bind(userId).all<UnclassifiedRow>();
+    unclassifiedRows = rows.results;
+  }
+
+  const unclassified = { results: unclassifiedRows };
 
   if (!unclassified.results.length) {
     return jsonOk({
@@ -549,4 +577,70 @@ export async function handleClassifySingle(request: Request, env: Env, txId: str
   }
 
   return jsonOk({ method: 'ai', classification, _debug });
+}
+
+// ── POST /classify/backfill-family-budget ─────────────────────────────────────
+// Re-run AI classification to fill in missing category_budget values for
+// family_personal transactions that were classified without one.
+export async function handleBackfillFamilyBudget(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
+  const userId = getUserId(request);
+
+  // Pass 1: category_tax is set → use it as category_budget (any value, not
+  // just known slugs). Skips transfers since they have no budget meaning.
+  const pass1 = await env.DB.prepare(
+    `UPDATE classifications
+     SET category_budget = category_tax
+     WHERE transaction_id IN (
+       SELECT t.id FROM transactions t
+       JOIN classifications c2 ON c2.transaction_id = t.id
+       WHERE t.user_id = ?
+         AND c2.entity = 'family_personal'
+         AND c2.category_budget IS NULL
+         AND c2.category_tax IS NOT NULL
+         AND c2.category_tax != 'transfer'
+         AND c2.method != 'manual'
+         AND c2.is_locked = 0
+         AND t.is_pending = 0
+         AND t.amount < 0
+     )`,
+  ).bind(userId).run();
+
+  // Pass 2: neither category_budget nor category_tax → fall back to other_personal.
+  const pass2 = await env.DB.prepare(
+    `UPDATE classifications
+     SET category_budget = 'other_personal'
+     WHERE transaction_id IN (
+       SELECT t.id FROM transactions t
+       JOIN classifications c2 ON c2.transaction_id = t.id
+       WHERE t.user_id = ?
+         AND c2.entity = 'family_personal'
+         AND c2.category_budget IS NULL
+         AND (c2.category_tax IS NULL OR c2.category_tax = 'transfer')
+         AND c2.method != 'manual'
+         AND c2.is_locked = 0
+         AND t.is_pending = 0
+         AND t.amount < 0
+     )`,
+  ).bind(userId).run();
+
+  // Ensure a budget_categories row exists for every distinct slug now in use,
+  // including any category_tax values that just became budget slugs.
+  const usedSlugs = await env.DB.prepare(
+    `SELECT DISTINCT c.category_budget AS slug
+     FROM classifications c
+     JOIN transactions t ON t.id = c.transaction_id
+     WHERE t.user_id = ?
+       AND c.entity = 'family_personal'
+       AND c.category_budget IS NOT NULL`,
+  ).bind(userId).all<{ slug: string }>();
+
+  for (const { slug } of usedSlugs.results) {
+    await ensureBudgetCategory(env, userId, slug);
+  }
+
+  return jsonOk({
+    mapped_from_category_tax: pass1.meta.changes,
+    defaulted_to_other_personal: pass2.meta.changes,
+    total_updated: (pass1.meta.changes ?? 0) + (pass2.meta.changes ?? 0),
+  });
 }
