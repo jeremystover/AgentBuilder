@@ -11,7 +11,8 @@ export interface EtsyEmailReceipt {
   shopName: string | null;
   totalAmount: number;
   items: EtsyReceiptItem[];
-  date: string; // YYYY-MM-DD, from email received date
+  date: string; // YYYY-MM-DD
+  dateIsFromBody: boolean; // false = internalDate (forward timestamp), true = parsed from email body
   gmailMessageId: string;
 }
 
@@ -63,6 +64,23 @@ function extractTotal(text: string): number | null {
     const n = parsePrice(fallback[1]);
     if (n !== null && n > 0) return n;
   }
+  return null;
+}
+
+// Extract purchase date from email body — more reliable than internalDate for forwarded emails.
+// Etsy emails contain dates like "May 7, 2026", "May 7th, 2026", or "2026-05-07".
+function extractDateFromBody(text: string): string | null {
+  const months = 'Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?';
+  const mdy = new RegExp(`(${months})\\s+(\\d{1,2})(?:st|nd|rd|th)?,?\\s+(20\\d{2})`, 'i');
+  const iso = /\b(20\d{2})-(0[1-9]|1[0-2])-([0-2]\d|3[01])\b/;
+
+  const mdyMatch = text.match(mdy);
+  if (mdyMatch) {
+    const d = new Date(`${mdyMatch[1]} ${mdyMatch[2]}, ${mdyMatch[3]}`);
+    if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+  }
+  const isoMatch = text.match(iso);
+  if (isoMatch) return isoMatch[0];
   return null;
 }
 
@@ -135,12 +153,15 @@ export function parseEtsyEmail(message: GmailMessage): EtsyEmailReceipt | null {
   const items = html ? extractItemsFromHtml(html) : [];
   const finalItems = items.length > 0 ? items : extractItemsFromText(bodyText);
 
+  const bodyDate = extractDateFromBody(bodyText);
+
   return {
     orderId,
     shopName,
     totalAmount,
     items: finalItems,
-    date: epochToIsoDate(message.internalDate),
+    date: bodyDate ?? epochToIsoDate(message.internalDate),
+    dateIsFromBody: bodyDate !== null,
     gmailMessageId: message.id,
   };
 }
