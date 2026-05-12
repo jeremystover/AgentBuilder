@@ -263,25 +263,33 @@ export async function connectTellerEnrollmentForUser(
   for (const account of supportedAccounts) {
     const existingAccount = await env.DB.prepare(
       'SELECT id FROM accounts WHERE teller_account_id = ?',
-    ).bind(account.id).first<{ id: string }>();
+    ).bind(account.id).first<{ id: string }>()
+    ?? await env.DB.prepare(
+      `SELECT id FROM accounts
+       WHERE user_id = ? AND name = ? AND mask = ? AND type = ? AND subtype = ?
+       LIMIT 1`,
+    ).bind(userId, account.name, account.last_four ?? null, account.type, account.subtype ?? null)
+     .first<{ id: string }>();
 
     if (existingAccount) {
       await env.DB.prepare(
         `UPDATE accounts
-         SET teller_enrollment_id=?,
+         SET teller_account_id=?,
+             teller_enrollment_id=?,
              name=?,
              mask=?,
              type=?,
              subtype=?,
              is_active=1
-         WHERE teller_account_id=?`,
+         WHERE id=?`,
       ).bind(
+        account.id,
         enrollment.id,
         account.name,
         account.last_four ?? null,
         account.type,
         account.subtype ?? null,
-        account.id,
+        existingAccount.id,
       ).run();
       continue;
     }
