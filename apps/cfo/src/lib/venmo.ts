@@ -86,10 +86,19 @@ export async function storeVenmoMatch(
     await env.DB.prepare('DELETE FROM classifications WHERE transaction_id = ?').bind(transactionId).run();
   }
 
+  const directionLabel = payment.direction === 'received' ? 'received from' : 'sent to';
+  const note = [
+    `Venmo payment matched`,
+    `${directionLabel} ${payment.counterparty}`,
+    payment.memo ? `"${payment.memo}"` : null,
+    `$${payment.amount.toFixed(2)}`,
+  ].filter(Boolean).join(' · ');
+
   const resp = await handleClassifySingle(
     new Request('https://internal/classify', { headers: { 'x-user-id': userId } }),
     env,
     transactionId,
+    note,
   );
   return { reclassified: resp.ok };
 }

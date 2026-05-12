@@ -79,10 +79,20 @@ export async function storeEtsyMatch(
     await env.DB.prepare('DELETE FROM classifications WHERE transaction_id = ?').bind(transactionId).run();
   }
 
+  const itemList = receipt.items.map(i => i.name).filter(Boolean).join(', ');
+  const note = [
+    `Etsy receipt matched`,
+    receipt.shopName ? `Shop: ${receipt.shopName}` : null,
+    receipt.orderId ? `Order #${receipt.orderId}` : null,
+    itemList ? `Items: ${itemList}` : null,
+    `Total: $${receipt.totalAmount.toFixed(2)}`,
+  ].filter(Boolean).join(' · ');
+
   const resp = await handleClassifySingle(
     new Request('https://internal/classify', { headers: { 'x-user-id': userId } }),
     env,
     transactionId,
+    note,
   );
   return { reclassified: resp.ok };
 }
