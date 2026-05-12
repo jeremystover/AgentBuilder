@@ -259,13 +259,12 @@ export async function handleBudgetStatus(request: Request, env: Env): Promise<Re
      WHERE ${targetConds.join(' AND ')}`,
   ).bind(...targetVals).all<{ category_slug: string; cadence: Cadence; amount: number }>();
 
-  // Pull spend per budget category inside the period. DB convention:
-  // expenses are stored as negative amounts (Teller-native; Chase/Venmo
-  // importers normalize to match). Flip sign so `spent` is a positive
-  // dollar amount for easier comparison against the target.
+  // Pull spend per budget category inside the period. Use ABS(amount) so
+  // that both Teller-native (negative = expense) and some CSV importers
+  // (positive = expense) are counted correctly.
   const spendConds = [
     't.user_id = ?',
-    't.amount < 0',
+    't.amount != 0',
     't.posted_date BETWEEN ? AND ?',
     `${EFF_CAT} IS NOT NULL`,
   ];
@@ -277,7 +276,7 @@ export async function handleBudgetStatus(request: Request, env: Env): Promise<Re
 
   const spendRows = await env.DB.prepare(
     `SELECT ${EFF_CAT} AS category_slug,
-            SUM(-t.amount) AS spent,
+            SUM(ABS(t.amount)) AS spent,
             COUNT(*) AS tx_count
      FROM transactions t
      JOIN classifications c ON c.transaction_id = t.id
@@ -402,12 +401,12 @@ export async function handleBudgetForecast(request: Request, env: Env): Promise<
   // Trailing-12 historical spend per category, recurring only.
   const historyRows = await env.DB.prepare(
     `SELECT ${EFF_CAT} AS slug,
-            SUM(-t.amount) AS total,
+            SUM(ABS(t.amount)) AS total,
             COUNT(*) AS tx_count
      FROM transactions t
      JOIN classifications c ON c.transaction_id = t.id
      WHERE t.user_id = ?
-       AND t.amount < 0
+       AND t.amount != 0
        AND t.posted_date BETWEEN ? AND ?
        AND ${EFF_CAT} IS NOT NULL
        AND COALESCE(c.expense_type, 'recurring') != 'one_time'
@@ -420,11 +419,11 @@ export async function handleBudgetForecast(request: Request, env: Env): Promise<
   // Sum of one-time-tagged transactions in the trailing window — surfaced
   // for transparency so users can see what was excluded.
   const oneTimeTx = await env.DB.prepare(
-    `SELECT COUNT(*) AS count, COALESCE(SUM(-t.amount), 0) AS total
+    `SELECT COUNT(*) AS count, COALESCE(SUM(ABS(t.amount)), 0) AS total
      FROM transactions t
      JOIN classifications c ON c.transaction_id = t.id
      WHERE t.user_id = ?
-       AND t.amount < 0
+       AND t.amount != 0
        AND t.posted_date BETWEEN ? AND ?
        AND c.expense_type = 'one_time'`,
   ).bind(userId, start, end).first<{ count: number; total: number }>();
@@ -698,11 +697,11 @@ export async function handleBudgetHistory(request: Request, env: Env): Promise<R
   const periods = await Promise.all(
     PERIODS.map(async ({ label, days }) => {
       const row = await env.DB.prepare(
-        `SELECT SUM(-t.amount) AS total_spent, COUNT(*) AS tx_count
+        `SELECT SUM(ABS(t.amount)) AS total_spent, COUNT(*) AS tx_count
          FROM transactions t
          JOIN classifications c ON c.transaction_id = t.id
          WHERE t.user_id = ?
-           AND t.amount < 0
+           AND t.amount != 0
            AND ${EFF_CAT} = ?
            AND t.posted_date >= date('now', '-${days} days')`,
       ).bind(userId, categorySlug).first<{ total_spent: number | null; tx_count: number }>();

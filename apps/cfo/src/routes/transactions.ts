@@ -16,7 +16,13 @@ export async function handleListTransactions(request: Request, env: Env): Promis
 
   if (p.get('entity'))          { conditions.push('c.entity = ?');           vals.push(p.get('entity')); }
   if (p.get('category_tax'))    { conditions.push('c.category_tax = ?');     vals.push(p.get('category_tax')); }
-  if (p.get('category_budget')) { conditions.push('c.category_budget = ?'); vals.push(p.get('category_budget')); }
+  if (p.get('category_budget')) {
+    // Match via EFF_CAT: explicit category_budget wins; fall back to category_tax
+    // (same logic as the budget status spend query so drilldowns are consistent).
+    const bslug = p.get('category_budget');
+    conditions.push(`(c.category_budget = ? OR (c.category_budget IS NULL AND NULLIF(c.category_tax, 'transfer') = ?))`);
+    vals.push(bslug, bslug);
+  }
   if (p.get('account_id'))      { conditions.push('t.account_id = ?');       vals.push(p.get('account_id')); }
   if (p.get('date_from'))       { conditions.push('t.posted_date >= ?');     vals.push(p.get('date_from')); }
   if (p.get('date_to'))         { conditions.push('t.posted_date <= ?');     vals.push(p.get('date_to')); }
