@@ -117,12 +117,8 @@ function extractItemsFromText(text: string): EtsyReceiptItem[] {
 }
 
 export function parseEtsyEmail(message: GmailMessage): EtsyEmailReceipt | null {
-  const from = getHeader(message, 'from');
-// Etsy sends from transaction@account.etsy.com (not transaction@etsy.com)
-  if (!/@etsy\.com/i.test(from)) return null;
-
   const subject = getHeader(message, 'subject');
-  // Match order confirmations: "Your Etsy Purchase from...", "Your order is confirmed", etc.
+  // Match order confirmations — also handles forwarded emails (from: won't be @etsy.com)
   if (!/receipt|you just bought|order confirmed|etsy purchase|purchase from/i.test(subject)) return null;
 
   const { text, html } = getMessageBody(message);
