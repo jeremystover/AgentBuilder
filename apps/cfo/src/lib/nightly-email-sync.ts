@@ -313,7 +313,8 @@ async function syncEtsyEmails(
     ? Math.ceil((Date.now() - new Date(lastSyncedAt).getTime()) / 86_400_000) + 2
     : 90);
 
-  const query = `from:transaction@etsy.com newer_than:${sinceDays}d`;
+  // Etsy sends from transaction@account.etsy.com (not transaction@etsy.com)
+  const query = `from:(@etsy.com) subject:(etsy purchase OR receipt OR order confirmed) newer_than:${sinceDays}d`;
   const refs = await searchMessages(accessToken, query);
 
   let emailsProcessed = 0, receiptsMatched = 0, receiptsReclassified = 0;
