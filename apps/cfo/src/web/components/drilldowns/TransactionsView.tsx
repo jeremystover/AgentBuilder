@@ -7,7 +7,7 @@ import {
 } from "../ui";
 import { useTransactions } from "../../hooks/useTransactions";
 import { useAccounts } from "../../hooks/useAccounts";
-import { classifyTransaction, deleteTransaction, getTransaction, reclassifyWithAI } from "../../api";
+import { classifyTransaction, deleteTransaction, getTransaction, reclassifyWithAI, updateTransactionNote } from "../../api";
 import type {
   EntitySlug, Transaction, TransactionDetail, CutStatus, ExpenseType,
 } from "../../types";
@@ -400,6 +400,7 @@ function TransactionDrawer({
   const [categoryBudget, setCategoryBudget] = useState("");
   const [expenseType, setExpenseType] = useState<ExpenseType | null>(null);
   const [cutStatus, setCutStatus] = useState<CutStatus | null>(null);
+  const [note, setNote] = useState<string>("");
 
   useEffect(() => {
     if (!txId) {
@@ -418,6 +419,7 @@ function TransactionDrawer({
         setCategoryBudget(d.transaction.category_budget ?? "");
         setExpenseType(d.transaction.expense_type ?? null);
         setCutStatus(d.transaction.cut_status ?? null);
+        setNote(d.transaction.note ?? "");
       } catch (e) {
         if (!cancelled) toast.error(e instanceof Error ? e.message : String(e));
       } finally {
@@ -438,6 +440,7 @@ function TransactionDrawer({
         category_budget: categoryBudget || undefined,
         expense_type: expenseType,
         cut_status: cutStatus,
+        note,
       });
       toast.success("Reclassified");
       await onChanged();
@@ -517,6 +520,7 @@ function TransactionDrawer({
       setCategoryBudget(d.transaction.category_budget ?? '');
       setExpenseType(d.transaction.expense_type ?? null);
       setCutStatus(d.transaction.cut_status ?? null);
+      setNote(d.transaction.note ?? '');
       toast.success(`Reclassified via ${result.method}`);
       void onChanged();
     } catch (e) {
@@ -602,6 +606,18 @@ function TransactionDrawer({
               </div>
             )}
           </dl>
+
+          <div className="mb-4">
+            <label className="block text-xs text-text-muted mb-1">Note</label>
+            <textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Add a note…"
+              rows={3}
+              disabled={locked}
+              className="w-full rounded-md border border-border bg-surface-secondary px-3 py-2 text-sm text-text-primary placeholder:text-text-subtle resize-none focus:outline-none focus:ring-1 focus:ring-accent-primary disabled:opacity-50"
+            />
+          </div>
 
           {locked && (
             <Card className="p-3 mb-4 border-accent-warn/40 bg-accent-warn/5 text-sm text-accent-warn flex items-center gap-2">

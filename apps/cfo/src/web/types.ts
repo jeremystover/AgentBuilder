@@ -153,6 +153,7 @@ export interface Transaction {
   reason_codes: string | null;
   review_required: number | null;
   is_locked: number | null;
+  note: string | null;
   // Joined from accounts
   account_name: string | null;
   owner_tag: string | null;

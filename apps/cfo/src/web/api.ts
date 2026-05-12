@@ -284,6 +284,13 @@ export async function splitTransaction(id: string, splits: SplitItem[]): Promise
   });
 }
 
+export async function updateTransactionNote(id: string, note: string | null): Promise<{ transaction_id: string; note: string | null }> {
+  return request(`/transactions/${encodeURIComponent(id)}/note`, {
+    method: "PATCH",
+    body: JSON.stringify({ note }),
+  });
+}
+
 export async function deleteTransaction(id: string): Promise<{ deleted: true; transaction_id: string }> {
   return request(`/transactions/${encodeURIComponent(id)}`, { method: "DELETE" });
 }

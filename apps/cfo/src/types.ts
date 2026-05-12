@@ -60,6 +60,7 @@ export interface Transaction {
   category_plaid: string | null;
   is_pending: number;
   dedup_hash: string | null;
+  note: string | null;
   created_at: string;
 }
 

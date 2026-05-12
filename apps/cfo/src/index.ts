@@ -32,7 +32,7 @@ import { jsonError } from './types';
 import { handleSetup } from './routes/setup';
 import { handleGetBankConfig, handleStartBankConnect, handleCompleteBankConnect, handleBankSync } from './routes/bank';
 import { handleListAccounts, handleUpdateAccount } from './routes/accounts';
-import { handleListTransactions, handleGetTransaction, handleDeleteTransaction, handleManualClassify, handleSplitTransaction } from './routes/transactions';
+import { handleListTransactions, handleGetTransaction, handleDeleteTransaction, handleManualClassify, handleSplitTransaction, handleUpdateTransactionNote } from './routes/transactions';
 import { handleRunClassification, handleClassifySingle, handleReapplyAccountRules, handleReapplyAllRules, handleBackfillFamilyBudget } from './routes/classify';
 import { handleListReview, handleResolveReview, handleBulkResolveReview, handleNextReviewItem } from './routes/review';
 import { handleScheduleC, handleScheduleE, handleSummary, handleExport, handleSnapshot } from './routes/reports';
@@ -174,6 +174,7 @@ const ROUTES: Route[] = [
   { method: 'GET',    pattern: /^\/transactions\/([^/]+)$/,              handler: (req, env, id) => handleGetTransaction(req, env, id) },
   { method: 'DELETE', pattern: /^\/transactions\/([^/]+)$/,              handler: (req, env, id) => handleDeleteTransaction(req, env, id) },
   { method: 'PATCH',  pattern: /^\/transactions\/([^/]+)\/classify$/,    handler: (req, env, id) => handleManualClassify(req, env, id) },
+  { method: 'PATCH',  pattern: /^\/transactions\/([^/]+)\/note$/,        handler: (req, env, id) => handleUpdateTransactionNote(req, env, id) },
   { method: 'POST',   pattern: /^\/transactions\/([^/]+)\/split$/,       handler: (req, env, id) => handleSplitTransaction(req, env, id) },
 
   // AI Classification
