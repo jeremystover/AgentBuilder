@@ -30,6 +30,10 @@ import {
 // in the budget screen without any backfill.
 const EFF_CAT = `COALESCE(c.category_budget, NULLIF(c.category_tax, 'transfer'))`;
 
+// Categories hidden from the budget view — they don't represent
+// controllable spending (transfers between accounts, reimbursable items).
+const BUDGET_HIDDEN_SLUGS = new Set(['transfers', 'potentially_deductible']);
+
 const CadenceSchema = z.enum(['weekly', 'monthly', 'annual', 'one_time']);
 
 const CreateCategorySchema = z.object({
@@ -294,24 +298,31 @@ export async function handleBudgetStatus(request: Request, env: Env): Promise<Re
   for (const t of targets.results) targetBySlug.set(t.category_slug, { cadence: t.cadence, amount: t.amount });
 
   const spendBySlug = new Map<string, { spent: number; tx_count: number }>();
-  for (const s of spendRows.results) spendBySlug.set(s.category_slug, { spent: s.spent, tx_count: s.tx_count });
+  for (const s of spendRows.results) {
+    if (!BUDGET_HIDDEN_SLUGS.has(s.category_slug)) {
+      spendBySlug.set(s.category_slug, { spent: s.spent, tx_count: s.tx_count });
+    }
+  }
 
   // Auto-create budget_categories entries for any slugs derived from
-  // category_tax that don't have an explicit entry yet.
+  // category_tax that don't have an explicit entry yet. Skip hidden slugs.
   const knownSlugs = new Set(categoryRows.results.map(r => r.slug));
   for (const slug of spendBySlug.keys()) {
-    if (!knownSlugs.has(slug)) {
+    if (!knownSlugs.has(slug) && !BUDGET_HIDDEN_SLUGS.has(slug)) {
       await ensureBudgetCategory(env, userId, slug);
       knownSlugs.add(slug);
     }
   }
 
+  // Remove hidden categories from knownSlugs so they don't appear in output.
+  for (const h of BUDGET_HIDDEN_SLUGS) knownSlugs.delete(h);
+
   const slugs = new Set<string>([
     ...knownSlugs,
-    ...targetBySlug.keys(),
+    ...[...targetBySlug.keys()].filter(s => !BUDGET_HIDDEN_SLUGS.has(s)),
     ...spendBySlug.keys(),
   ]);
-  if (categorySlug) {
+  if (categorySlug && !BUDGET_HIDDEN_SLUGS.has(categorySlug)) {
     // Ensure the filter still shows up even with no data.
     slugs.add(categorySlug);
   }
@@ -414,7 +425,9 @@ export async function handleBudgetForecast(request: Request, env: Env): Promise<
   ).bind(userId, start, end).all<{ slug: string; total: number; tx_count: number }>();
 
   const historyBySlug = new Map<string, { total: number; tx_count: number }>();
-  for (const h of historyRows.results) historyBySlug.set(h.slug, { total: h.total, tx_count: h.tx_count });
+  for (const h of historyRows.results) {
+    if (!BUDGET_HIDDEN_SLUGS.has(h.slug)) historyBySlug.set(h.slug, { total: h.total, tx_count: h.tx_count });
+  }
 
   // Sum of one-time-tagged transactions in the trailing window — surfaced
   // for transparency so users can see what was excluded.
@@ -450,9 +463,10 @@ export async function handleBudgetForecast(request: Request, env: Env): Promise<
   const lines: ForecastLine[] = [];
 
   // Union of active categories + any slug we've seen via target or history.
+  // Exclude hidden categories (transfers, reimbursable) from forecast.
   const slugs = new Set<string>([
-    ...nameBySlug.keys(),
-    ...targetBySlug.keys(),
+    ...[...nameBySlug.keys()].filter(s => !BUDGET_HIDDEN_SLUGS.has(s)),
+    ...[...targetBySlug.keys()].filter(s => !BUDGET_HIDDEN_SLUGS.has(s)),
     ...historyBySlug.keys(),
   ]);
 
