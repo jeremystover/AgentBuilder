@@ -1471,11 +1471,11 @@ All open questions have been resolved. This appendix is the authoritative record
 
 ### D.1 Repository Integration
 
-The new system lives as `apps/family-finance/` in the existing AgentBuilder monorepo — a sibling to `apps/cfo/`, following identical conventions.
+The new system lives as `apps/cfo/` in the existing AgentBuilder monorepo — replacing the cfo app and following identical conventions.
 
 **Directory structure for Claude Code:**
 ```
-apps/family-finance/
+apps/cfo/
 ├── package.json          (workspace deps: @agentbuilder/web-ui-kit, observability, auth-google, llm)
 ├── wrangler.toml         (bindings: Neon/Hyperdrive, R2, Cloudflare Queue, ASSETS)
 ├── tsconfig.json
