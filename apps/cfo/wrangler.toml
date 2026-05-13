@@ -82,3 +82,8 @@ certificate_id = "1c40bf07-6ba7-4e8c-b95f-27df8e7adfda"
 # Secrets Store after running `pnpm fleet:setup-secrets`.
 # Per-agent secrets (TELLER_APPLICATION_ID, MCP_HTTP_KEY) stay as
 # plain worker secrets via `wrangler secret put`.
+
+
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id = "e142673e253a4e12a60cc3f42d78e26c"
