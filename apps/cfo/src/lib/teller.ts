@@ -1,4 +1,8 @@
-import type { Env } from '../types';
+export interface TellerEnv {
+  TELLER_APPLICATION_ID: string;
+  TELLER_ENV: string;
+  TELLER_MTLS?: Fetcher;
+}
 
 const TELLER_API_BASE = 'https://api.teller.io';
 const DEFAULT_PAGE_SIZE = 500;
@@ -57,16 +61,16 @@ interface TellerApiErrorResponse {
   };
 }
 
-function getTellerEnvironment(env: Env): string {
+function getTellerEnvironment(env: TellerEnv): string {
   return env.TELLER_ENV ?? 'sandbox';
 }
 
-function requiresMtls(env: Env): boolean {
+function requiresMtls(env: TellerEnv): boolean {
   return getTellerEnvironment(env) !== 'sandbox';
 }
 
 async function tellerRequest<T>(
-  env: Env,
+  env: TellerEnv,
   accessToken: string,
   path: string,
   query?: Record<string, string | undefined>,
@@ -118,7 +122,7 @@ async function tellerRequest<T>(
   return data as T;
 }
 
-export function getTellerConnectConfig(env: Env): {
+export function getTellerConnectConfig(env: TellerEnv): {
   application_id: string;
   environment: string;
   products: string[];
@@ -136,12 +140,12 @@ export function getTellerConnectConfig(env: Env): {
   };
 }
 
-export async function listAccounts(env: Env, accessToken: string): Promise<TellerAccount[]> {
+export async function listAccounts(env: TellerEnv, accessToken: string): Promise<TellerAccount[]> {
   return tellerRequest<TellerAccount[]>(env, accessToken, '/accounts');
 }
 
 export async function listTransactions(
-  env: Env,
+  env: TellerEnv,
   accessToken: string,
   accountId: string,
   opts: { startDate?: string; endDate?: string; count?: number } = {},

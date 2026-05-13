@@ -1,9 +1,6 @@
 import type { Config } from "tailwindcss";
 
-// Design tokens for the CFO web UI. Light "ledger paper" theme — a CFO
-// audience expects something closer to a financial dashboard than a dark
-// notebook, so we diverge from research-agent's Lab here. Indigo accent
-// kept for cross-product consistency.
+// Light "ledger paper" theme — indigo accent.
 export default {
   content: ["./src/web/**/*.{ts,tsx,html}"],
   theme: {
