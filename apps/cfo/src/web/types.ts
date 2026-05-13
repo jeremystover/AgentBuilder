@@ -106,6 +106,7 @@ export interface ReviewItem {
   current_entity: string | null;
   current_category_tax: string | null;
   current_confidence: number | null;
+  note: string | null;
 }
 
 export interface ReviewListResponse {

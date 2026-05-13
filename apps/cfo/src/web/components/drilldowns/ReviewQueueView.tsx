@@ -609,6 +609,9 @@ function ReviewDrawer({
         <div><dt className="text-xs text-text-muted">Account</dt><dd className="text-text-primary">{item.account_name ?? "—"}</dd></div>
         <div><dt className="text-xs text-text-muted">Owner</dt><dd className="text-text-primary">{item.owner_tag ?? "—"}</dd></div>
         <div className="col-span-2"><dt className="text-xs text-text-muted">Description</dt><dd className="text-text-primary">{item.description ?? "—"}</dd></div>
+        {item.note && (
+          <div className="col-span-2"><dt className="text-xs text-text-muted">Note</dt><dd className="text-text-primary italic">{item.note}</dd></div>
+        )}
       </dl>
 
       {item.details && (
