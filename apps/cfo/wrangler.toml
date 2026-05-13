@@ -55,3 +55,7 @@ crons = ["0 9 * * *"]
 #   MCP_HTTP_KEY           bearer token for /mcp
 #   ANTHROPIC_API_KEY      via fleet secrets store
 #   TELLER_APPLICATION_ID  Teller Connect application id
+
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id = "e142673e253a4e12a60cc3f42d78e26c"
