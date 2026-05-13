@@ -51,7 +51,7 @@ export async function handleListReview(request: Request, env: Env): Promise<Resp
 
   const [items, countRow] = await Promise.all([
     env.DB.prepare(
-      `SELECT rq.*, t.posted_date, t.amount, t.merchant_name, t.description,
+      `SELECT rq.*, t.posted_date, t.amount, t.merchant_name, t.description, t.note,
               a.name AS account_name, a.owner_tag, a.type AS account_type, a.subtype AS account_subtype,
               c.entity AS current_entity, c.category_tax AS current_category_tax, c.confidence AS current_confidence
        ${fromClause}
