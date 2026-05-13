@@ -64,6 +64,7 @@ import {
   handleSaveBookkeepingNotes,
 } from './routes/bookkeeping';
 import { handleClaudeHealth } from './routes/health';
+import { handleUploadCheckImage } from './routes/check-images';
 
 // MCP
 import { handleMcp, type JsonRpcMessage } from './mcp-tools';
@@ -245,6 +246,9 @@ const ROUTES: Route[] = [
   // Gmail email sync (Amazon + Venmo enrichment)
   { method: 'GET',    pattern: /^\/gmail\/status$/,                       handler: (req, env) => handleGmailStatus(req, env) },
   { method: 'POST',   pattern: /^\/gmail\/sync$/,                         handler: (req, env) => handleGmailSync(req, env) },
+
+  // Check image upload (from browser extension)
+  { method: 'POST',   pattern: /^\/check-images$/,                        handler: (req, env) => handleUploadCheckImage(req, env) },
 
   // Cron triggers — manual entry points for testing/debugging the scheduled handler
   { method: 'POST',   pattern: /^\/cron\/nightly-sync$/,                 handler: async (_req, env) => Response.json(await runNightlyTellerSync(env)) },
