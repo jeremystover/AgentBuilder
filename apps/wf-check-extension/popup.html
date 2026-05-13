@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>WF Check Extractor</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 13px;
+      width: 340px;
+      background: #fff;
+      color: #1a1a1a;
+    }
+    .header {
+      background: #c8102e;
+      color: white;
+      padding: 12px 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .header h1 { font-size: 14px; font-weight: 700; letter-spacing: 0.01em; }
+    .header .subtitle { font-size: 11px; opacity: 0.85; margin-top: 1px; }
+    .body { padding: 12px 14px; }
+    .wrong-page {
+      padding: 20px 14px;
+      color: #666;
+      line-height: 1.5;
+      font-size: 12px;
+    }
+
+    .count-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+      padding: 8px 10px;
+      background: #f5f5f5;
+      border-radius: 6px;
+    }
+    .count-badge {
+      background: #c8102e;
+      color: white;
+      font-size: 15px;
+      font-weight: 700;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .count-label { font-size: 12px; color: #444; }
+
+    details { margin-bottom: 12px; }
+    summary {
+      cursor: pointer;
+      font-size: 12px;
+      color: #666;
+      user-select: none;
+      padding: 4px 0;
+    }
+    summary:hover { color: #333; }
+    .settings { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
+    label { font-size: 11px; color: #666; display: block; margin-bottom: 2px; }
+    input {
+      width: 100%;
+      padding: 6px 8px;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+      font-size: 12px;
+      outline: none;
+    }
+    input:focus { border-color: #c8102e; }
+
+    .btn {
+      width: 100%;
+      padding: 9px 0;
+      background: #c8102e;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn:hover:not(:disabled) { background: #a30d25; }
+    .btn:disabled { background: #bbb; cursor: not-allowed; }
+
+    .progress-wrap {
+      margin-top: 10px;
+      display: none;
+    }
+    .progress-bar-track {
+      height: 5px;
+      background: #eee;
+      border-radius: 3px;
+      overflow: hidden;
+      margin-bottom: 8px;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      background: #c8102e;
+      border-radius: 3px;
+      width: 0%;
+      transition: width 0.3s;
+    }
+    .status-text { font-size: 11px; color: #555; margin-bottom: 6px; }
+
+    .log {
+      max-height: 140px;
+      overflow-y: auto;
+      font-size: 11px;
+      line-height: 1.6;
+      border: 1px solid #eee;
+      border-radius: 4px;
+      padding: 6px 8px;
+      background: #fafafa;
+    }
+    .log-item { padding: 1px 0; }
+    .log-ok { color: #166534; }
+    .log-err { color: #991b1b; }
+    .log-info { color: #555; }
+
+    .results-section {
+      margin-top: 10px;
+      display: none;
+      border-top: 1px solid #eee;
+      padding-top: 10px;
+    }
+    .results-heading { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+    .result-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      padding: 4px 0;
+      border-bottom: 1px solid #f0f0f0;
+      font-size: 11px;
+    }
+    .result-check { color: #444; }
+    .result-payee { color: #166534; font-weight: 600; text-align: right; max-width: 160px; }
+    .result-unknown { color: #888; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <div class="h1-wrap">
+        <h1>WF Check Extractor</h1>
+      </div>
+      <div class="subtitle">Extract &amp; identify payees via CFO agent</div>
+    </div>
+  </div>
+
+  <div id="wrong-page" class="wrong-page" style="display:none">
+    Navigate to a Wells Fargo account detail page to use this extension.
+    <br/><br/>
+    URL should match:<br/>
+    <code style="font-size:10px">connect.secure.wellsfargo.com/accounts/inquiry/accountdetails/…</code>
+  </div>
+
+  <div id="main" class="body" style="display:none">
+    <div class="count-row">
+      <div class="count-badge" id="count-badge">0</div>
+      <div class="count-label">
+        <strong id="count-label-num">0</strong> check transactions found on this page
+      </div>
+    </div>
+
+    <details id="settings-details">
+      <summary>⚙ CFO Agent settings</summary>
+      <div class="settings">
+        <div>
+          <label for="cfo-url">CFO Worker URL</label>
+          <input id="cfo-url" type="url" placeholder="https://cfo.example.workers.dev" autocomplete="off" />
+        </div>
+        <div>
+          <label for="api-key">API Key (EXTERNAL_API_KEY)</label>
+          <input id="api-key" type="password" placeholder="Bearer token — leave blank if open" autocomplete="off" />
+        </div>
+        <div>
+          <label for="account-id">Teller Account ID (optional)</label>
+          <input id="account-id" type="text" placeholder="Helps match transactions in CFO" autocomplete="off" />
+        </div>
+      </div>
+    </details>
+
+    <button class="btn" id="extract-btn" disabled>Extract Check Images</button>
+
+    <div class="progress-wrap" id="progress-wrap">
+      <div class="progress-bar-track">
+        <div class="progress-bar-fill" id="progress-fill"></div>
+      </div>
+      <div class="status-text" id="status-text">Starting…</div>
+      <div class="log" id="log"></div>
+    </div>
+
+    <div class="results-section" id="results-section">
+      <div class="results-heading">Payees identified</div>
+      <div id="results-list"></div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
