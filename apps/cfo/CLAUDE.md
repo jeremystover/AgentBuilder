@@ -1,5 +1,5 @@
 
-# Family Finance — Claude Code Context
+# CFO — Claude Code Context
 
 This file lives at `apps/cfo/CLAUDE.md`. Read it at the start of every session working on this app.
 
