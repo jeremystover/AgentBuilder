@@ -17,7 +17,7 @@
   },
   "content_scripts": [
     {
-      "matches": ["*://connect.secure.wellsfargo.com/accounts/inquiry/accountdetails/*"],
+      "matches": ["*://connect.secure.wellsfargo.com/accounts/start*"],
       "js": ["content.js"],
       "run_at": "document_idle"
     }
