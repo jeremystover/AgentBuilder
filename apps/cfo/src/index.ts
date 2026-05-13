@@ -2,14 +2,17 @@
  * CFO worker entrypoint (Phase 1a — scaffold).
  *
  * Surfaces:
- *   - GET  /health                       — db connectivity check
- *   - POST /teller/enroll                — start a Teller enrollment
- *   - GET  /teller/accounts              — list enrolled accounts
- *   - POST /teller/sync                  — sync transactions into raw_transactions
+ *   - GET    /health                     — db + email sync health
+ *   - POST   /teller/enroll              — start a Teller enrollment
+ *   - GET    /teller/accounts            — list enrolled accounts
+ *   - POST   /teller/sync                — sync transactions into raw_transactions
  *   - DELETE /teller/enrollments/:id     — remove an enrollment
+ *   - GET    /gmail/status               — per-vendor email sync counts
+ *   - POST   /gmail/sync                 — run email enrichment for all vendors
+ *   - POST   /gmail/sync/:vendor         — run for one vendor (amazon|venmo|apple|etsy)
  *
  * Scheduled:
- *   - "0 9 * * *"  → nightly Teller sync (runs at ~05:00 ET)
+ *   - "0 9 * * *"  → nightly Teller sync + email enrichment (~05:00 ET)
  */
 
 import { runCron } from '@agentbuilder/observability';
@@ -24,6 +27,12 @@ import {
   handleTellerDeleteEnrollment,
   runTellerSync,
 } from './routes/teller';
+import {
+  handleGmailSyncAll,
+  handleGmailSyncVendor,
+  handleGmailStatus,
+} from './routes/gmail';
+import { runEmailSync } from './lib/email-sync';
 
 type Handler = (req: Request, env: Env, ...params: string[]) => Promise<Response>;
 
@@ -39,10 +48,14 @@ const ROUTES: Route[] = [
   { method: 'GET',    pattern: /^\/teller\/accounts$/,                handler: (req, env) => handleTellerListAccounts(req, env) },
   { method: 'POST',   pattern: /^\/teller\/sync$/,                    handler: (req, env) => handleTellerSync(req, env) },
   { method: 'DELETE', pattern: /^\/teller\/enrollments\/([^/]+)$/,    handler: (req, env, id) => handleTellerDeleteEnrollment(req, env, id!) },
+  { method: 'GET',    pattern: /^\/gmail\/status$/,                     handler: (req, env) => handleGmailStatus(req, env) },
+  { method: 'POST',   pattern: /^\/gmail\/sync$/,                       handler: (req, env) => handleGmailSyncAll(req, env) },
+  { method: 'POST',   pattern: /^\/gmail\/sync\/([^/]+)$/,              handler: (req, env, vendor) => handleGmailSyncVendor(req, env, vendor!) },
 ];
 
 async function handleNightlySync(env: Env): Promise<void> {
   await runTellerSync(env);
+  await runEmailSync(env);
 }
 
 export default {

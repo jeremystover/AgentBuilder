@@ -1,0 +1,326 @@
+/**
+ * Email-sync orchestrator. For each vendor:
+ *   1. Find unprocessed Gmail messages matching the vendor's search query
+ *   2. Parse each message via the vendor parser
+ *   3. Find a matching raw_transaction (amount + date window + vendor hint)
+ *   4. If matched: update raw_transactions.supplement_json with vendor context;
+ *      if status was 'waiting' for this vendor, promote to 'staged'
+ *   5. Record the result in email_processed (success or failure) so re-runs
+ *      don't repeat the work
+ *
+ * Email NEVER writes to the transactions table or touches classification —
+ * see apps/cfo/CLAUDE.md "Email is Gather-only."
+ */
+
+import type { Env } from '../types';
+import { db, type Sql } from './db';
+import { searchMessages, getMessage, type GmailMessage } from './gmail';
+import { parseAmazonEmail, type AmazonContext } from './email-parsers/amazon';
+import { parseVenmoEmail, type VenmoContext } from './email-parsers/venmo';
+import { parseAppleEmail, type AppleContext } from './email-parsers/apple';
+import { parseEtsyEmail, type EtsyContext } from './email-parsers/etsy';
+import {
+  pickBestMatch,
+  type MatchCandidate,
+  type VendorHint,
+} from './email-matchers/match';
+
+export const VENDORS: readonly VendorHint[] = ['amazon', 'venmo', 'apple', 'etsy'] as const;
+
+const SEARCH_QUERIES: Record<VendorHint, string> = {
+  amazon: 'from:(auto-confirm@amazon.com OR ship-confirm@amazon.com OR shipment-tracking@amazon.com OR order-update@amazon.com) subject:"Your Amazon.com order" newer_than:90d',
+  venmo:  'from:venmo@venmo.com newer_than:90d',
+  apple:  'from:no_reply@email.apple.com subject:"Your receipt from Apple" newer_than:90d',
+  etsy:   '(from:transaction@etsy.com OR from:support@etsy.com OR subject:"Etsy receipt" OR subject:"you just bought") newer_than:90d',
+};
+
+const SOURCE_FOR_VENDOR: Record<VendorHint, 'email_amazon' | 'email_venmo' | 'email_apple' | 'email_etsy'> = {
+  amazon: 'email_amazon',
+  venmo:  'email_venmo',
+  apple:  'email_apple',
+  etsy:   'email_etsy',
+};
+
+export interface VendorSyncResult {
+  vendor: VendorHint;
+  scanned: number;
+  parsed: number;
+  matched: number;
+  errors: number;
+  skipped_already_processed: number;
+}
+
+export interface EmailSyncResult {
+  results: VendorSyncResult[];
+  ran_at: string;
+}
+
+export async function runEmailSync(env: Env, vendors?: VendorHint[]): Promise<EmailSyncResult> {
+  const targets = vendors ?? VENDORS;
+  const ranAt = new Date().toISOString();
+  const sql = db(env);
+  try {
+    const results: VendorSyncResult[] = [];
+    for (const vendor of targets) {
+      results.push(await syncVendor(env, sql, vendor));
+    }
+    return { results, ran_at: ranAt };
+  } finally {
+    await sql.end({ timeout: 5 }).catch(() => {});
+  }
+}
+
+async function syncVendor(env: Env, sql: Sql, vendor: VendorHint): Promise<VendorSyncResult> {
+  const refs = await searchMessages(env, SEARCH_QUERIES[vendor]).catch(err => {
+    console.warn(`[email-sync] ${vendor} search failed:`, err);
+    return [] as Awaited<ReturnType<typeof searchMessages>>;
+  });
+
+  let parsed = 0;
+  let matched = 0;
+  let errors = 0;
+  let skipped = 0;
+
+  for (const ref of refs) {
+    const already = await sql<Array<{ message_id: string }>>`
+      SELECT message_id FROM email_processed
+      WHERE vendor = ${vendor} AND message_id = ${ref.id}
+      LIMIT 1
+    `;
+    if (already.length > 0) {
+      skipped++;
+      continue;
+    }
+
+    let message: GmailMessage;
+    try {
+      message = await getMessage(env, ref.id);
+    } catch (err) {
+      errors++;
+      await recordProcessed(sql, vendor, ref.id, { parse_success: false, error: String(err) });
+      continue;
+    }
+
+    const context = parseMessage(vendor, message);
+    if (!context) {
+      await recordProcessed(sql, vendor, ref.id, {
+        parse_success: false,
+        error: 'parser returned null',
+      });
+      continue;
+    }
+    parsed++;
+
+    const matchResult = await findMatch(sql, vendor, context);
+    if (matchResult) {
+      matched++;
+      await updateSupplement(sql, vendor, matchResult.transaction_id, context);
+      await recordProcessed(sql, vendor, ref.id, {
+        parse_success: true,
+        match_found: true,
+        transaction_id: matchResult.transaction_id,
+      });
+    } else {
+      await recordProcessed(sql, vendor, ref.id, {
+        parse_success: true,
+        match_found: false,
+      });
+    }
+  }
+
+  return {
+    vendor,
+    scanned: refs.length,
+    parsed,
+    matched,
+    errors,
+    skipped_already_processed: skipped,
+  };
+}
+
+type VendorContext = AmazonContext | VenmoContext | AppleContext | EtsyContext;
+
+function parseMessage(vendor: VendorHint, message: GmailMessage): VendorContext | null {
+  switch (vendor) {
+    case 'amazon': return parseAmazonEmail(message);
+    case 'venmo':  return parseVenmoEmail(message);
+    case 'apple':  return parseAppleEmail(message);
+    case 'etsy':   return parseEtsyEmail(message);
+  }
+}
+
+function amountAndDateFor(vendor: VendorHint, context: VendorContext): { amount: number; date: string } | null {
+  switch (vendor) {
+    case 'amazon': {
+      const c = context as AmazonContext;
+      if (c.total_amount === null) return null;
+      return { amount: c.total_amount, date: c.shipment_date ?? c.order_date ?? '' };
+    }
+    case 'venmo': {
+      const c = context as VenmoContext;
+      return { amount: c.amount, date: c.date };
+    }
+    case 'apple': {
+      const c = context as AppleContext;
+      return { amount: c.total_amount, date: c.date };
+    }
+    case 'etsy': {
+      const c = context as EtsyContext;
+      return { amount: c.total_amount, date: c.date };
+    }
+  }
+}
+
+function windowDaysFor(vendor: VendorHint, context: VendorContext): { back: number; forward: number } {
+  if (vendor === 'amazon') return { back: 2, forward: 12 };
+  if (vendor === 'etsy') {
+    const c = context as EtsyContext;
+    return c.date_is_from_body ? { back: 2, forward: 5 } : { back: 60, forward: 5 };
+  }
+  if (vendor === 'apple') return { back: 2, forward: 5 };
+  return { back: 2, forward: 2 }; // venmo
+}
+
+async function findMatch(sql: Sql, vendor: VendorHint, context: VendorContext) {
+  const ad = amountAndDateFor(vendor, context);
+  if (!ad || !ad.date) return null;
+
+  const { back, forward } = windowDaysFor(vendor, context);
+  const dateFrom = shiftIsoDate(ad.date, -back);
+  const dateTo = shiftIsoDate(ad.date, forward);
+
+  // Candidate raw_transactions are Teller-sourced rows within the date window
+  // whose absolute amount matches (within $0.01). Sign differs by account type
+  // (credit card vs. bank) so we match on |amount|.
+  const candidates = await sql<Array<{
+    transaction_id: string;
+    date: string;
+    amount: string;
+    description: string;
+  }>>`
+    SELECT id AS transaction_id,
+           to_char(date, 'YYYY-MM-DD') AS date,
+           amount::text AS amount,
+           description
+    FROM raw_transactions
+    WHERE source = 'teller'
+      AND date BETWEEN ${dateFrom} AND ${dateTo}
+      AND ABS(ABS(amount) - ${ad.amount}) < 0.01
+  `;
+
+  const matchCandidates: MatchCandidate[] = candidates.map(c => ({
+    transaction_id: c.transaction_id,
+    date: c.date,
+    amount: Number(c.amount),
+    description: c.description,
+  }));
+
+  return pickBestMatch({
+    candidates: matchCandidates,
+    parsed: ad,
+    vendor,
+  });
+}
+
+async function updateSupplement(
+  sql: Sql,
+  vendor: VendorHint,
+  transactionId: string,
+  context: VendorContext,
+): Promise<void> {
+  const supplement = { [vendor]: context };
+  const expectedWaiting = SOURCE_FOR_VENDOR[vendor];
+  // Merge into supplement_json; if the row was waiting for THIS vendor, promote it.
+  await sql`
+    UPDATE raw_transactions
+    SET supplement_json = COALESCE(supplement_json, '{}'::jsonb) || ${JSON.stringify(supplement)}::jsonb,
+        status = CASE
+          WHEN status = 'waiting' AND waiting_for = ${expectedWaiting} THEN 'staged'
+          ELSE status
+        END,
+        waiting_for = CASE
+          WHEN status = 'waiting' AND waiting_for = ${expectedWaiting} THEN NULL
+          ELSE waiting_for
+        END
+    WHERE id = ${transactionId}
+  `;
+}
+
+interface RecordOpts {
+  parse_success: boolean;
+  match_found?: boolean;
+  transaction_id?: string;
+  error?: string;
+}
+
+async function recordProcessed(
+  sql: Sql,
+  vendor: VendorHint,
+  messageId: string,
+  opts: RecordOpts,
+): Promise<void> {
+  await sql`
+    INSERT INTO email_processed (vendor, message_id, parse_success, match_found, transaction_id, error_message)
+    VALUES (
+      ${vendor},
+      ${messageId},
+      ${opts.parse_success},
+      ${opts.match_found ?? false},
+      ${opts.transaction_id ?? null},
+      ${opts.error ?? null}
+    )
+    ON CONFLICT (vendor, message_id) DO NOTHING
+  `;
+}
+
+function shiftIsoDate(date: string, days: number): string {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+export interface EmailStatus {
+  per_vendor: Array<{
+    vendor: VendorHint;
+    last_processed_at: string | null;
+    total_processed: number;
+    parse_failures: number;
+    unmatched: number;
+  }>;
+}
+
+export async function getEmailStatus(env: Env): Promise<EmailStatus> {
+  const sql = db(env);
+  try {
+    const rows = await sql<Array<{
+      vendor: VendorHint;
+      last_processed_at: string | null;
+      total_processed: string;
+      parse_failures: string;
+      unmatched: string;
+    }>>`
+      SELECT vendor,
+             MAX(processed_at) AS last_processed_at,
+             COUNT(*) AS total_processed,
+             COUNT(*) FILTER (WHERE parse_success = false) AS parse_failures,
+             COUNT(*) FILTER (WHERE parse_success = true AND match_found = false) AS unmatched
+      FROM email_processed
+      GROUP BY vendor
+    `;
+    const byVendor = new Map(rows.map(r => [r.vendor, r]));
+    return {
+      per_vendor: VENDORS.map(v => {
+        const row = byVendor.get(v);
+        return {
+          vendor: v,
+          last_processed_at: row?.last_processed_at ?? null,
+          total_processed: Number(row?.total_processed ?? 0),
+          parse_failures: Number(row?.parse_failures ?? 0),
+          unmatched: Number(row?.unmatched ?? 0),
+        };
+      }),
+    };
+  } finally {
+    await sql.end({ timeout: 5 }).catch(() => {});
+  }
+}

@@ -12,7 +12,7 @@ binding = "ASSETS"
 # the generated id below. See docs/setup-neon.md.
 [[hyperdrive]]
 binding = "HYPERDRIVE"
-id = ""
+id = "e142673e253a4e12a60cc3f42d78e26c"
 
 [[r2_buckets]]
 binding = "STORAGE"
@@ -34,6 +34,15 @@ binding = "AGENTBUILDER_CORE_DB"
 database_name = "agentbuilder-core"
 database_id = "51a422d2-e9ea-46e8-b6c8-233229434eca"
 
+# Per-agent D1 for the Google OAuth token vault. Created with:
+#   wrangler d1 create cfo-tokens
+# then apply schema/d1/google-tokens.sql via:
+#   wrangler d1 execute cfo-tokens --remote --file=schema/d1/google-tokens.sql
+[[d1_databases]]
+binding = "TOKENS"
+database_name = "cfo-tokens"
+database_id = ""
+
 # mTLS binding for Teller development/production environments. The
 # sandbox environment does not require it. Reuses the existing cert.
 [[mtls_certificates]]
@@ -50,12 +59,11 @@ TELLER_ENV = "development"
 crons = ["0 9 * * *"]
 
 # Secrets — set via `wrangler secret put`:
-#   WEB_UI_PASSWORD        login password for the React SPA
-#   EXTERNAL_API_KEY       bearer token for /api/v1/* without cookie
-#   MCP_HTTP_KEY           bearer token for /mcp
-#   ANTHROPIC_API_KEY      via fleet secrets store
-#   TELLER_APPLICATION_ID  Teller Connect application id
-
-[[hyperdrive]]
-binding = "HYPERDRIVE"
-id = "e142673e253a4e12a60cc3f42d78e26c"
+#   WEB_UI_PASSWORD            login password for the React SPA
+#   EXTERNAL_API_KEY           bearer token for /api/v1/* without cookie
+#   MCP_HTTP_KEY               bearer token for /mcp
+#   ANTHROPIC_API_KEY          via fleet secrets store
+#   TELLER_APPLICATION_ID      Teller Connect application id
+#   GOOGLE_OAUTH_CLIENT_ID     fleet-wide Google OAuth client id
+#   GOOGLE_OAUTH_CLIENT_SECRET fleet-wide Google OAuth client secret
+#   GOOGLE_TOKEN_VAULT_KEK     base64-encoded AES-256 key for the D1 token vault

@@ -27,6 +27,12 @@ export interface Env {
 
   // Fleet observability
   AGENTBUILDER_CORE_DB: D1Database;
+
+  // Google OAuth token vault (D1) + fleet-wide OAuth client
+  TOKENS: D1Database;
+  GOOGLE_OAUTH_CLIENT_ID: string;
+  GOOGLE_OAUTH_CLIENT_SECRET: string;
+  GOOGLE_TOKEN_VAULT_KEK: string;
 }
 
 export function jsonOk(data: unknown, status = 200): Response {
