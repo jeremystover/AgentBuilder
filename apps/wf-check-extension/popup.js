@@ -2,7 +2,10 @@
  * WF Check Extractor — popup script
  */
 
-const WF_HOST = 'connect.secure.wellsfargo.com/accounts/inquiry/accountdetails';
+// WF uses a hash-routed SPA: path is /accounts/start, the React route
+// is in the fragment (#/accounts/home/accountdetails).
+const WF_HOST = 'connect.secure.wellsfargo.com/accounts/start';
+const WF_HASH = 'accountdetails';
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 
@@ -82,7 +85,9 @@ async function init() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   activeTab = tab;
 
-  if (!tab || !tab.url || !tab.url.includes(WF_HOST)) {
+  const url = tab ? (tab.url || '') : '';
+  const onWfPage = url.includes(WF_HOST) && url.includes(WF_HASH);
+  if (!onWfPage) {
     wrongPageEl.style.display = 'block';
     return;
   }
