@@ -1,5 +1,5 @@
 #!/usr/bin/env tsx
-/**
+/** 
  * One-shot migration: convert the legacy CFO D1 dump for Teller
  * enrollments + accounts into Neon-ready INSERT statements.
  *

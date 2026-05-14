@@ -19,6 +19,7 @@
     "@agentbuilder/observability": "workspace:*",
     "@agentbuilder/web-ui-kit": "workspace:*",
     "postgres": "^3.4.5",
+    "recharts": "^2.13.3",
     "zod": "^3.23.8"
   },
   "devDependencies": {

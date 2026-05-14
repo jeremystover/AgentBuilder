@@ -14,7 +14,9 @@ import {
   handleListReview, handleUpdateReview, handleApproveReview, handleBulkReview,
   handleReviewNext, handleReviewStatus,
 } from './routes/web-review';
-import { handleListTransactions, handleTransactionsSummary } from './routes/web-transactions';
+import { handleListTransactions } from './routes/web-transactions';
+import { handleSpendingReport } from './routes/spending';
+import { handleListPlans, handleForecastPlan } from './routes/planning';
 import { handleListAccounts } from './routes/web-lookups';
 import { handleListRules, handleCreateRule } from './routes/web-rules';
 import { handleGatherSync } from './routes/web-gather';
@@ -104,16 +106,17 @@ export const MCP_TOOLS = [
     },
   },
   {
-    name: 'transactions_summary',
+    name: 'spending_summary',
     description:
-      "Summarize approved transactions by entity and category for a time period. Returns totals per category with transaction counts. Good for 'how much did we spend on X this month' questions.",
+      "Show spending vs. plan for a time period. Returns category-level actuals, planned amounts, and over/under deltas. Good for 'how are we tracking against budget this month' questions.",
     inputSchema: {
       type: 'object' as const,
       properties: {
-        period:      { type: 'string' as const, enum: ['this_month', 'last_month', 'this_quarter', 'last_quarter', 'ytd', 'trailing_30d', 'trailing_90d', 'custom'] },
-        date_from:   { type: 'string' as const },
-        date_to:     { type: 'string' as const },
-        entity_slug: { type: 'string' as const },
+        period:         { type: 'string' as const, enum: ['this_month', 'last_month', 'this_quarter', 'ytd', 'custom'] },
+        date_from:      { type: 'string' as const, description: 'Required if period=custom.' },
+        date_to:        { type: 'string' as const, description: 'Required if period=custom.' },
+        entity_slug:    { type: 'string' as const },
+        category_slugs: { type: 'array' as const, items: { type: 'string' as const } },
       },
       additionalProperties: false,
     },
@@ -175,6 +178,25 @@ export const MCP_TOOLS = [
     description:
       'List available report configurations (Schedule C, Schedule E, family summary, etc.) with their IDs and last run dates.',
     inputSchema: { type: 'object' as const, properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'plan_list',
+    description:
+      'List all financial plans with their type (foundation/modification), status, and whether they are the active plan used for budget comparison.',
+    inputSchema: { type: 'object' as const, properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'plan_forecast',
+    description:
+      "Show the cash flow forecast from the active plan: expected income, expenses, and net for each month or year going forward. Good for 'what does our budget look like for the rest of the year' questions.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        months_ahead: { type: 'number' as const, default: 12, description: 'How many months to forecast.' },
+        period_type:  { type: 'string' as const, enum: ['monthly', 'annual'], default: 'monthly' },
+      },
+      additionalProperties: false,
+    },
   },
   {
     name: 'report_generate',
@@ -267,16 +289,8 @@ export async function dispatchTool(name: string, args: Record<string, unknown>, 
       return respondText(await handleListTransactions(getReq(url), env));
     }
 
-    case 'transactions_summary': {
-      const params = {
-        period: args.period,
-        date_from: args.date_from,
-        date_to: args.date_to,
-        entity_id: await slugToEntityId(env, args.entity_slug),
-      };
-      const url = withQuery('https://cfo.invalid/api/web/transactions/summary', params);
-      return respondText(await handleTransactionsSummary(getReq(url), env));
-    }
+    case 'spending_summary':
+      return spendingSummary(args, env);
 
     case 'rules_list':
       return respondText(await handleListRules(getReq('https://cfo.invalid/api/web/rules'), env));
@@ -289,6 +303,12 @@ export async function dispatchTool(name: string, args: Record<string, unknown>, 
 
     case 'sync_run':
       return syncRun(args, env);
+
+    case 'plan_list':
+      return respondText(await handleListPlans(getReq('https://cfo.invalid/api/web/plans'), env));
+
+    case 'plan_forecast':
+      return planForecast(args, env);
 
     case 'report_list_configs':
       return respondText(await handleListReportConfigs(getReq('https://cfo.invalid/api/web/reports/configs'), env));
@@ -387,6 +407,89 @@ async function createRule(args: Record<string, unknown>, env: Env): Promise<stri
     created_by: 'user' as const,
   };
   return respondText(await handleCreateRule(postReq('https://cfo.invalid/api/web/rules', body), env));
+}
+
+async function spendingSummary(args: Record<string, unknown>, env: Env): Promise<string> {
+  const period = typeof args.period === 'string' ? args.period : 'this_month';
+  const customFrom = typeof args.date_from === 'string' ? args.date_from : undefined;
+  const customTo   = typeof args.date_to   === 'string' ? args.date_to   : undefined;
+  const { from, to } = resolveSpendingPeriod(period, customFrom, customTo);
+
+  const entityId = await slugToEntityId(env, args.entity_slug);
+  const categoryIds: string[] = [];
+  if (Array.isArray(args.category_slugs)) {
+    for (const slug of args.category_slugs) {
+      const id = await slugToCategoryId(env, slug);
+      if (id) categoryIds.push(id);
+    }
+  }
+
+  // Use the active plan as the default comparison plan.
+  const sql = db(env);
+  let activePlanId: string | null = null;
+  try {
+    const rows = await sql<Array<{ id: string }>>`
+      SELECT id FROM plans WHERE is_active = true LIMIT 1
+    `;
+    activePlanId = rows[0]?.id ?? null;
+  } finally { await sql.end({ timeout: 5 }).catch(() => {}); }
+
+  const params: Record<string, unknown> = {
+    date_from: from, date_to: to,
+    period_type: 'monthly',
+  };
+  if (activePlanId) params.plan_ids = activePlanId;
+  if (entityId) params.entity_ids = entityId;
+  if (categoryIds.length > 0) params.category_ids = categoryIds.join(',');
+
+  const url = withQuery('https://cfo.invalid/api/web/spending/report', params);
+  return respondText(await handleSpendingReport(getReq(url), env));
+}
+
+function resolveSpendingPeriod(
+  period: string,
+  customFrom?: string,
+  customTo?: string,
+): { from: string; to: string } {
+  const today = new Date();
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  const yr = today.getUTCFullYear();
+  const mo = today.getUTCMonth();
+  switch (period) {
+    case 'this_month':
+      return { from: iso(new Date(Date.UTC(yr, mo, 1))), to: iso(today) };
+    case 'last_month':
+      return {
+        from: iso(new Date(Date.UTC(yr, mo - 1, 1))),
+        to:   iso(new Date(Date.UTC(yr, mo, 0))),
+      };
+    case 'this_quarter': {
+      const qStart = Math.floor(mo / 3) * 3;
+      return { from: iso(new Date(Date.UTC(yr, qStart, 1))), to: iso(today) };
+    }
+    case 'ytd':
+      return { from: `${yr}-01-01`, to: iso(today) };
+    case 'custom':
+      return { from: customFrom ?? `${yr}-01-01`, to: customTo ?? iso(today) };
+    default:
+      return { from: iso(new Date(Date.UTC(yr, mo, 1))), to: iso(today) };
+  }
+}
+
+async function planForecast(args: Record<string, unknown>, env: Env): Promise<string> {
+  const sql = db(env);
+  let activeId: string | null = null;
+  try {
+    const rows = await sql<Array<{ id: string }>>`SELECT id FROM plans WHERE is_active = true LIMIT 1`;
+    activeId = rows[0]?.id ?? null;
+  } finally { await sql.end({ timeout: 5 }).catch(() => {}); }
+  if (!activeId) return JSON.stringify({ error: 'No active plan set. Create a plan and mark it active first.' });
+  const monthsAhead = typeof args.months_ahead === 'number' ? args.months_ahead : 12;
+  const periodType  = args.period_type === 'annual' ? 'annual' : 'monthly';
+  const url = withQuery(`https://cfo.invalid/api/web/plans/${activeId}/forecast`, {
+    horizon_months: monthsAhead, period_type: periodType,
+  });
+  return respondText(await handleForecastPlan(getReq(url), env, activeId));
 }
 
 async function syncRun(args: Record<string, unknown>, env: Env): Promise<string> {
