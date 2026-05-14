@@ -110,7 +110,7 @@ export async function handleListReview(req: Request, env: Env): Promise<Response
       limit,
     });
   } catch (err) {
-    return jsonError(`list review failed: ${String(err)}`, 500);
+    return jsonError(`list review failed: ${err instanceof Error ? err.stack : JSON.stringify(err)}`, 500);
   } finally {
     await sql.end({ timeout: 5 }).catch(() => {});
   }
