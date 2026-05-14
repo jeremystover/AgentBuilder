@@ -189,6 +189,7 @@ interface Args {
   skippedOut?: string;
   nullAccountId?: string;
   nullAccountName?: string;
+  minDate?: string;
   out: string;
 }
 
@@ -207,6 +208,7 @@ function parseCli(): Args {
       'skipped-out': { type: 'string' },
       'null-account-id':   { type: 'string' },
       'null-account-name': { type: 'string' },
+      'min-date':    { type: 'string' },
       out:           { type: 'string' },
     },
   });
@@ -233,6 +235,7 @@ function parseCli(): Args {
     skippedOut:   values['skipped-out'],
     nullAccountId:   values['null-account-id'],
     nullAccountName: values['null-account-name'],
+    minDate:         values['min-date'],
     out:          values.out as string,
   };
 }
@@ -492,8 +495,10 @@ function modeMigrate(args: Args): void {
   const txnValues: string[] = [];
   const skipped: OldTxJoinRow[] = [];
   let nullAccountUseCount = 0;
+  let skippedByDate = 0;
 
   for (const t of txns) {
+    if (args.minDate && t.posted_date < args.minDate) { skippedByDate++; continue; }
     let newAccountId = t.account_id ? accountIdMap.get(t.account_id) ?? null : null;
     let isSynthetic = false;
     if (!newAccountId && !t.account_id && args.nullAccountId) {
@@ -666,6 +671,9 @@ function modeMigrate(args: Args): void {
   console.error(`  transaction_splits: ${stats.splitInserts}`);
   if (synthAccount) {
     console.error(`  routed to ${synthAccount.id} (null-account bucket): ${nullAccountUseCount}`);
+  }
+  if (args.minDate) {
+    console.error(`  skipped (posted_date < ${args.minDate}):  ${skippedByDate}`);
   }
   console.error(`  skipped (no account match):  ${stats.skippedNoAccount}`);
   if (skipped.length) reportSkipped(skipped, accounts, args.skippedOut);
