@@ -62,6 +62,7 @@ import { runCron } from '@agentbuilder/observability';
 import type { Env } from './types';
 import { jsonError } from './types';
 
+import { db } from './lib/db';
 import { handleHealth } from './routes/health';
 import {
   handleTellerEnroll, handleTellerListAccounts, handleTellerSync,
@@ -380,6 +381,17 @@ export default {
           () => handleNightlySync(env),
         ),
       );
+      return;
+    }
+    if (event.cron === '*/4 * * * *') {
+      ctx.waitUntil((async () => {
+        const sql = db(env);
+        try {
+          await sql`SELECT 1`;
+        } finally {
+          await sql.end({ timeout: 5 });
+        }
+      })());
       return;
     }
     console.warn('[scheduled] unknown cron expression', event.cron);
