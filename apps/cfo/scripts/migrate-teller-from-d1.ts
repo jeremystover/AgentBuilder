@@ -74,9 +74,42 @@ function parseArgsOrExit(): CliArgs {
 
 function loadWranglerRows<T>(path: string): T[] {
   const raw = JSON.parse(readFileSync(path, 'utf8'));
+  const errorMessage = extractWranglerError(raw);
+  if (errorMessage) {
+    throw new Error(
+      `Wrangler returned an error response in ${path} instead of rows:\n  ${errorMessage}\n` +
+      `Re-run the export and verify the database name + table name in the SELECT.`,
+    );
+  }
   const rows = findRows<T>(raw);
   if (rows !== null) return rows;
   throw new Error(`Unexpected JSON shape in ${path}. Top-level: ${describeShape(raw)}`);
+}
+
+/**
+ * Wrangler reports failures by writing `{ error: "..." }` (or
+ * `{ errors: [...] }`) to the output instead of rows. Surface the message
+ * so the caller doesn't have to inspect the file by hand.
+ */
+function extractWranglerError(value: unknown): string | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const obj = value as Record<string, unknown>;
+  if (typeof obj.error === 'string') return obj.error;
+  if (obj.error && typeof obj.error === 'object') {
+    const e = obj.error as Record<string, unknown>;
+    if (typeof e.message === 'string') return e.message;
+    return JSON.stringify(obj.error);
+  }
+  if (Array.isArray(obj.errors) && obj.errors.length > 0) {
+    return obj.errors.map(e => {
+      if (typeof e === 'string') return e;
+      if (e && typeof e === 'object' && typeof (e as { message?: unknown }).message === 'string') {
+        return (e as { message: string }).message;
+      }
+      return JSON.stringify(e);
+    }).join('; ');
+  }
+  return null;
 }
 
 /**
