@@ -22,11 +22,6 @@ bucket_name = "cfo-storage"
 binding = "SCENARIO_QUEUE"
 queue = "cfo-scenarios"
 
-[[queues.consumers]]
-queue = "cfo-scenarios"
-max_batch_size = 1
-max_retries = 3
-
 # Shared fleet-wide D1 — observability tables (cron_runs, cron_errors).
 # Read by the AgentBuilder dashboard.
 [[d1_databases]]
