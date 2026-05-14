@@ -19,12 +19,14 @@ Run from `apps/cfo/`. Requires `wrangler login` against the Cloudflare
 account that owns `cfo-db`.
 
 ```bash
-# Enrollments
+# Enrollments — the legacy schema has no is_active column on this
+# table; active-state lives on `accounts`. Pull all enrollments; any
+# that no longer have active accounts will simply Teller-`reconnect_required`
+# on the first /teller/sync and can be cleared from the new DB then.
 wrangler d1 execute cfo-db --remote --command \
   "SELECT id, enrollment_id, access_token, institution_id, institution_name,
           last_synced_at, created_at
-   FROM teller_enrollments
-   WHERE is_active = 1" \
+   FROM teller_enrollments" \
   --json > scripts/teller-enrollments-export.json
 
 # Accounts (note: we pull subtype and owner_tag too)
