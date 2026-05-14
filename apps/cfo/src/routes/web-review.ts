@@ -7,7 +7,7 @@
 
 import type { Env } from '../types';
 import { jsonOk, jsonError } from '../types';
-import { db, withDb, type Sql } from '../lib/db';
+import { db, pgArr, withDb, type Sql } from '../lib/db';
 
 const ALLOWED_SORT_COLS = new Set(['date', 'amount', 'description', 'ingest_at']);
 
@@ -44,9 +44,9 @@ function whereClauses(sql: Sql, f: ReviewFilters): ReturnType<Sql> {
   }
   if (f.date_from) parts.push(sql`r.date >= ${f.date_from}`);
   if (f.date_to) parts.push(sql`r.date <= ${f.date_to}`);
-  if (f.entity_ids.length) parts.push(sql`r.entity_id = ANY(${f.entity_ids}::text[])`);
-  if (f.category_ids.length) parts.push(sql`r.category_id = ANY(${f.category_ids}::text[])`);
-  if (f.account_ids.length) parts.push(sql`r.account_id = ANY(${f.account_ids}::text[])`);
+  if (f.entity_ids.length) parts.push(sql`r.entity_id = ANY(${pgArr(f.entity_ids)}::text[])`);
+  if (f.category_ids.length) parts.push(sql`r.category_id = ANY(${pgArr(f.category_ids)}::text[])`);
+  if (f.account_ids.length) parts.push(sql`r.account_id = ANY(${pgArr(f.account_ids)}::text[])`);
   if (f.confidence === 'high') parts.push(sql`r.ai_confidence >= 0.9`);
   if (f.confidence === 'medium') parts.push(sql`r.ai_confidence >= 0.7 AND r.ai_confidence < 0.9`);
   if (f.confidence === 'low') parts.push(sql`r.ai_confidence IS NOT NULL AND r.ai_confidence < 0.7`);
@@ -262,20 +262,20 @@ export async function handleBulkReview(req: Request, env: Env): Promise<Response
     switch (body.action) {
       case 'set_entity':
         if (!body.entity_id) return jsonError('entity_id required', 400);
-        await sql`UPDATE raw_transactions SET entity_id = ${body.entity_id} WHERE id = ANY(${ids}::text[])`;
+        await sql`UPDATE raw_transactions SET entity_id = ${body.entity_id} WHERE id = ANY(${pgArr(ids)}::text[])`;
         updated = ids.length;
         break;
       case 'set_category':
         if (!body.category_id) return jsonError('category_id required', 400);
-        await sql`UPDATE raw_transactions SET category_id = ${body.category_id}, classification_method = 'manual' WHERE id = ANY(${ids}::text[])`;
+        await sql`UPDATE raw_transactions SET category_id = ${body.category_id}, classification_method = 'manual' WHERE id = ANY(${pgArr(ids)}::text[])`;
         updated = ids.length;
         break;
       case 'set_transfer':
-        await sql`UPDATE raw_transactions SET is_transfer = ${body.is_transfer ?? true} WHERE id = ANY(${ids}::text[])`;
+        await sql`UPDATE raw_transactions SET is_transfer = ${body.is_transfer ?? true} WHERE id = ANY(${pgArr(ids)}::text[])`;
         updated = ids.length;
         break;
       case 'set_reimbursable':
-        await sql`UPDATE raw_transactions SET is_reimbursable = ${body.is_reimbursable ?? true} WHERE id = ANY(${ids}::text[])`;
+        await sql`UPDATE raw_transactions SET is_reimbursable = ${body.is_reimbursable ?? true} WHERE id = ANY(${pgArr(ids)}::text[])`;
         updated = ids.length;
         break;
       case 'approve':

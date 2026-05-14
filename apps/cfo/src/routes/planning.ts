@@ -22,7 +22,7 @@
 
 import type { Env } from '../types';
 import { jsonOk, jsonError } from '../types';
-import { db } from '../lib/db';
+import { db, pgArr } from '../lib/db';
 import { resolvePlan } from '../lib/plan-resolver';
 import { generateForecast } from '../lib/forecast';
 
@@ -298,7 +298,7 @@ export async function handleListPlanCategories(_req: Request, env: Env, planId: 
              delta_amount::text AS delta_amount,
              notes
       FROM plan_category_changes
-      WHERE plan_category_amount_id = ANY(${ids}::text[])
+      WHERE plan_category_amount_id = ANY(${pgArr(ids)}::text[])
       ORDER BY effective_date
     `;
     const changesById = new Map<string, unknown[]>();

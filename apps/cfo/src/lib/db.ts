@@ -3,6 +3,11 @@ import type { Env } from '../types';
 
 export type Sql = ReturnType<typeof postgres>;
 
+// postgres-js with fetch_types:false serializes JS arrays via .toString(),
+// producing "a,b,c" instead of the PostgreSQL literal "{a,b,c}". Pre-format
+// arrays before passing them as tagged-template parameters.
+export const pgArr = (arr: string[]): string => `{${arr.join(',')}}`;
+
 const OPTS = { max: 5, fetch_types: false, prepare: false } as const;
 
 function make(env: Env): Sql {

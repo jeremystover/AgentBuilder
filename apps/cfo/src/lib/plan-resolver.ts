@@ -19,7 +19,7 @@
  * (Spending engine, Forecast engine) can compare apples to apples.
  */
 
-import type { Sql } from './db';
+import { type Sql, pgArr } from './db';
 
 export interface ResolvedCategoryAmount {
   category_id: string;
@@ -66,7 +66,7 @@ export async function resolvePlan(
            base_rate_pct::text   AS base_rate_pct,
            to_char(base_rate_start, 'YYYY-MM-DD') AS base_rate_start
     FROM plan_category_amounts
-    WHERE plan_id = ANY(${planIds}::text[])
+    WHERE plan_id = ANY(${pgArr(planIds)}::text[])
   `;
   const changeRows = amountRows.length === 0
     ? []
@@ -75,7 +75,7 @@ export async function resolvePlan(
                to_char(effective_date, 'YYYY-MM-DD') AS effective_date,
                delta_amount::text AS delta_amount
         FROM plan_category_changes
-        WHERE plan_category_amount_id = ANY(${amountRows.map(a => a.id)}::text[])
+        WHERE plan_category_amount_id = ANY(${pgArr(amountRows.map(a => a.id))}::text[])
         ORDER BY effective_date
       `;
   const changesByAmount = new Map<string, ChangeRow[]>();
