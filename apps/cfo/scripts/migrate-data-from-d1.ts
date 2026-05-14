@@ -104,6 +104,11 @@ const TRANSFER_CAT_ID = 'cat_transfer';
 interface OldAccountRow {
   id: string;
   teller_account_id: string | null;
+  name?: string;
+  institution?: string | null;
+  type?: string;
+  subtype?: string | null;
+  owner_tag?: string | null;
 }
 
 interface OldTaxCatRow {
@@ -181,6 +186,7 @@ interface Args {
   splits?: string;
   reviewQueue?: string;
   categoryMap?: string;
+  skippedOut?: string;
   out: string;
 }
 
@@ -196,6 +202,7 @@ function parseCli(): Args {
       splits:        { type: 'string' },
       'review-queue':{ type: 'string' },
       'category-map':{ type: 'string' },
+      'skipped-out': { type: 'string' },
       out:           { type: 'string' },
     },
   });
@@ -219,6 +226,7 @@ function parseCli(): Args {
     splits:       values.splits,
     reviewQueue:  values['review-queue'],
     categoryMap:  values['category-map'],
+    skippedOut:   values['skipped-out'],
     out:          values.out as string,
   };
 }
@@ -453,10 +461,11 @@ function modeMigrate(args: Args): void {
 
   const rawValues: string[] = [];
   const txnValues: string[] = [];
+  const skipped: OldTxJoinRow[] = [];
 
   for (const t of txns) {
     const newAccountId = t.account_id ? accountIdMap.get(t.account_id) : null;
-    if (!newAccountId) { stats.skippedNoAccount++; continue; }
+    if (!newAccountId) { stats.skippedNoAccount++; skipped.push(t); continue; }
 
     const classified = !!t.entity;
     const entityId = classified ? OWNER_TAG_TO_ENTITY_ID[t.entity!] ?? null : null;
@@ -613,6 +622,7 @@ function modeMigrate(args: Args): void {
   console.error(`  rules:              ${stats.ruleInserts}  (${stats.unsupportedRules.length} unsupported, skipped)`);
   console.error(`  transaction_splits: ${stats.splitInserts}`);
   console.error(`  skipped (no account match):  ${stats.skippedNoAccount}`);
+  if (skipped.length) reportSkipped(skipped, accounts, args.skippedOut);
   console.error(`  classified w/o teller_tx_id: ${stats.skippedNoTellerTxId}  (still migrated, but no dedup vs future Teller sync)`);
   if (stats.unmappedTaxSlugs.size) {
     console.error(`  UNMAPPED tax slugs (left category_id=NULL):    ${[...stats.unmappedTaxSlugs].join(', ')}`);
@@ -623,6 +633,73 @@ function modeMigrate(args: Args): void {
   if (stats.unsupportedRules.length) {
     console.error(`  UNSUPPORTED rules (skipped, need manual rewrite):`);
     for (const r of stats.unsupportedRules) console.error(`    - ${r}`);
+  }
+}
+
+function reportSkipped(skipped: OldTxJoinRow[], accounts: OldAccountRow[], outPath: string | undefined): void {
+  const accountById = new Map<string, OldAccountRow>();
+  for (const a of accounts) accountById.set(a.id, a);
+
+  // Group skipped transactions by old account_id
+  interface Group {
+    accountId: string;
+    accountName: string;
+    institution: string;
+    ownerTag: string;
+    hadTellerId: boolean;
+    txCount: number;
+    classifiedCount: number;
+    earliest: string;
+    latest: string;
+    totalAmount: number;
+    sampleDescriptions: string[];
+  }
+  const groups = new Map<string, Group>();
+  for (const t of skipped) {
+    const key = t.account_id ?? '(null)';
+    const acct = accountById.get(key);
+    let g = groups.get(key);
+    if (!g) {
+      g = {
+        accountId: key,
+        accountName: acct?.name ?? '(account not in export)',
+        institution: acct?.institution ?? '',
+        ownerTag: acct?.owner_tag ?? '',
+        hadTellerId: !!acct?.teller_account_id,
+        txCount: 0,
+        classifiedCount: 0,
+        earliest: '9999-99-99',
+        latest: '0000-00-00',
+        totalAmount: 0,
+        sampleDescriptions: [],
+      };
+      groups.set(key, g);
+    }
+    g.txCount++;
+    if (t.entity) g.classifiedCount++;
+    if (t.posted_date < g.earliest) g.earliest = t.posted_date;
+    if (t.posted_date > g.latest)   g.latest   = t.posted_date;
+    g.totalAmount += Number(t.amount) || 0;
+    if (g.sampleDescriptions.length < 3) g.sampleDescriptions.push(t.description);
+  }
+
+  const sorted = [...groups.values()].sort((a, b) => b.txCount - a.txCount);
+  console.error(`\nSkipped breakdown by old account_id (${sorted.length} unique account${sorted.length === 1 ? '' : 's'}):`);
+  console.error(`  count  classified  account_id                            name                          institution           owner_tag         teller?  range`);
+  for (const g of sorted) {
+    console.error(
+      `  ${String(g.txCount).padStart(5)}  ${String(g.classifiedCount).padStart(10)}  ${g.accountId.padEnd(36)}  ${g.accountName.padEnd(28).slice(0, 28)}  ${g.institution.padEnd(20).slice(0, 20)}  ${g.ownerTag.padEnd(16)}  ${g.hadTellerId ? 'yes    ' : 'NO     '}  ${g.earliest}..${g.latest}  $${g.totalAmount.toFixed(2)}`,
+    );
+  }
+  console.error('');
+  console.error(`To migrate transactions for an "NO" account (no teller_account_id), either:`);
+  console.error(`  (a) Add a manual gather_accounts row in Neon (source='manual', a stable id, the same entity_id), then re-run --mode migrate after editing the input — or`);
+  console.error(`  (b) Decide they're dead/duplicate accounts and ignore them.`);
+  console.error(`Accounts marked "yes" already exist in gather_accounts via the teller migration — if you see one listed here it means the teller-accounts-export.json didn't include this old account_id (was it inactive at export time?). Add the matching account row to that JSON and re-run.`);
+
+  if (outPath) {
+    writeFileSync(outPath, JSON.stringify(sorted, null, 2) + '\n', 'utf8');
+    console.error(`\nFull skipped breakdown written to ${outPath}`);
   }
 }
 
