@@ -27,7 +27,14 @@ import {
   type AccountType,
 } from '../lib/account-config-validation';
 import { calculateActualRate, getConfiguredRateAtDate } from '../lib/account-analytics';
-import { runProjection, DEFAULT_RULES, type AllocationRules } from '../lib/projection-engine';
+import {
+  runProjection, runPass2Optimization, evaluateRothConversions,
+  DEFAULT_RULES,
+  type AllocationRules, type ProjectionResult, type ProjectionParams,
+  type RothConversionProposal, type Pass2DecisionDiff,
+} from '../lib/projection-engine';
+import { calculateSaleProceeds, type SaleCalcInputs } from '../lib/sale-calculator';
+import { loadTaxConfig } from '../lib/tax-engine';
 
 // ── Accounts CRUD ────────────────────────────────────────────────────────────
 
@@ -622,7 +629,7 @@ export interface ScenarioJobMessage { scenario_id: string; job_id: string }
 export async function runAndSaveProjection(env: Env, msg: ScenarioJobMessage): Promise<void> {
   const sql = db(env);
   try {
-    await sql`UPDATE scenario_jobs SET status = 'running', started_at = now() WHERE id = ${msg.job_id}`;
+    await sql`UPDATE scenario_jobs SET status = 'running', started_at = now(), progress_note = 'Running Pass 1...' WHERE id = ${msg.job_id}`;
 
     const scenarioRows = await sql<Array<{
       id: string; name: string; plan_id: string | null;
@@ -642,7 +649,7 @@ export async function runAndSaveProjection(env: Env, msg: ScenarioJobMessage): P
     const accountIds = scenario.account_ids_json ?? [];
     const rules = scenario.allocation_rules_json ?? DEFAULT_RULES;
 
-    const projection = await runProjection(sql, {
+    const params: ProjectionParams = {
       scenarioId:  scenario.id,
       snapshotId:  '',
       planId:      scenario.plan_id,
@@ -651,62 +658,46 @@ export async function runAndSaveProjection(env: Env, msg: ScenarioJobMessage): P
       endDate:     new Date(`${scenario.end_date}T00:00:00Z`),
       allocationRules: rules,
       filingStatus: 'married_filing_jointly',
-    });
+    };
 
-    // Single atomic write: snapshot + all rows.
+    // Pass 1 — single-pass projection.
+    const pass1 = await runProjection(sql, params);
+
+    await sql`UPDATE scenario_jobs SET progress_note = 'Evaluating Roth conversions...' WHERE id = ${msg.job_id}`;
+    const rothProposals = await evaluateRothConversions(sql, pass1, params);
+
+    await sql`UPDATE scenario_jobs SET progress_note = 'Running Pass 2 optimization...' WHERE id = ${msg.job_id}`;
+    const pass2 = await runPass2Optimization(sql, params, pass1);
+
+    // Single atomic write — both snapshots, all rows, status updates.
+    const inputs = {
+      plan_id: scenario.plan_id,
+      account_ids: accountIds,
+      start_date: scenario.start_date,
+      end_date:   scenario.end_date,
+      allocation_rules: rules,
+    };
+
     await sql.begin(async tx => {
-      const inputs = {
-        plan_id: scenario.plan_id,
-        account_ids: accountIds,
-        start_date: scenario.start_date,
-        end_date:   scenario.end_date,
-        allocation_rules: rules,
-      };
-      const summary = {
-        period_count: projection.periods.length,
-        flag_count:   projection.flags.length,
-        end_state_net_worth: projection.periods[projection.periods.length - 1]?.net_worth ?? 0,
-      };
-      const snapshotRows = await tx<Array<{ id: string }>>`
-        INSERT INTO scenario_snapshots (scenario_id, inputs_json, results_json, pass, status)
-        VALUES (${msg.scenario_id}, ${JSON.stringify(inputs)}::jsonb, ${JSON.stringify(summary)}::jsonb, 1, 'complete')
-        RETURNING id
-      `;
-      const snapshotId = snapshotRows[0]!.id;
-
-      for (const p of projection.periods) {
-        await tx`
-          INSERT INTO scenario_period_results
-            (snapshot_id, period_date, period_type, gross_income, total_expenses,
-             net_cash_pretax, estimated_tax, net_cash_aftertax,
-             total_asset_value, total_liability_value, net_worth, account_balances_json)
-          VALUES
-            (${snapshotId}, ${p.period_date}, ${p.period_type},
-             ${p.gross_income}, ${p.total_expenses},
-             ${p.net_cash_pretax}, ${p.estimated_tax}, ${p.net_cash_aftertax},
-             ${p.total_asset_value}, ${p.total_liability_value}, ${p.net_worth},
-             ${JSON.stringify(p.account_balances)}::jsonb)
-        `;
-      }
-      for (const f of projection.flags) {
-        await tx`
-          INSERT INTO scenario_flags (snapshot_id, period_date, flag_type, description, severity)
-          VALUES (${snapshotId}, ${f.period_date}, ${f.flag_type}, ${f.description}, ${f.severity})
-        `;
-      }
-      for (const d of projection.decisions) {
-        await tx`
-          INSERT INTO allocation_decisions
-            (snapshot_id, period_date, decision_type, pass1_action, net_worth_impact, rationale, flagged_for_review)
-          VALUES
-            (${snapshotId}, ${d.period_date}, ${d.decision_type}, ${d.pass1_action},
-             ${d.net_worth_impact}, ${d.rationale}, ${d.flagged_for_review})
-        `;
+      await writeSnapshot(tx, msg.scenario_id, pass1, 1, inputs, {
+        period_count: pass1.periods.length, flag_count: pass1.flags.length,
+        end_state_net_worth: pass1.periods[pass1.periods.length - 1]?.net_worth ?? 0,
+        roth_proposals: rothProposals,
+      });
+      if (pass2.rules_changed) {
+        await writeSnapshot(tx, msg.scenario_id, pass2.pass2Projection, 2, inputs, {
+          period_count: pass2.pass2Projection.periods.length,
+          flag_count:   pass2.pass2Projection.flags.length,
+          end_state_net_worth: pass2.pass2Projection.periods[pass2.pass2Projection.periods.length - 1]?.net_worth ?? 0,
+          pass2_diffs: pass2.diffs,
+          improvement: pass2.improvement,
+          roth_proposals: rothProposals,
+        });
       }
       await tx`UPDATE scenarios SET status = 'complete', updated_at = now() WHERE id = ${msg.scenario_id}`;
       await tx`
         UPDATE scenario_jobs
-        SET status = 'complete', completed_at = now(), progress_note = ${`Wrote ${projection.periods.length} period results, ${projection.flags.length} flags`}
+        SET status = 'complete', completed_at = now(), progress_note = ${`Pass 1 + Pass 2 (${pass2.rules_changed ? 'optimized' : 'unchanged'}); ${pass1.flags.length} flags; ${rothProposals.length} Roth proposals`}
         WHERE id = ${msg.job_id}
       `;
     });
@@ -721,3 +712,147 @@ export async function runAndSaveProjection(env: Env, msg: ScenarioJobMessage): P
     await sql.end({ timeout: 5 }).catch(() => {});
   }
 }
+
+/**
+ * Insert one snapshot + all its period / flag / decision rows on a
+ * transactional connection. Returns the new snapshot id.
+ *
+ * Typed against postgres.TransactionSql because sql.begin's callback
+ * narrows to that interface (no CLOSE/END/PostgresError handles).
+ */
+async function writeSnapshot(
+  tx: import('postgres').TransactionSql,
+  scenarioId: string,
+  projection: ProjectionResult,
+  pass: 1 | 2,
+  inputs: Record<string, unknown>,
+  summary: Record<string, unknown>,
+): Promise<string> {
+  const snapshotRows = await tx<Array<{ id: string }>>`
+    INSERT INTO scenario_snapshots (scenario_id, inputs_json, results_json, pass, status)
+    VALUES (${scenarioId}, ${JSON.stringify(inputs)}::jsonb, ${JSON.stringify(summary)}::jsonb, ${pass}, 'complete')
+    RETURNING id
+  `;
+  const snapshotId = snapshotRows[0]!.id;
+
+  for (const p of projection.periods) {
+    await tx`
+      INSERT INTO scenario_period_results
+        (snapshot_id, period_date, period_type, gross_income, total_expenses,
+         net_cash_pretax, estimated_tax, net_cash_aftertax,
+         total_asset_value, total_liability_value, net_worth, account_balances_json)
+      VALUES
+        (${snapshotId}, ${p.period_date}, ${p.period_type},
+         ${p.gross_income}, ${p.total_expenses},
+         ${p.net_cash_pretax}, ${p.estimated_tax}, ${p.net_cash_aftertax},
+         ${p.total_asset_value}, ${p.total_liability_value}, ${p.net_worth},
+         ${JSON.stringify(p.account_balances)}::jsonb)
+    `;
+  }
+  for (const f of projection.flags) {
+    await tx`
+      INSERT INTO scenario_flags (snapshot_id, period_date, flag_type, description, severity)
+      VALUES (${snapshotId}, ${f.period_date}, ${f.flag_type}, ${f.description}, ${f.severity})
+    `;
+  }
+  for (const d of projection.decisions) {
+    await tx`
+      INSERT INTO allocation_decisions
+        (snapshot_id, period_date, decision_type, pass1_action, net_worth_impact, rationale, flagged_for_review)
+      VALUES
+        (${snapshotId}, ${d.period_date}, ${d.decision_type}, ${d.pass1_action},
+         ${d.net_worth_impact}, ${d.rationale}, ${d.flagged_for_review})
+    `;
+  }
+  return snapshotId;
+}
+
+// ── Sale-at-date calculator ─────────────────────────────────────────────────
+
+export async function handleSaleProceeds(req: Request, env: Env, accountId: string): Promise<Response> {
+  const body = await req.json().catch(() => null) as {
+    sale_date: string;
+    other_taxable_income?: number;
+    primary_residence_years_used?: number;
+  } | null;
+  if (!body?.sale_date) return jsonError('sale_date required', 400);
+
+  const sql = db(env);
+  try {
+    const accountRows = await sql<Array<{
+      type: string; name: string;
+      current_balance: string | null; rate: string | null;
+      config_json: Record<string, unknown> | null;
+      latest_balance: string | null;
+    }>>`
+      SELECT sa.type, sa.name,
+             sa.current_balance::text AS current_balance,
+             (SELECT base_rate::text FROM account_rate_schedule ars
+               WHERE ars.account_id = sa.id AND ars.effective_date <= CURRENT_DATE
+               ORDER BY effective_date DESC LIMIT 1) AS rate,
+             atc.config_json,
+             (SELECT balance::text FROM account_balance_history abh
+               WHERE abh.account_id = sa.id ORDER BY recorded_date DESC LIMIT 1) AS latest_balance
+      FROM scenario_accounts sa
+      LEFT JOIN account_type_config atc ON atc.account_id = sa.id
+      WHERE sa.id = ${accountId}
+    `;
+    if (accountRows.length === 0) return jsonError('account not found', 404);
+    const acct = accountRows[0]!;
+    const taxConfig = await loadTaxConfig(sql);
+
+    const inputs: SaleCalcInputs = {
+      account_type:   acct.type,
+      account_name:   acct.name,
+      current_balance: Number(acct.latest_balance ?? acct.current_balance ?? 0),
+      rate_at_today:  acct.rate == null ? null : Number(acct.rate),
+      config_json:    acct.config_json ?? {},
+      sale_date:      new Date(`${body.sale_date}T00:00:00Z`),
+      other_taxable_income: body.other_taxable_income ?? 0,
+      primary_residence_years_used: body.primary_residence_years_used ?? 2,
+    };
+    return jsonOk(calculateSaleProceeds(inputs, taxConfig));
+  } catch (err) {
+    return jsonError(`sale calc failed: ${String(err)}`, 500);
+  } finally {
+    await sql.end({ timeout: 5 }).catch(() => {});
+  }
+}
+
+// ── Accept a Roth conversion proposal ───────────────────────────────────────
+
+export async function handleAcceptRothProposal(req: Request, env: Env, scenarioId: string): Promise<Response> {
+  const body = await req.json().catch(() => null) as {
+    year: number; conversion_amount: number;
+  } | null;
+  if (!body || typeof body.year !== 'number' || typeof body.conversion_amount !== 'number') {
+    return jsonError('year and conversion_amount required', 400);
+  }
+  const sql = db(env);
+  try {
+    const scenarioRows = await sql<Array<{ plan_id: string | null }>>`
+      SELECT plan_id FROM scenarios WHERE id = ${scenarioId}
+    `;
+    const planId = scenarioRows[0]?.plan_id;
+    if (!planId) return jsonError('scenario has no plan', 400);
+
+    // Convert the proposal into a one-time income event on the plan.
+    await sql`
+      INSERT INTO plan_one_time_items (plan_id, name, type, item_date, amount, notes)
+      VALUES (${planId},
+              ${`Roth conversion (${body.year})`},
+              'income',
+              ${`${body.year}-06-30`},
+              ${body.conversion_amount},
+              'Accepted from scenario optimization')
+    `;
+    return jsonOk({ ok: true });
+  } catch (err) {
+    return jsonError(`accept roth proposal failed: ${String(err)}`, 500);
+  } finally {
+    await sql.end({ timeout: 5 }).catch(() => {});
+  }
+}
+
+// (re-exports for the queue handler in src/index.ts already exist above)
+export type { RothConversionProposal, Pass2DecisionDiff };

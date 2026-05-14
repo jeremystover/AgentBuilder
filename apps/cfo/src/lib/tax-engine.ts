@@ -207,17 +207,26 @@ export interface TaxYearInputs {
   state: string;
   /** Non-W2 / passive interest (rare; default 0). */
   tax_exempt_interest?: number;
+
+  // Phase 7 inputs — full tax engine.
+  iso_spread_exercised?: number;                  // AMT preference
+  rental_income_net?: number;                     // NIIT
+  qbi_by_entity?: Record<string, number>;         // {elyse_coaching: X, jeremy_coaching: Y}
+  w2_wages_by_entity?: Record<string, number>;    // used by QBI above the SSTB threshold
 }
 
 export interface TaxYearResult {
   federal_ordinary_tax: number;
   ltcg_tax: number;
+  amt: number;
+  niit: number;
   state_tax: number;
   total_tax: number;
   effective_rate: number;
   marginal_rate: number;
   ss_taxable_amount: number;
   deductions_used: number;
+  qbi_deduction: number;
   itemized_vs_standard: 'itemized' | 'standard';
   breakdown: Record<string, number>;
 }
@@ -225,7 +234,7 @@ export interface TaxYearResult {
 export function calculateTax(cfg: TaxConfigSet, inputs: TaxYearInputs): TaxYearResult {
   const fed = findBracketSchedule(cfg, inputs.year, inputs.filing_status, 'federal');
   if (!fed) {
-    return zeroResult(`No federal brackets for ${inputs.year}/${inputs.filing_status}`);
+    return zeroResult();
   }
   const state = findBracketSchedule(cfg, inputs.year, inputs.filing_status, inputs.state);
 
@@ -238,10 +247,18 @@ export function calculateTax(cfg: TaxConfigSet, inputs: TaxYearInputs): TaxYearR
   // STCG taxed as ordinary (default at federal level).
   const totalOrdinary = inputs.ordinary_income + inputs.capital_gains_st + ssTaxable;
 
+  // QBI deduction sits below standard/itemized and above regular tax math.
+  const qbiDeduction = calculateQbiDeduction(
+    inputs.qbi_by_entity ?? {},
+    totalOrdinary,
+    inputs.w2_wages_by_entity ?? {},
+    inputs.year,
+  );
+
   const itemized = getItemizedDeductions(cfg, inputs.year);
   const standard = fed.standard_deduction;
   const itemizedVsStandard = itemized > standard ? 'itemized' : 'standard';
-  const deductions = Math.max(itemized, standard);
+  const deductions = Math.max(itemized, standard) + qbiDeduction;
 
   const federalTaxable = Math.max(0, totalOrdinary - deductions);
   const federalOrdinary = applyBrackets(federalTaxable, fed.brackets);
@@ -251,16 +268,35 @@ export function calculateTax(cfg: TaxConfigSet, inputs: TaxYearInputs): TaxYearR
     ? applyBrackets(inputs.capital_gains_lt, ltcgCfg.ltcg_brackets, federalTaxable)
     : 0;
 
+  // AMT: regular taxable + ISO spread + SALT addback (estimated as the
+  // SALT portion of itemized deductions, capped at $10K).
+  const saltDeducted = Math.min(10000, (cfg.deductions
+    .filter(d => d.type === 'salt' && d.effective_date <= `${inputs.year}-12-31`)
+    .reduce((s, d) => s + d.annual_amount, 0)));
+  const amt = calculateAmt(
+    federalTaxable,
+    inputs.iso_spread_exercised ?? 0,
+    itemizedVsStandard === 'itemized' ? saltDeducted : 0,
+    inputs.year,
+    inputs.filing_status,
+    federalOrdinary,
+  );
+
+  // NIIT — net investment income above the MAGI threshold.
+  const nii = inputs.capital_gains_lt + inputs.capital_gains_st + (inputs.rental_income_net ?? 0);
+  const magi = totalOrdinary + inputs.capital_gains_lt;
+  const niit = calculateNiit(nii, magi, inputs.year, inputs.filing_status);
+
   let stateTax = 0;
   if (state) {
     const stateDeduction = state.standard_deduction;
-    // Most states without preferential LTCG: tax LT gains as ordinary at the state level.
     const stateOrdinary = totalOrdinary + inputs.capital_gains_lt;
     const stateTaxable  = Math.max(0, stateOrdinary - stateDeduction);
     stateTax = applyBrackets(stateTaxable, state.brackets);
   }
 
-  const total = federalOrdinary + ltcgTax + stateTax;
+  const totalFederal = federalOrdinary + ltcgTax + amt + niit;
+  const total = totalFederal + stateTax;
   const totalGross = totalOrdinary + inputs.capital_gains_lt;
   const effective = totalGross > 0 ? total / totalGross : 0;
   const marginal  = getMarginalRate(federalTaxable, fed.brackets);
@@ -268,28 +304,171 @@ export function calculateTax(cfg: TaxConfigSet, inputs: TaxYearInputs): TaxYearR
   return {
     federal_ordinary_tax: round(federalOrdinary),
     ltcg_tax: round(ltcgTax),
+    amt: round(amt),
+    niit: round(niit),
     state_tax: round(stateTax),
     total_tax: round(total),
     effective_rate: round4(effective),
     marginal_rate: round4(marginal),
     ss_taxable_amount: round(ssTaxable),
     deductions_used: round(deductions),
+    qbi_deduction: round(qbiDeduction),
     itemized_vs_standard: itemizedVsStandard,
     breakdown: {
       federal_taxable_income: round(federalTaxable),
       ordinary_income_total:  round(totalOrdinary),
+      iso_spread:             round(inputs.iso_spread_exercised ?? 0),
+      net_investment_income:  round(nii),
+      magi:                   round(magi),
     },
   };
 }
 
-function zeroResult(reason: string): TaxYearResult {
+function zeroResult(): TaxYearResult {
   return {
-    federal_ordinary_tax: 0, ltcg_tax: 0, state_tax: 0, total_tax: 0,
+    federal_ordinary_tax: 0, ltcg_tax: 0, amt: 0, niit: 0, state_tax: 0, total_tax: 0,
     effective_rate: 0, marginal_rate: 0,
-    ss_taxable_amount: 0, deductions_used: 0,
+    ss_taxable_amount: 0, deductions_used: 0, qbi_deduction: 0,
     itemized_vs_standard: 'standard',
-    breakdown: { error: 0, _reason: 0 },
+    breakdown: {},
   };
+}
+
+// ── AMT ─────────────────────────────────────────────────────────────────────
+//
+// 2025 MFJ values from docs/cfo-scenarios-supplemental-spec.md:
+//   exemption: $137,000; phaseout floor: $1,237,450; rates: 26% up to
+//   $232,600 AMTI, 28% above. AMT owed = max(0, tentative_min_tax − regular_tax).
+
+const AMT_EXEMPTION_MFJ_2025  = 137000;
+const AMT_PHASEOUT_MFJ_2025   = 1237450;
+const AMT_RATE_BREAK_2025     = 232600;
+
+export function calculateAmt(
+  regularTaxableIncome: number,
+  isoSpreadExercised: number,
+  saltDeductionTaken: number,
+  _year: number,
+  _filingStatus: string,
+  regularFederalTax: number,
+): number {
+  if (regularTaxableIncome <= 0 && isoSpreadExercised <= 0) return 0;
+  const amti = regularTaxableIncome + isoSpreadExercised + saltDeductionTaken;
+  let exemption = AMT_EXEMPTION_MFJ_2025;
+  if (amti > AMT_PHASEOUT_MFJ_2025) {
+    const reduction = (amti - AMT_PHASEOUT_MFJ_2025) * 0.25;
+    exemption = Math.max(0, exemption - reduction);
+  }
+  const afterExemption = Math.max(0, amti - exemption);
+  const tentativeMinTax = afterExemption <= AMT_RATE_BREAK_2025
+    ? afterExemption * 0.26
+    : AMT_RATE_BREAK_2025 * 0.26 + (afterExemption - AMT_RATE_BREAK_2025) * 0.28;
+  return Math.max(0, tentativeMinTax - regularFederalTax);
+}
+
+// ── NIIT ────────────────────────────────────────────────────────────────────
+
+const NIIT_THRESHOLD_MFJ_2025 = 250000;
+const NIIT_RATE_2025          = 0.038;
+
+export function calculateNiit(
+  netInvestmentIncome: number,
+  magi: number,
+  _year: number,
+  _filingStatus: string,
+): number {
+  if (magi <= NIIT_THRESHOLD_MFJ_2025) return 0;
+  if (netInvestmentIncome <= 0) return 0;
+  const niitBase = Math.min(netInvestmentIncome, magi - NIIT_THRESHOLD_MFJ_2025);
+  return niitBase * NIIT_RATE_2025;
+}
+
+// ── QBI (§199A) ─────────────────────────────────────────────────────────────
+//
+// All coaching businesses in this household are treated as SSTB
+// (consulting / health / financial → IRS classifies as SSTB). Below
+// $383,900 MFJ taxable income: full 20% deduction. Above $483,900 MFJ:
+// zero. Phase-in linear between.
+
+const QBI_THRESHOLD_LOWER_MFJ_2025 = 383900;
+const QBI_THRESHOLD_UPPER_MFJ_2025 = 483900;
+
+export function calculateQbiDeduction(
+  qbiByEntity: Record<string, number>,
+  totalTaxableIncome: number,
+  _w2WagesByEntity: Record<string, number>,
+  _year: number,
+): number {
+  let total = 0;
+  for (const qbi of Object.values(qbiByEntity)) {
+    if (qbi <= 0) continue;
+    const tentative = qbi * 0.20;
+    let entity = 0;
+    if (totalTaxableIncome <= QBI_THRESHOLD_LOWER_MFJ_2025) {
+      entity = tentative;
+    } else if (totalTaxableIncome >= QBI_THRESHOLD_UPPER_MFJ_2025) {
+      entity = 0;
+    } else {
+      const phaseOutPct = (totalTaxableIncome - QBI_THRESHOLD_LOWER_MFJ_2025) /
+                          (QBI_THRESHOLD_UPPER_MFJ_2025 - QBI_THRESHOLD_LOWER_MFJ_2025);
+      entity = tentative * (1 - phaseOutPct);
+    }
+    total += entity;
+  }
+  // Overall cap: 20% of taxable income.
+  return Math.min(total, totalTaxableIncome * 0.20);
+}
+
+// ── Depreciation recapture (residential real estate, §1250 gain) ─────────────
+
+export interface DepreciationRecaptureResult {
+  recaptureTax: number;
+  ltcgTax: number;
+  totalTax: number;
+  totalGain: number;
+  recaptureGain: number;
+  capitalGain: number;
+}
+
+export function calculateDepreciationRecapture(
+  salePrice: number,
+  purchasePrice: number,
+  accumulatedDepreciation: number,
+  taxConfig: TaxConfigSet,
+  year: number,
+  stackedOnOrdinary: number,
+): DepreciationRecaptureResult {
+  const adjustedBasis = purchasePrice - accumulatedDepreciation;
+  const totalGain = Math.max(0, salePrice - adjustedBasis);
+  const recaptureGain = Math.min(accumulatedDepreciation, totalGain);
+  const recaptureTax = recaptureGain * 0.25;
+  const capitalGain = Math.max(0, totalGain - recaptureGain);
+  let ltcgTax = 0;
+  if (capitalGain > 0) {
+    const ltcgCfg = findCapitalGainsConfig(taxConfig, year, 'federal');
+    if (ltcgCfg?.ltcg_brackets) {
+      ltcgTax = applyBrackets(capitalGain, ltcgCfg.ltcg_brackets, stackedOnOrdinary);
+    }
+  }
+  return {
+    recaptureTax: round(recaptureTax),
+    ltcgTax:      round(ltcgTax),
+    totalTax:     round(recaptureTax + ltcgTax),
+    totalGain:    round(totalGain),
+    recaptureGain: round(recaptureGain),
+    capitalGain:   round(capitalGain),
+  };
+}
+
+/**
+ * Annual residential depreciation: (purchase_price − land_value) / 27.5.
+ * Land is treated as 25% of purchase price when not separately tracked
+ * (matches the supplemental's "20–30%" guidance).
+ */
+export function annualResidentialDepreciation(purchasePrice: number, landValueOverride?: number): number {
+  const land = landValueOverride ?? purchasePrice * 0.25;
+  const depreciableBasis = Math.max(0, purchasePrice - land);
+  return depreciableBasis / 27.5;
 }
 
 const round  = (n: number) => Math.round(n * 100) / 100;
