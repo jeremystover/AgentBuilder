@@ -98,6 +98,13 @@ import {
   handleListPlanCategories, handleUpsertPlanCategory, handleSuggestPlanCategory,
   handleListOneTimeItems, handleCreateOneTimeItem, handleUpdateOneTimeItem, handleDeleteOneTimeItem,
 } from './routes/planning';
+import {
+  handleListScenarioAccounts, handleCreateScenarioAccount, handleGetScenarioAccount,
+  handleUpdateScenarioAccount, handleArchiveScenarioAccount,
+  handleGetRateSchedule, handleReplaceRateSchedule,
+  handleListBalanceHistory, handleCreateBalanceEntry, handleUpdateBalanceEntry, handleDeleteBalanceEntry,
+  handleRateComparison,
+} from './routes/scenarios';
 import { handleMcp, type JsonRpcMessage } from './mcp-tools';
 import { handleWebChat } from './web-chat';
 import { runClassify } from './lib/classify';
@@ -184,6 +191,20 @@ const ROUTES: Route[] = [
   { method: 'POST',   pattern: /^\/api\/web\/plans\/([^/]+)\/one-time-items$/,                     auth: 'api', handler: (req, env, id) => handleCreateOneTimeItem(req, env, id!) },
   { method: 'PUT',    pattern: /^\/api\/web\/plans\/([^/]+)\/one-time-items\/([^/]+)$/,            auth: 'api', handler: (req, env, id, iid) => handleUpdateOneTimeItem(req, env, id!, iid!) },
   { method: 'DELETE', pattern: /^\/api\/web\/plans\/([^/]+)\/one-time-items\/([^/]+)$/,            auth: 'api', handler: (req, env, id, iid) => handleDeleteOneTimeItem(req, env, id!, iid!) },
+
+  // Scenarios (Module 5) — Phase 5: Account Setup + Historical View
+  { method: 'GET',    pattern: /^\/api\/web\/scenario-accounts$/,                                          auth: 'api', handler: (req, env) => handleListScenarioAccounts(req, env) },
+  { method: 'POST',   pattern: /^\/api\/web\/scenario-accounts$/,                                          auth: 'api', handler: (req, env) => handleCreateScenarioAccount(req, env) },
+  { method: 'GET',    pattern: /^\/api\/web\/scenario-accounts\/([^/]+)$/,                                 auth: 'api', handler: (req, env, id) => handleGetScenarioAccount(req, env, id!) },
+  { method: 'PUT',    pattern: /^\/api\/web\/scenario-accounts\/([^/]+)$/,                                 auth: 'api', handler: (req, env, id) => handleUpdateScenarioAccount(req, env, id!) },
+  { method: 'DELETE', pattern: /^\/api\/web\/scenario-accounts\/([^/]+)$/,                                 auth: 'api', handler: (req, env, id) => handleArchiveScenarioAccount(req, env, id!) },
+  { method: 'GET',    pattern: /^\/api\/web\/scenario-accounts\/([^/]+)\/rate-schedule$/,                  auth: 'api', handler: (req, env, id) => handleGetRateSchedule(req, env, id!) },
+  { method: 'PUT',    pattern: /^\/api\/web\/scenario-accounts\/([^/]+)\/rate-schedule$/,                  auth: 'api', handler: (req, env, id) => handleReplaceRateSchedule(req, env, id!) },
+  { method: 'GET',    pattern: /^\/api\/web\/scenario-accounts\/([^/]+)\/balance-history$/,                auth: 'api', handler: (req, env, id) => handleListBalanceHistory(req, env, id!) },
+  { method: 'POST',   pattern: /^\/api\/web\/scenario-accounts\/([^/]+)\/balance-history$/,                auth: 'api', handler: (req, env, id) => handleCreateBalanceEntry(req, env, id!) },
+  { method: 'PUT',    pattern: /^\/api\/web\/scenario-accounts\/([^/]+)\/balance-history\/([^/]+)$/,       auth: 'api', handler: (req, env, id, eid) => handleUpdateBalanceEntry(req, env, id!, eid!) },
+  { method: 'DELETE', pattern: /^\/api\/web\/scenario-accounts\/([^/]+)\/balance-history\/([^/]+)$/,       auth: 'api', handler: (req, env, id, eid) => handleDeleteBalanceEntry(req, env, id!, eid!) },
+  { method: 'GET',    pattern: /^\/api\/web\/scenario-accounts\/([^/]+)\/rate-comparison$/,                auth: 'api', handler: (req, env, id) => handleRateComparison(req, env, id!) },
 ];
 
 function requireMcpAuth(request: Request, env: Env): { ok: true } | { ok: false; response: Response } {

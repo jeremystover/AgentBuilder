@@ -6,6 +6,7 @@ import { TransactionsView } from "./components/drilldowns/TransactionsView";
 import { ReportsView } from "./components/drilldowns/ReportsView";
 import { SpendingView } from "./components/drilldowns/SpendingView";
 import { PlansView } from "./components/drilldowns/PlansView";
+import { ScenariosView } from "./components/drilldowns/ScenariosView";
 import { useRoute } from "./router";
 
 export function App() {
@@ -20,7 +21,7 @@ export function App() {
         {route === "reporting"    && <ReportsView />}
         {route === "planning"     && <PlansView />}
         {route === "spending"     && <SpendingView />}
-        {route === "scenarios"    && <PlaceholderView name="Scenarios" />}
+        {route === "scenarios"    && <ScenariosView />}
         {route === "settings"     && <PlaceholderView name="Settings" />}
       </div>
     </div>
