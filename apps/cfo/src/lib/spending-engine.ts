@@ -14,7 +14,7 @@
  * member categories are queried as a single aggregate).
  */
 
-import type { Sql } from './db';
+import { type Sql, pgArr } from './db';
 import { generatePeriods, prorateAmount, type PeriodType } from './prorate';
 import { resolvePlan } from './plan-resolver';
 
@@ -81,10 +81,6 @@ interface BuildParams {
 }
 
 const iso = (d: Date) => d.toISOString().slice(0, 10);
-// postgres-js with fetch_types:false falls back to .toString() on arrays,
-// producing "a,b,c" instead of the required PostgreSQL literal "{a,b,c}".
-// Pre-format arrays to avoid the cast failing.
-const pgArr = (arr: string[]) => `{${arr.join(',')}}`;
 
 export async function buildSpendingReport(sql: Sql, params: BuildParams): Promise<SpendingReport> {
   const today = params.today ?? new Date();
