@@ -37,20 +37,20 @@ function parseFilters(url: URL): ReviewFilters {
 }
 
 function whereClauses(sql: Sql, f: ReviewFilters): ReturnType<Sql> {
-  const parts: ReturnType<Sql>[] = [sql`source = 'teller'`, sql`status = ${f.status}`];
+  const parts: ReturnType<Sql>[] = [sql`r.source = 'teller'`, sql`r.status = ${f.status}`];
   if (f.q) {
     const pattern = `%${f.q}%`;
-    parts.push(sql`(description ILIKE ${pattern} OR merchant ILIKE ${pattern})`);
+    parts.push(sql`(r.description ILIKE ${pattern} OR r.merchant ILIKE ${pattern})`);
   }
-  if (f.date_from) parts.push(sql`date >= ${f.date_from}`);
-  if (f.date_to) parts.push(sql`date <= ${f.date_to}`);
-  if (f.entity_ids.length) parts.push(sql`entity_id = ANY(${f.entity_ids})`);
-  if (f.category_ids.length) parts.push(sql`category_id = ANY(${f.category_ids})`);
-  if (f.account_ids.length) parts.push(sql`account_id = ANY(${f.account_ids})`);
-  if (f.confidence === 'high') parts.push(sql`ai_confidence >= 0.9`);
-  if (f.confidence === 'medium') parts.push(sql`ai_confidence >= 0.7 AND ai_confidence < 0.9`);
-  if (f.confidence === 'low') parts.push(sql`ai_confidence IS NOT NULL AND ai_confidence < 0.7`);
-  if (f.confidence === 'rule') parts.push(sql`classification_method = 'rule'`);
+  if (f.date_from) parts.push(sql`r.date >= ${f.date_from}`);
+  if (f.date_to) parts.push(sql`r.date <= ${f.date_to}`);
+  if (f.entity_ids.length) parts.push(sql`r.entity_id = ANY(${f.entity_ids})`);
+  if (f.category_ids.length) parts.push(sql`r.category_id = ANY(${f.category_ids})`);
+  if (f.account_ids.length) parts.push(sql`r.account_id = ANY(${f.account_ids})`);
+  if (f.confidence === 'high') parts.push(sql`r.ai_confidence >= 0.9`);
+  if (f.confidence === 'medium') parts.push(sql`r.ai_confidence >= 0.7 AND r.ai_confidence < 0.9`);
+  if (f.confidence === 'low') parts.push(sql`r.ai_confidence IS NOT NULL AND r.ai_confidence < 0.7`);
+  if (f.confidence === 'rule') parts.push(sql`r.classification_method = 'rule'`);
 
   // Combine with AND
   let combined = parts[0]!;
@@ -72,7 +72,7 @@ export async function handleListReview(req: Request, env: Env): Promise<Response
       const where = whereClauses(sql, f);
 
       const totalRows = await sql<Array<{ total: string }>>`
-        SELECT COUNT(*)::text AS total FROM raw_transactions WHERE ${where}
+        SELECT COUNT(*)::text AS total FROM raw_transactions r WHERE ${where}
       `;
       const total = Number(totalRows[0]?.total ?? 0);
 
