@@ -1,0 +1,434 @@
+[
+  {
+    "results": [
+      {
+        "id": "f0a28b09-2b1b-4b8f-b0bf-3ec5572ade4d",
+        "user_id": "default",
+        "slug": "income",
+        "name": "Gross receipts / income",
+        "form_line": "Line 1",
+        "category_group": "schedule_c",
+        "is_active": 1,
+        "created_at": "2026-05-11 15:10:48"
+      },
+      {
+        "id": "f7774e7e-1a88-4eaf-8a29-2448d1045ba9",
+        "user_id": "default",
+        "slug": "advertising",
+        "name": "Advertising",
+        "form_line": "Line 8",
+        "category_group": "schedule_c",
+        "is_active": 1,
+        "created_at": "2026-05-11 15:10:49"
+      },
+      {
+        "id": "2ae563c6-dceb-416e-b5e1-bcf70a399d97",
+        "user_id": "default",
+        "slug": "car_and_truck",
+        "name": "Car and truck expenses",
+        "form_line": "Line 9",
+        "category_group": "schedule_c",
+        "is_active": 1,
+        "created_at": "2026-05-11 15:10:49"
+      },
+      {
+        "id": "655c930d-4cd3-4122-8537-1f043ca5b554",
+        "user_id": "default",
+        "slug": "commissions_and_fees",
+        "name": "Commissions and fees",
+        "form_line": "Line 10",
+        "category_group": "schedule_c",
+        "is_active": 1,
+        "created_at": "2026-05-11 15:10:49"
+      },
+      {
+        "id": "8d40884d-3455-441c-808a-1bf57b1b72eb",
+        "user_id": "default",
+        "slug": "contract_labor",
+        "name": "Contract labor",
+        "form_line": "Line 11",
+        "category_group": "schedule_c",
+        "is_active": 1,
+        "created_at": "2026-05-11 15:10:49"
+      },
+      {
+        "id": "d572fa37-e823-4beb-96eb-e03ee68670e1",
+        "user_id": "default",
+        "slug": "depreciation",
+        "name": "Depreciation",
+        "form_line": "Line 13",
+        "category_group": "schedule_c",
+        "is_active": 1,
+        "created_at": "2026-05-11 15:10:49"
+      },
+      {
+        "id": "ebd0f601-925f-4d69-ba84-a319f6c48cb8",
+        "user_id": "default",
+        "slug": "insurance",
+        "name": "Insurance (other than health)",
+        "form_line": "Line 15",
+        "category_group": "schedule_c",
+        "is_active": 1,
+        "created_at": "2026-05-11 15:10:49"
+      },
+      {
+        "id": "d9d22c14-95e7-4554-ac5d-701dc0f4f80d",
+        "user_id": "default",
+        "slug": "interest_mortgage",
+        "name": "Interest – mortgage",
+        "form_line": "Line 16a",
+        "category_group": "schedule_c",
+        "is_active": 1,
+        "created_at": "2026-05-11 15:10:49"
+      },
+      {
+        "id": "6e86fc27-d94d-40ff-a438-1e411bfa8c63",
+        "user_id": "default",
+        "slug": "interest_other",
+        "name": "Interest – other",
+        "form_line": "Line 16b",
+        "category_group": "schedule_c",
+        "is_active": 1,
+        "created_at": "2026-05-11 15:10:49"
+      },
+      {
+        "id": "27e5e3a0-a98d-4e8c-b71b-4ac51547ca3c",
+        "user_id": "default",
+        "slug": "legal_professional",
+        "name": "Legal and professional services",
+        "form_line": "Line 17",
+        "category_group": "schedule_c",
+        "is_active": 1,
+        "created_at": "2026-05-11 15:10:49"
+      },
+      {
+        "id": "95a65272-1e1b-46fd-ad89-3e0b9b932099",
+        "user_id": "default",
+        "slug": "office_expense",
+        "name": "Office expense",
+        "form_line": "Line 18",
+        "category_group": "schedule_c",
+        "is_active": 1,
+        "created_at": "2026-05-11 15:10:49"
+      },
+      {
+        "id": "063f57ff-9159-4528-97f3-56d1eb4faac5",
+        "user_id": "default",
+        "slug": "rent_lease_vehicle",
+        "name": "Rent or lease – vehicles",
+        "form_line": "Line 20a",
+        "category_group": "schedule_c",
+        "is_active": 1,
+        "created_at": "2026-05-11 15:10:49"
+      },
+      {
+        "id": "be9c9151-9586-4bf2-a08b-ef0cb28d8ec5",
+        "user_id": "default",
+        "slug": "rent_lease_property",
+        "name": "Rent or lease – other property",
+        "form_line": "Line 20b",
+        "category_group": "schedule_c",
+        "is_active": 1,
+        "created_at": "2026-05-11 15:10:49"
+      },
+      {
+        "id": "c59cb616-ce67-4c7e-93ec-b72441cba12a",
+        "user_id": "default",
+        "slug": "repairs_maintenance",
+        "name": "Repairs and maintenance",
+        "form_line": "Line 21",
+        "category_group": "schedule_c",
+        "is_active": 1,
+        "created_at": "2026-05-11 15:10:49"
+      },
+      {
+        "id": "ae21db27-d549-4190-b703-baadf00b33df",
+        "user_id": "default",
+        "slug": "supplies",
+        "name": "Supplies",
+        "form_line": "Line 22",
+        "category_group": "schedule_c",
+        "is_active": 1,
+        "created_at": "2026-05-11 15:10:49"
+      },
+      {
+        "id": "18318659-4fe7-40cf-88bf-72b9fa279f0a",
+        "user_id": "default",
+        "slug": "taxes_licenses",
+        "name": "Taxes and licenses",
+        "form_line": "Line 23",
+        "category_group": "schedule_c",
+        "is_active": 1,
+        "created_at": "2026-05-11 15:10:49"
+      },
+      {
+        "id": "84454f84-71f4-4aa2-a412-80775e3ab137",
+        "user_id": "default",
+        "slug": "travel",
+        "name": "Travel",
+        "form_line": "Line 24a",
+        "category_group": "schedule_c",
+        "is_active": 1,
+        "created_at": "2026-05-11 15:10:49"
+      },
+      {
+        "id": "dba44aac-94d6-400e-9ba7-ce7ece43de7c",
+        "user_id": "default",
+        "slug": "meals",
+        "name": "Meals (50% deductible)",
+        "form_line": "Line 24b",
+        "category_group": "schedule_c",
+        "is_active": 1,
+        "created_at": "2026-05-11 15:10:49"
+      },
+      {
+        "id": "2ef3bac3-f717-4f09-9123-5b02e81d1c6b",
+        "user_id": "default",
+        "slug": "utilities",
+        "name": "Utilities",
+        "form_line": "Line 25",
+        "category_group": "schedule_c",
+        "is_active": 1,
+        "created_at": "2026-05-11 15:10:49"
+      },
+      {
+        "id": "ea64d9e2-8dad-466f-a6ec-d8cc8fb640c1",
+        "user_id": "default",
+        "slug": "wages",
+        "name": "Wages",
+        "form_line": "Line 26",
+        "category_group": "schedule_c",
+        "is_active": 1,
+        "created_at": "2026-05-11 15:10:49"
+      },
+      {
+        "id": "8f3b161c-5364-4418-a351-2c80c8f8f78a",
+        "user_id": "default",
+        "slug": "other_expenses",
+        "name": "Other expenses",
+        "form_line": "Line 27",
+        "category_group": "schedule_c",
+        "is_active": 1,
+        "created_at": "2026-05-11 15:10:49"
+      },
+      {
+        "id": "eff0f377-1f3f-41e2-a740-204c43a73801",
+        "user_id": "default",
+        "slug": "rental_income",
+        "name": "Rental income",
+        "form_line": "Line 3",
+        "category_group": "schedule_e",
+        "is_active": 1,
+        "created_at": "2026-05-11 15:10:49"
+      },
+      {
+        "id": "f024fc58-8c51-4e13-8795-13d2189d0be8",
+        "user_id": "default",
+        "slug": "advertising_rental",
+        "name": "Advertising",
+        "form_line": "Line 5",
+        "category_group": "schedule_e",
+        "is_active": 1,
+        "created_at": "2026-05-11 15:10:49"
+      },
+      {
+        "id": "2d892203-90fc-4e31-93f1-79745428a587",
+        "user_id": "default",
+        "slug": "auto_travel",
+        "name": "Auto and travel",
+        "form_line": "Line 6",
+        "category_group": "schedule_e",
+        "is_active": 1,
+        "created_at": "2026-05-11 15:10:49"
+      },
+      {
+        "id": "2ed9f8f7-df3e-4696-b4ef-ffa7e8f9bb56",
+        "user_id": "default",
+        "slug": "cleaning_maintenance",
+        "name": "Cleaning and maintenance",
+        "form_line": "Line 7",
+        "category_group": "schedule_e",
+        "is_active": 1,
+        "created_at": "2026-05-11 15:10:49"
+      },
+      {
+        "id": "ad1303e3-5a87-4662-aa21-7d772510717e",
+        "user_id": "default",
+        "slug": "commissions",
+        "name": "Commissions (platform fees)",
+        "form_line": "Line 8",
+        "category_group": "schedule_e",
+        "is_active": 1,
+        "created_at": "2026-05-11 15:10:49"
+      },
+      {
+        "id": "d76e2c99-4abc-43d5-accb-26eb18d7436f",
+        "user_id": "default",
+        "slug": "insurance_rental",
+        "name": "Insurance",
+        "form_line": "Line 9",
+        "category_group": "schedule_e",
+        "is_active": 1,
+        "created_at": "2026-05-11 15:10:49"
+      },
+      {
+        "id": "100530d1-464d-49f0-a61f-45c3c9cf57e1",
+        "user_id": "default",
+        "slug": "legal_professional_r",
+        "name": "Legal and professional",
+        "form_line": "Line 10",
+        "category_group": "schedule_e",
+        "is_active": 1,
+        "created_at": "2026-05-11 15:10:49"
+      },
+      {
+        "id": "e3eff23e-05de-458d-8a5f-4a235fa45b09",
+        "user_id": "default",
+        "slug": "management_fees",
+        "name": "Management fees",
+        "form_line": "Line 11",
+        "category_group": "schedule_e",
+        "is_active": 1,
+        "created_at": "2026-05-11 15:10:49"
+      },
+      {
+        "id": "1faf62a0-20e6-48a2-8ece-2f41d31d0acf",
+        "user_id": "default",
+        "slug": "mortgage_interest",
+        "name": "Mortgage interest",
+        "form_line": "Line 12",
+        "category_group": "schedule_e",
+        "is_active": 1,
+        "created_at": "2026-05-11 15:10:49"
+      },
+      {
+        "id": "45f2c28f-eafb-41f8-9f34-dc20c845e485",
+        "user_id": "default",
+        "slug": "other_interest",
+        "name": "Other interest",
+        "form_line": "Line 13",
+        "category_group": "schedule_e",
+        "is_active": 1,
+        "created_at": "2026-05-11 15:10:49"
+      },
+      {
+        "id": "83f783c3-f105-4219-9d38-cc95b1ad89ae",
+        "user_id": "default",
+        "slug": "repairs_rental",
+        "name": "Repairs",
+        "form_line": "Line 14",
+        "category_group": "schedule_e",
+        "is_active": 1,
+        "created_at": "2026-05-11 15:10:49"
+      },
+      {
+        "id": "bde3b54b-bae8-4802-b01d-e10d2c0a5638",
+        "user_id": "default",
+        "slug": "supplies_rental",
+        "name": "Supplies",
+        "form_line": "Line 15",
+        "category_group": "schedule_e",
+        "is_active": 1,
+        "created_at": "2026-05-11 15:10:49"
+      },
+      {
+        "id": "b9d70a07-1eaf-434d-91d8-6a07828c9aff",
+        "user_id": "default",
+        "slug": "taxes_rental",
+        "name": "Taxes",
+        "form_line": "Line 16",
+        "category_group": "schedule_e",
+        "is_active": 1,
+        "created_at": "2026-05-11 15:10:49"
+      },
+      {
+        "id": "1f76f227-ad02-4217-8bda-c94781e4ce4a",
+        "user_id": "default",
+        "slug": "utilities_rental",
+        "name": "Utilities",
+        "form_line": "Line 17",
+        "category_group": "schedule_e",
+        "is_active": 1,
+        "created_at": "2026-05-11 15:10:49"
+      },
+      {
+        "id": "3ca2d4cc-a15a-4882-89a3-fe74a70f8116",
+        "user_id": "default",
+        "slug": "depreciation_rental",
+        "name": "Depreciation",
+        "form_line": "Line 18",
+        "category_group": "schedule_e",
+        "is_active": 1,
+        "created_at": "2026-05-11 15:10:49"
+      },
+      {
+        "id": "dc7ccc82-fd59-424b-8ecf-c93856d0d778",
+        "user_id": "default",
+        "slug": "other_rental",
+        "name": "Other expenses",
+        "form_line": "Line 19",
+        "category_group": "schedule_e",
+        "is_active": 1,
+        "created_at": "2026-05-11 15:10:49"
+      },
+      {
+        "id": "17a52728-4e49-487d-9070-8f369fe13996",
+        "user_id": "default",
+        "slug": "capital_improvements",
+        "name": "Capital Improvements",
+        "form_line": null,
+        "category_group": "schedule_e",
+        "is_active": 1,
+        "created_at": "2026-05-11 16:28:00"
+      },
+      {
+        "id": "928aecfc-fc58-4e82-a0ec-4855b7b0eb44",
+        "user_id": "default",
+        "slug": "professional_development",
+        "name": "Professional Development",
+        "form_line": null,
+        "category_group": "schedule_c",
+        "is_active": 1,
+        "created_at": "2026-05-11 16:29:07"
+      },
+      {
+        "id": "b0955aa3-7761-4476-855b-fe2b3c639433",
+        "user_id": "default",
+        "slug": "gifts",
+        "name": "Gifts",
+        "form_line": null,
+        "category_group": "schedule_c",
+        "is_active": 1,
+        "created_at": "2026-05-11 17:12:49"
+      },
+      {
+        "id": "a17dee2d-ae31-4eb5-a158-a9621dc31b41",
+        "user_id": "default",
+        "slug": "furnishings",
+        "name": "Furnishings",
+        "form_line": null,
+        "category_group": "schedule_e",
+        "is_active": 1,
+        "created_at": "2026-05-11 19:32:17"
+      }
+    ],
+    "success": true,
+    "meta": {
+      "served_by": "v3-prod",
+      "served_by_region": "WNAM",
+      "served_by_colo": "SJC",
+      "served_by_primary": true,
+      "timings": {
+        "sql_duration_ms": 0.4178
+      },
+      "duration": 0.4178,
+      "changes": 0,
+      "last_row_id": 0,
+      "changed_db": false,
+      "size_after": 18341888,
+      "rows_read": 41,
+      "rows_written": 0,
+      "total_attempts": 1
+    }
+  }
+]

@@ -1,0 +1,366 @@
+[
+  {
+    "results": [
+      {
+        "id": "9808bb57-c6dd-4a5b-8fbb-9e3495cb3606",
+        "user_id": "default",
+        "slug": "groceries",
+        "name": "Groceries",
+        "parent_slug": null,
+        "is_active": 1,
+        "created_at": "2026-05-08 14:51:55"
+      },
+      {
+        "id": "cfdcb6df-83d1-4511-94e9-795fa8992c3a",
+        "user_id": "default",
+        "slug": "dining_out",
+        "name": "Dining out",
+        "parent_slug": null,
+        "is_active": 1,
+        "created_at": "2026-05-08 14:51:55"
+      },
+      {
+        "id": "6971160c-e3d6-4914-812a-8e5e99273199",
+        "user_id": "default",
+        "slug": "entertainment",
+        "name": "Fun / Entertainment",
+        "parent_slug": null,
+        "is_active": 1,
+        "created_at": "2026-05-08 14:51:56"
+      },
+      {
+        "id": "d976d154-a0b8-443e-9b42-7ad7a311d1a3",
+        "user_id": "default",
+        "slug": "healthcare",
+        "name": "Healthcare",
+        "parent_slug": null,
+        "is_active": 1,
+        "created_at": "2026-05-08 14:51:56"
+      },
+      {
+        "id": "dedf1533-cfbd-472d-9537-808d4ff7749e",
+        "user_id": "default",
+        "slug": "housing",
+        "name": "Housing",
+        "parent_slug": null,
+        "is_active": 1,
+        "created_at": "2026-05-08 14:51:56"
+      },
+      {
+        "id": "732eebeb-658c-4d7b-8b1a-c1df3621807e",
+        "user_id": "default",
+        "slug": "transportation",
+        "name": "Transportation",
+        "parent_slug": null,
+        "is_active": 1,
+        "created_at": "2026-05-08 14:51:56"
+      },
+      {
+        "id": "0b298f5a-dc33-4c0d-9dfc-0dbaaad85421",
+        "user_id": "default",
+        "slug": "education",
+        "name": "Education",
+        "parent_slug": null,
+        "is_active": 1,
+        "created_at": "2026-05-08 14:51:56"
+      },
+      {
+        "id": "4eb2ab4b-c1cb-49c8-add9-38e0055f7479",
+        "user_id": "default",
+        "slug": "personal_care",
+        "name": "Personal care",
+        "parent_slug": null,
+        "is_active": 1,
+        "created_at": "2026-05-08 14:51:56"
+      },
+      {
+        "id": "07e49bd3-fdfa-4dac-9511-7014e49ac25f",
+        "user_id": "default",
+        "slug": "shopping",
+        "name": "Shopping",
+        "parent_slug": null,
+        "is_active": 1,
+        "created_at": "2026-05-08 14:51:56"
+      },
+      {
+        "id": "fa748e5f-b29e-41a4-abdb-e74b6ded883c",
+        "user_id": "default",
+        "slug": "subscriptions",
+        "name": "Subscriptions",
+        "parent_slug": null,
+        "is_active": 1,
+        "created_at": "2026-05-08 14:51:56"
+      },
+      {
+        "id": "24c2ff4f-507a-4fa8-93d0-2e68dcc3181b",
+        "user_id": "default",
+        "slug": "charitable_giving",
+        "name": "Charitable giving",
+        "parent_slug": null,
+        "is_active": 1,
+        "created_at": "2026-05-08 14:51:56"
+      },
+      {
+        "id": "99c2a100-48dc-45c2-a364-7c9fb6a0faab",
+        "user_id": "default",
+        "slug": "potentially_deductible",
+        "name": "Reimbursible",
+        "parent_slug": null,
+        "is_active": 1,
+        "created_at": "2026-05-08 14:51:56"
+      },
+      {
+        "id": "e33689cc-3ea5-4fc1-b654-d8923f7165cf",
+        "user_id": "default",
+        "slug": "other_personal",
+        "name": "Other personal",
+        "parent_slug": null,
+        "is_active": 1,
+        "created_at": "2026-05-08 14:51:56"
+      },
+      {
+        "id": "a70032a7-7941-49df-8e34-df2a48db6280",
+        "user_id": "default",
+        "slug": "utilities",
+        "name": "Utilities",
+        "parent_slug": null,
+        "is_active": 1,
+        "created_at": "2026-05-09 19:32:32"
+      },
+      {
+        "id": "93099b85-5f76-425c-a28c-1f67b23717e0",
+        "user_id": "default",
+        "slug": "transfers",
+        "name": "Transfers",
+        "parent_slug": null,
+        "is_active": 1,
+        "created_at": "2026-05-09 19:32:40"
+      },
+      {
+        "id": "04ab2ec3-0888-4fd0-9334-537493cd4999",
+        "user_id": "default",
+        "slug": "business_expenses",
+        "name": "Business Expenses",
+        "parent_slug": null,
+        "is_active": 1,
+        "created_at": "2026-05-10 02:37:00"
+      },
+      {
+        "id": "a1d6bb96-7caf-4b3f-8083-f22f62ba5aad",
+        "user_id": "default",
+        "slug": "travel_vacation",
+        "name": "Travel & Vacation",
+        "parent_slug": null,
+        "is_active": 1,
+        "created_at": "2026-05-10 23:27:42"
+      },
+      {
+        "id": "ec0c3589-ced6-4418-9acc-9c4a7e2d2201",
+        "user_id": "default",
+        "slug": "kids_family",
+        "name": "Kids & Family",
+        "parent_slug": null,
+        "is_active": 1,
+        "created_at": "2026-05-10 23:27:46"
+      },
+      {
+        "id": "f951cf6e-9ad1-40ac-bb5d-f8d638ac0e91",
+        "user_id": "default",
+        "slug": "gifts",
+        "name": "Gifts",
+        "parent_slug": null,
+        "is_active": 1,
+        "created_at": "2026-05-11 16:22:58"
+      },
+      {
+        "id": "305433a0-c8cc-4034-81a4-40df560b0cef",
+        "user_id": "default",
+        "slug": "car_repairs",
+        "name": "Car Repairs",
+        "parent_slug": null,
+        "is_active": 1,
+        "created_at": "2026-05-11 17:30:35"
+      },
+      {
+        "id": "8e537bee-5590-4b2a-b77e-270cd2dd46b4",
+        "user_id": "default",
+        "slug": "insurance",
+        "name": "Insurance",
+        "parent_slug": null,
+        "is_active": 1,
+        "created_at": "2026-05-11 17:42:24"
+      },
+      {
+        "id": "3b7af7b6-82b8-4aed-9b1a-330ae433c674",
+        "user_id": "default",
+        "slug": "cash_on_hand",
+        "name": "Cash on Hand",
+        "parent_slug": null,
+        "is_active": 1,
+        "created_at": "2026-05-11 17:45:38"
+      },
+      {
+        "id": "be9cfff3-53a9-4a31-9d45-69551625b71b",
+        "user_id": "default",
+        "slug": "home_improvements",
+        "name": "Home Improvements",
+        "parent_slug": null,
+        "is_active": 1,
+        "created_at": "2026-05-12 00:28:27"
+      },
+      {
+        "id": "24521b53-8ffb-43d2-88d4-b46b4dd7fd0b",
+        "user_id": "default",
+        "slug": "ripple_income",
+        "name": "Ripple Income",
+        "parent_slug": null,
+        "is_active": 1,
+        "created_at": "2026-05-12 13:17:40"
+      },
+      {
+        "id": "46765850-12a6-4b9d-aa97-cc2f9536d410",
+        "user_id": "default",
+        "slug": "pet_care",
+        "name": "Pet Care",
+        "parent_slug": null,
+        "is_active": 1,
+        "created_at": "2026-05-12 14:45:15"
+      },
+      {
+        "id": "cb93761b-99c7-4e99-abb4-ad99d6273b4f",
+        "user_id": "default",
+        "slug": "furnishings",
+        "name": "Furnishings",
+        "parent_slug": null,
+        "is_active": 1,
+        "created_at": "2026-05-12 19:57:00"
+      },
+      {
+        "id": "a5cd3dea-7f38-4f24-be89-819d95ff5f35",
+        "user_id": "default",
+        "slug": "taxes_rental",
+        "name": "Taxes Rental",
+        "parent_slug": null,
+        "is_active": 1,
+        "created_at": "2026-05-12 19:57:01"
+      },
+      {
+        "id": "813a724c-52c8-4f72-82fe-b061406fbd07",
+        "user_id": "default",
+        "slug": "travel",
+        "name": "Travel",
+        "parent_slug": null,
+        "is_active": 1,
+        "created_at": "2026-05-12 19:57:01"
+      },
+      {
+        "id": "7a21a421-b653-4d6e-a137-2f739832dc1b",
+        "user_id": "default",
+        "slug": "advertising",
+        "name": "Advertising",
+        "parent_slug": null,
+        "is_active": 1,
+        "created_at": "2026-05-12 19:58:09"
+      },
+      {
+        "id": "4f25b5f3-90ef-4b27-8df7-6defaa2194aa",
+        "user_id": "default",
+        "slug": "capital_improvements",
+        "name": "Capital Improvements",
+        "parent_slug": null,
+        "is_active": 1,
+        "created_at": "2026-05-12 19:58:09"
+      },
+      {
+        "id": "a5bafb47-d943-42c4-a5a7-5de94c73d089",
+        "user_id": "default",
+        "slug": "commissions_and_fees",
+        "name": "Commissions And Fees",
+        "parent_slug": null,
+        "is_active": 1,
+        "created_at": "2026-05-12 19:58:09"
+      },
+      {
+        "id": "d6fae5f1-1d31-4d8a-905e-ef39873aa3de",
+        "user_id": "default",
+        "slug": "management_fees",
+        "name": "Management Fees",
+        "parent_slug": null,
+        "is_active": 1,
+        "created_at": "2026-05-12 19:58:09"
+      },
+      {
+        "id": "3f93b796-f520-4a80-af9c-dc4c74c5937c",
+        "user_id": "default",
+        "slug": "mortgage_interest",
+        "name": "Mortgage Interest",
+        "parent_slug": null,
+        "is_active": 1,
+        "created_at": "2026-05-12 19:58:09"
+      },
+      {
+        "id": "5dbc1cba-edbc-407f-9346-a604cc077888",
+        "user_id": "default",
+        "slug": "other_expenses",
+        "name": "Other Expenses",
+        "parent_slug": null,
+        "is_active": 1,
+        "created_at": "2026-05-12 19:58:09"
+      },
+      {
+        "id": "ab02f0fe-e89c-467a-a8db-ca97708e561e",
+        "user_id": "default",
+        "slug": "rent_lease_property",
+        "name": "Rent Lease Property",
+        "parent_slug": null,
+        "is_active": 1,
+        "created_at": "2026-05-12 19:58:09"
+      },
+      {
+        "id": "3db8ec6a-e106-4509-9720-833313405a0a",
+        "user_id": "default",
+        "slug": "meals",
+        "name": "Meals",
+        "parent_slug": null,
+        "is_active": 1,
+        "created_at": "2026-05-12 21:19:01"
+      },
+      {
+        "id": "062b9fac-adc2-4e23-8539-87845376ac59",
+        "user_id": "default",
+        "slug": "office_expense",
+        "name": "Office Expense",
+        "parent_slug": null,
+        "is_active": 1,
+        "created_at": "2026-05-12 21:19:01"
+      },
+      {
+        "id": "9629bfe6-909f-4cd9-9097-cdbbc0401317",
+        "user_id": "default",
+        "slug": "professional_development",
+        "name": "Professional Development",
+        "parent_slug": null,
+        "is_active": 1,
+        "created_at": "2026-05-12 21:19:01"
+      }
+    ],
+    "success": true,
+    "meta": {
+      "served_by": "v3-prod",
+      "served_by_region": "WNAM",
+      "served_by_colo": "SJC",
+      "served_by_primary": true,
+      "timings": {
+        "sql_duration_ms": 0.5219
+      },
+      "duration": 0.5219,
+      "changes": 0,
+      "last_row_id": 0,
+      "changed_db": false,
+      "size_after": 18341888,
+      "rows_read": 38,
+      "rows_written": 0,
+      "total_attempts": 1
+    }
+  }
+]
