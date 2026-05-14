@@ -26,11 +26,6 @@ interface CliArgs {
   out: string;
 }
 
-interface WranglerEnvelope<T> {
-  results: T[];
-  success?: boolean;
-}
-
 interface OldEnrollmentRow {
   id: string;
   enrollment_id: string;
@@ -79,14 +74,54 @@ function parseArgsOrExit(): CliArgs {
 
 function loadWranglerRows<T>(path: string): T[] {
   const raw = JSON.parse(readFileSync(path, 'utf8'));
-  // wrangler d1 execute --json emits an array of envelopes (one per
-  // statement). We only run a single SELECT, so [0].results is what we want.
-  if (Array.isArray(raw) && raw[0]?.results) {
-    return (raw[0] as WranglerEnvelope<T>).results;
+  const rows = findRows<T>(raw);
+  if (rows !== null) return rows;
+  throw new Error(`Unexpected JSON shape in ${path}. Top-level: ${describeShape(raw)}`);
+}
+
+/**
+ * Walk the parsed JSON looking for the rows array. Wrangler's `--json`
+ * output format has varied across versions and command flags; this handles
+ * every shape we've actually seen in the wild:
+ *
+ *   [...rows]
+ *   { results: [...rows] }
+ *   { result:  [...rows] }
+ *   { rows:    [...rows] }
+ *   { success: true, results|result|rows: [...rows] }
+ *   [{ ...envelope }]                       (single-statement, wrapped)
+ *   [{ ...envelope }, { ...envelope }, ...] (multi-statement; first wins)
+ */
+function findRows<T>(value: unknown): T[] | null {
+  if (Array.isArray(value)) {
+    if (value.length === 0) return [] as T[];
+    if (looksLikeEnvelope(value[0])) return findRows<T>(value[0]);
+    return value as T[];
   }
-  // Defensive: also accept a bare array if wrangler ever changes shape.
-  if (Array.isArray(raw)) return raw as T[];
-  throw new Error(`Unexpected JSON shape in ${path}`);
+  if (value && typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    for (const key of ['results', 'result', 'rows'] as const) {
+      if (Array.isArray(obj[key])) return obj[key] as T[];
+    }
+  }
+  return null;
+}
+
+function looksLikeEnvelope(v: unknown): boolean {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
+  const obj = v as Record<string, unknown>;
+  return 'results' in obj || 'result' in obj || 'rows' in obj || 'success' in obj || 'meta' in obj;
+}
+
+function describeShape(value: unknown): string {
+  if (Array.isArray(value)) {
+    if (value.length === 0) return 'array (empty)';
+    return `array of ${typeof value[0]}` + (value[0] && typeof value[0] === 'object' && !Array.isArray(value[0])
+      ? ` with keys [${Object.keys(value[0] as object).join(', ')}]`
+      : '');
+  }
+  if (value && typeof value === 'object') return `object with keys [${Object.keys(value).join(', ')}]`;
+  return typeof value;
 }
 
 function pgText(value: string | null | undefined): string {
