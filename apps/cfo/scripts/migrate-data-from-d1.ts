@@ -187,6 +187,8 @@ interface Args {
   reviewQueue?: string;
   categoryMap?: string;
   skippedOut?: string;
+  nullAccountId?: string;
+  nullAccountName?: string;
   out: string;
 }
 
@@ -203,6 +205,8 @@ function parseCli(): Args {
       'review-queue':{ type: 'string' },
       'category-map':{ type: 'string' },
       'skipped-out': { type: 'string' },
+      'null-account-id':   { type: 'string' },
+      'null-account-name': { type: 'string' },
       out:           { type: 'string' },
     },
   });
@@ -227,6 +231,8 @@ function parseCli(): Args {
     reviewQueue:  values['review-queue'],
     categoryMap:  values['category-map'],
     skippedOut:   values['skipped-out'],
+    nullAccountId:   values['null-account-id'],
+    nullAccountName: values['null-account-name'],
     out:          values.out as string,
   };
 }
@@ -485,10 +491,24 @@ function modeMigrate(args: Args): void {
   const rawValues: string[] = [];
   const txnValues: string[] = [];
   const skipped: OldTxJoinRow[] = [];
+  let nullAccountUseCount = 0;
 
   for (const t of txns) {
-    const newAccountId = t.account_id ? accountIdMap.get(t.account_id) : null;
+    let newAccountId = t.account_id ? accountIdMap.get(t.account_id) ?? null : null;
+    let isSynthetic = false;
+    if (!newAccountId && !t.account_id && args.nullAccountId) {
+      newAccountId = args.nullAccountId;
+      isSynthetic = true;
+      nullAccountUseCount++;
+    }
     if (!newAccountId) { stats.skippedNoAccount++; skipped.push(t); continue; }
+
+    // Source + external_id strategy.
+    // - Teller-backed account: source='teller', external_id=teller_transaction_id (UNIQUE(source, external_id) dedupes future Teller syncs).
+    // - Synthetic "manual" bucket: source='manual', external_id=old transaction id (stable, prevents re-import dupes if migration re-runs).
+    const source = isSynthetic ? 'manual' : 'teller';
+    const externalId = isSynthetic ? t.id : t.teller_transaction_id;
+    const tellerTxId = isSynthetic ? null : t.teller_transaction_id;
 
     const classified = !!t.entity;
     const entityId = classified ? OWNER_TAG_TO_ENTITY_ID[t.entity!] ?? null : null;
@@ -521,16 +541,12 @@ function modeMigrate(args: Args): void {
     if (classified) {
       // Approved or pending_review based on is_locked + review_queue
       const status = (t.is_locked === 1 && !pendingReview.has(t.id)) ? 'approved' : 'pending_review';
-      // raw_transactions: status='processed', external_id=teller_transaction_id (so future Teller sync dedupes)
-      if (!t.teller_transaction_id) {
-        // Without teller_transaction_id, future Teller syncs can't dedupe. Still migrate but warn.
-        stats.skippedNoTellerTxId++;
-      }
+      if (!externalId) stats.skippedNoTellerTxId++;
       rawValues.push(`(${[
         pgText(rawId),
         pgText(newAccountId),
-        `'teller'`,
-        pgText(t.teller_transaction_id),
+        pgText(source),
+        pgText(externalId),
         pgText(t.posted_date),
         pgNum(t.amount),
         pgText(description),
@@ -557,7 +573,7 @@ function modeMigrate(args: Args): void {
         pgBool(isTransfer),
         pgBool(t.is_locked),
         pgText(status),
-        pgText(t.teller_transaction_id),
+        pgText(tellerTxId),
         status === 'approved' ? pgTs(t.classified_at) : 'NULL',
         status === 'approved' ? pgText(t.classified_by) : 'NULL',
         pgTs(t.created_at),
@@ -568,8 +584,8 @@ function modeMigrate(args: Args): void {
       rawValues.push(`(${[
         pgText(rawId),
         pgText(newAccountId),
-        `'teller'`,
-        pgText(t.teller_transaction_id),
+        pgText(source),
+        pgText(externalId),
         pgText(t.posted_date),
         pgNum(t.amount),
         pgText(description),
@@ -636,7 +652,11 @@ function modeMigrate(args: Args): void {
     stats.splitInserts++;
   }
 
-  const sql = renderSql({ rawValues, txnValues, ruleValues, splitValues, stats });
+  const synthAccount = args.nullAccountId ? {
+    id: args.nullAccountId,
+    name: args.nullAccountName ?? 'Manual / Legacy',
+  } : null;
+  const sql = renderSql({ rawValues, txnValues, ruleValues, splitValues, stats, synthAccount });
   writeFileSync(args.out, sql, 'utf8');
 
   console.error(`Wrote ${args.out}`);
@@ -644,6 +664,9 @@ function modeMigrate(args: Args): void {
   console.error(`  transactions:       ${stats.txnInserts}`);
   console.error(`  rules:              ${stats.ruleInserts}  (${stats.unsupportedRules.length} unsupported, skipped)`);
   console.error(`  transaction_splits: ${stats.splitInserts}`);
+  if (synthAccount) {
+    console.error(`  routed to ${synthAccount.id} (null-account bucket): ${nullAccountUseCount}`);
+  }
   console.error(`  skipped (no account match):  ${stats.skippedNoAccount}`);
   if (skipped.length) reportSkipped(skipped, accounts, args.skippedOut);
   console.error(`  classified w/o teller_tx_id: ${stats.skippedNoTellerTxId}  (still migrated, but no dedup vs future Teller sync)`);
@@ -763,8 +786,10 @@ function buildMatchJson(
   return null;
 }
 
-function renderSql({ rawValues, txnValues, ruleValues, splitValues, stats }: {
-  rawValues: string[]; txnValues: string[]; ruleValues: string[]; splitValues: string[]; stats: MigrationStats;
+function renderSql({ rawValues, txnValues, ruleValues, splitValues, stats, synthAccount }: {
+  rawValues: string[]; txnValues: string[]; ruleValues: string[]; splitValues: string[];
+  stats: MigrationStats;
+  synthAccount: { id: string; name: string } | null;
 }): string {
   const out: string[] = [];
   out.push('-- =========================================================================');
@@ -786,6 +811,14 @@ function renderSql({ rawValues, txnValues, ruleValues, splitValues, stats }: {
   out.push('');
   out.push('BEGIN;');
   out.push('');
+
+  if (synthAccount) {
+    out.push('-- ── synthetic bucket for old transactions with NULL account_id ─');
+    out.push('INSERT INTO gather_accounts (id, name, type, source, is_active)');
+    out.push(`VALUES (${pgText(synthAccount.id)}, ${pgText(synthAccount.name)}, 'other', 'manual', true)`);
+    out.push('ON CONFLICT (id) DO NOTHING;');
+    out.push('');
+  }
 
   if (rawValues.length) {
     out.push('-- ── raw_transactions ─────────────────────────────────────────');
