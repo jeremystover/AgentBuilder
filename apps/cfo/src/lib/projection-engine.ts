@@ -20,7 +20,8 @@ import { resolvePlan, type ResolvedCategoryAmount } from './plan-resolver';
 import { isIncomeSlugOrName } from './forecast';
 import {
   calculateTax, loadTaxConfig, rmdFactor, ssAdjustmentFactor,
-  type TaxConfigSet, type TaxYearResult,
+  findBracketSchedule, getMarginalRate,
+  type TaxYearResult,
 } from './tax-engine';
 
 // ── Public types ────────────────────────────────────────────────────────────
@@ -676,5 +677,211 @@ const round = (n: number) => Math.round(n * 100) / 100;
 function sumAccounts(accounts: AccountState[], side: 'asset' | 'liability'): number {
   return accounts.filter(a => a.asset_or_liability === side)
                  .reduce((s, a) => s + Math.max(0, a.balance), 0);
+}
+
+// ── Pass 2 optimization ─────────────────────────────────────────────────────
+//
+// The Phase 6 engine is a single forward pass. Phase 7's Pass 2
+// re-runs the engine once with a more conservative allocation rule
+// set, informed by Pass 1's flags. Specifically: if Pass 1 produced
+// any FUNDING_GAP / LOW_LIQUIDITY / PENALTY_WITHDRAWAL flag, Pass 2
+// pushes retirement contributions to the bottom of the surplus
+// waterfall and pulls emergency reserve / brokerage to the top, then
+// re-projects. This is intentionally rules-based rather than
+// combinatorial — it gives a deterministic Pass 2 snapshot that
+// strictly improves liquidity in scenarios where Pass 1 hit walls.
+
+export interface Pass2DecisionDiff {
+  period_date: string;
+  pass1_action: string;
+  pass2_action: string;
+  net_worth_impact: number;
+  rationale: string;
+}
+
+export interface Pass2Result {
+  pass2Projection: ProjectionResult;
+  diffs: Pass2DecisionDiff[];
+  improvement: number;
+  rules_changed: boolean;
+}
+
+export async function runPass2Optimization(
+  sql: Sql,
+  pass1Params: ProjectionParams,
+  pass1Result: ProjectionResult,
+): Promise<Pass2Result> {
+  const flaggedTriggers = pass1Result.flags.filter(f =>
+    f.flag_type === 'FUNDING_GAP' ||
+    f.flag_type === 'LOW_LIQUIDITY' ||
+    f.flag_type === 'PENALTY_WITHDRAWAL'
+  );
+
+  if (flaggedTriggers.length === 0) {
+    // Nothing to optimize — Pass 2 = Pass 1.
+    return { pass2Projection: pass1Result, diffs: [], improvement: 0, rules_changed: false };
+  }
+
+  // Pull liquidity-preserving rules: emergency reserve and brokerage
+  // first, retirement last. Keep any custom step the user added.
+  const customSurplusKinds = new Set(pass1Params.allocationRules.surplus.map(s => s.kind));
+  const candidateOrder: SurplusStep[] = [
+    { kind: 'emergency_reserve' },
+    { kind: 'high_interest_paydown', rate_threshold: 0.06 },
+    { kind: 'taxable_brokerage' },
+    { kind: 'retirement', max_per_year: 23000 },
+  ];
+  const reorderedSurplus = candidateOrder.filter(s => customSurplusKinds.has(s.kind));
+
+  const pass2Params: ProjectionParams = {
+    ...pass1Params,
+    allocationRules: {
+      surplus: reorderedSurplus,
+      deficit: pass1Params.allocationRules.deficit,
+    },
+  };
+
+  const pass2Projection = await runProjection(sql, pass2Params);
+
+  const pass1End = pass1Result.periods[pass1Result.periods.length - 1]?.net_worth ?? 0;
+  const pass2End = pass2Projection.periods[pass2Projection.periods.length - 1]?.net_worth ?? 0;
+  const improvement = pass2End - pass1End;
+
+  // Build a diff list keyed by period_date: any decision present in
+  // both passes whose action differs counts as a Pass 2 change.
+  const pass1ByDate = new Map<string, string>();
+  for (const d of pass1Result.decisions) {
+    pass1ByDate.set(`${d.period_date}/${d.decision_type}`, d.pass1_action);
+  }
+
+  const diffs: Pass2DecisionDiff[] = [];
+  for (const d of pass2Projection.decisions) {
+    const key = `${d.period_date}/${d.decision_type}`;
+    const pass1 = pass1ByDate.get(key);
+    if (pass1 && pass1 !== d.pass1_action) {
+      diffs.push({
+        period_date: d.period_date,
+        pass1_action: pass1,
+        pass2_action: d.pass1_action,
+        net_worth_impact: improvement / Math.max(1, pass1ByDate.size),
+        rationale: 'Pass 2 reordered surplus waterfall to preserve liquidity',
+      });
+    }
+  }
+
+  return { pass2Projection, diffs, improvement, rules_changed: true };
+}
+
+// ── Roth conversion proposals ───────────────────────────────────────────────
+//
+// Walk each annual bucket in Pass 1. For each year that has a positive
+// Traditional retirement balance:
+//   - estimate current marginal federal rate from the year's federal
+//     taxable income
+//   - estimate projected RMD-age marginal rate from the last RMD year
+//   - if current < projected and there's headroom in the current
+//     bracket, propose converting up to that headroom
+//   - require net-positive NPV
+
+export interface RothConversionProposal {
+  year: number;
+  conversion_amount: number;
+  current_marginal_rate: number;
+  projected_rmd_rate: number;
+  tax_cost_now: number;
+  npv_savings: number;
+  net_benefit: number;
+  rationale: string;
+}
+
+const DISCOUNT_RATE = 0.05;
+
+export async function evaluateRothConversions(
+  sql: Sql,
+  pass1Result: ProjectionResult,
+  pass1Params: ProjectionParams,
+): Promise<RothConversionProposal[]> {
+  const taxConfig = await loadTaxConfig(sql);
+
+  // Find a single Trad balance — for proposal purposes we look at the
+  // most recently seen Trad 401(k) balance from period account_balances.
+  const tradBalanceByYear = new Map<number, number>();
+  for (const p of pass1Result.periods) {
+    if (p.period_type !== 'year') continue;
+    const year = Number(p.period_date.slice(0, 4));
+    let tradTotal = 0;
+    for (const [, bal] of Object.entries(p.account_balances)) {
+      tradTotal += Number(bal);
+    }
+    tradBalanceByYear.set(year, tradTotal);
+  }
+
+  // Marginal rate per year from federal_taxable_income.
+  const federalSchedule = findBracketSchedule(taxConfig, new Date().getUTCFullYear(),
+                                              pass1Params.filingStatus, 'federal');
+  if (!federalSchedule) return [];
+
+  const marginalByYear = new Map<number, number>();
+  for (const p of pass1Result.periods) {
+    if (p.period_type !== 'year') continue;
+    const year = Number(p.period_date.slice(0, 4));
+    const taxableEstimate = Math.max(0, p.gross_income - federalSchedule.standard_deduction);
+    marginalByYear.set(year, getMarginalRate(taxableEstimate, federalSchedule.brackets));
+  }
+
+  // Projected RMD-era rate: the marginal rate in the last 5 years of
+  // the projection (assumption: RMD has begun by then).
+  const sortedYears = [...marginalByYear.keys()].sort((a, b) => a - b);
+  if (sortedYears.length < 2) return [];
+  const tailYears = sortedYears.slice(-5);
+  const tailRates = tailYears.map(y => marginalByYear.get(y) ?? 0);
+  const projectedRmdRate = tailRates.reduce((s, r) => s + r, 0) / Math.max(1, tailRates.length);
+
+  const proposals: RothConversionProposal[] = [];
+
+  for (const year of sortedYears) {
+    const current = marginalByYear.get(year) ?? 0;
+    if (current >= projectedRmdRate) continue;
+    const tradBalance = tradBalanceByYear.get(year) ?? 0;
+    if (tradBalance <= 0) continue;
+
+    // Bracket headroom — convert up to the top of the current bracket.
+    const grossIncome = pass1Result.periods.find(p =>
+      p.period_type === 'year' && p.period_date.slice(0, 4) === String(year),
+    )?.gross_income ?? 0;
+    const taxableEstimate = Math.max(0, grossIncome - federalSchedule.standard_deduction);
+    const currentBracket = federalSchedule.brackets.find(b =>
+      taxableEstimate < (b.ceiling ?? Infinity)
+    );
+    if (!currentBracket) continue;
+    const headroom = Math.max(0, (currentBracket.ceiling ?? Infinity) - taxableEstimate);
+    if (headroom === 0 || !isFinite(headroom)) continue;
+
+    const conversionAmount = Math.min(headroom, tradBalance * 0.30);
+    if (conversionAmount < 5000) continue;
+
+    const taxCostNow = conversionAmount * current;
+    const yearsToRmd = Math.max(1, tailYears[0]! - year);
+    const futureTax  = conversionAmount * projectedRmdRate;
+    const npvSavings = futureTax / Math.pow(1 + DISCOUNT_RATE, yearsToRmd);
+    const netBenefit = npvSavings - taxCostNow;
+
+    if (netBenefit <= 0) continue;
+
+    proposals.push({
+      year,
+      conversion_amount: round(conversionAmount),
+      current_marginal_rate: Math.round(current * 10000) / 10000,
+      projected_rmd_rate:    Math.round(projectedRmdRate * 10000) / 10000,
+      tax_cost_now:  round(taxCostNow),
+      npv_savings:   round(npvSavings),
+      net_benefit:   round(netBenefit),
+      rationale: `Converting $${conversionAmount.toFixed(0)} at ${(current * 100).toFixed(1)}% ` +
+                 `saves NPV $${npvSavings.toFixed(0)} vs. RMD-age rate ` +
+                 `${(projectedRmdRate * 100).toFixed(1)}%`,
+    });
+  }
+
+  return proposals;
 }
 

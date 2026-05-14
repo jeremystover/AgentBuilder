@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import {
-  Button, Card, Badge, Select, Input, Drawer, PageHeader, EmptyState, fmtUsd,
+  Button, Card, Badge, Select, Input, Drawer, Modal, PageHeader, EmptyState, fmtUsd,
 } from "../ui";
 import { api, type Entity } from "../../api";
 
@@ -268,6 +268,7 @@ function AccountEditor({
   const [rateSchedule, setRateSchedule] = useState<RateEntry[]>([]);
   const [balanceHistory, setBalanceHistory] = useState<BalanceEntry[]>([]);
   const [busy, setBusy] = useState(false);
+  const [sellModalOpen, setSellModalOpen] = useState(false);
 
   // Form state — synced from `account` when loaded.
   const [name, setName] = useState("");
@@ -275,6 +276,8 @@ function AccountEditor({
   const [entityId, setEntityId] = useState<string>("");
   const [notes, setNotes] = useState("");
   const [config, setConfig] = useState<Record<string, unknown>>({});
+
+  const sellable = type === "real_estate_primary" || type === "real_estate_investment" || type === "private_equity";
 
   const load = useCallback(async () => {
     if (creating) {
@@ -394,12 +397,18 @@ function AccountEditor({
   };
 
   return (
+    <>
     <Drawer
       open={open}
       onClose={onClose}
       title={creating ? "New account" : (account?.name ?? "Account")}
       footer={
         <div className="flex gap-2 w-full justify-end">
+          {!creating && sellable && accountId && (
+            <Button onClick={() => setSellModalOpen(true)} disabled={busy}>
+              Sell on date…
+            </Button>
+          )}
           {!creating && (
             <Button variant="danger" onClick={() => void archive()} disabled={busy}>
               <Archive className="w-4 h-4" /> Archive
@@ -465,6 +474,12 @@ function AccountEditor({
         </Section>
       </div>
     </Drawer>
+    <SellOnDateModal
+      account={account}
+      open={sellModalOpen}
+      onClose={() => setSellModalOpen(false)}
+    />
+    </>
   );
 }
 
@@ -1025,6 +1040,7 @@ function ScenariosTab({ accounts }: { accounts: ScenarioAccount[] }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [viewingId, setViewingId] = useState<string | null>(null);
+  const [comparing, setComparing] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -1075,9 +1091,14 @@ function ScenariosTab({ accounts }: { accounts: ScenarioAccount[] }) {
     <div>
       <div className="flex justify-between items-center mb-3">
         <div className="text-xs text-text-muted">{scenarios.length} scenarios</div>
-        <Button variant="primary" onClick={() => setCreating(true)}>
-          <Plus className="w-4 h-4" /> New scenario
-        </Button>
+        <div className="flex gap-2">
+          <Button onClick={() => setComparing(true)} disabled={scenarios.filter(s => s.latest_snapshot_id).length < 2}>
+            Compare…
+          </Button>
+          <Button variant="primary" onClick={() => setCreating(true)}>
+            <Plus className="w-4 h-4" /> New scenario
+          </Button>
+        </div>
       </div>
 
       <Card>
@@ -1140,6 +1161,13 @@ function ScenariosTab({ accounts }: { accounts: ScenarioAccount[] }) {
         <ScenarioResultsDrawer
           scenario={scenarios.find(s => s.id === viewingId)!}
           onClose={() => setViewingId(null)}
+        />
+      )}
+
+      {comparing && (
+        <ScenarioComparisonDrawer
+          scenarios={scenarios.filter(s => s.latest_snapshot_id)}
+          onClose={() => setComparing(false)}
         />
       )}
     </div>
@@ -1390,6 +1418,26 @@ interface SnapshotFlagRow {
   severity: "info" | "warning" | "critical";
 }
 
+interface RothProposal {
+  year: number; conversion_amount: number;
+  current_marginal_rate: number; projected_rmd_rate: number;
+  tax_cost_now: number; npv_savings: number; net_benefit: number;
+  rationale: string;
+}
+
+interface Pass2Diff {
+  period_date: string;
+  pass1_action: string; pass2_action: string;
+  net_worth_impact: number; rationale: string;
+}
+
+interface SnapshotResultsJson {
+  pass2_diffs?: Pass2Diff[];
+  improvement?: number;
+  roth_proposals?: RothProposal[];
+  end_state_net_worth?: number;
+}
+
 function ScenarioResultsDrawer({
   scenario, onClose,
 }: {
@@ -1398,6 +1446,7 @@ function ScenarioResultsDrawer({
 }) {
   const [periods, setPeriods] = useState<SnapshotPeriodRow[]>([]);
   const [flags, setFlags] = useState<SnapshotFlagRow[]>([]);
+  const [snapshotMeta, setSnapshotMeta] = useState<{ pass: number; results_json: SnapshotResultsJson } | null>(null);
   const [loading, setLoading] = useState(false);
 
   const load = useCallback(async () => {
@@ -1406,13 +1455,26 @@ function ScenarioResultsDrawer({
     try {
       const res = await api.get<{
         periods: SnapshotPeriodRow[]; flags: SnapshotFlagRow[];
+        snapshot: { pass: number; results_json: SnapshotResultsJson };
       }>(`/api/web/scenarios/${scenario.id}/snapshots/${scenario.latest_snapshot_id}`);
       setPeriods(res.periods);
       setFlags(res.flags);
+      setSnapshotMeta(res.snapshot);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     } finally { setLoading(false); }
   }, [scenario]);
+
+  const acceptRoth = async (proposal: RothProposal) => {
+    try {
+      await api.post(`/api/web/scenarios/${scenario.id}/roth-proposals/accept`, {
+        year: proposal.year, conversion_amount: proposal.conversion_amount,
+      });
+      toast.success(`Added Roth conversion to plan for ${proposal.year}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+  };
 
   useEffect(() => { void load(); }, [load]);
 
@@ -1499,10 +1561,94 @@ function ScenarioResultsDrawer({
                       </div>
                     )}
                 </Section>
+
+                {snapshotMeta && <OptimizationSummary snapshot={snapshotMeta} onAcceptRoth={acceptRoth} />}
               </>
             )}
       </div>
     </Drawer>
+  );
+}
+
+function OptimizationSummary({
+  snapshot, onAcceptRoth,
+}: {
+  snapshot: { pass: number; results_json: SnapshotResultsJson };
+  onAcceptRoth: (proposal: RothProposal) => Promise<void>;
+}) {
+  const r = snapshot.results_json;
+  const diffs = r.pass2_diffs ?? [];
+  const proposals = r.roth_proposals ?? [];
+  const improvement = r.improvement ?? 0;
+  if (snapshot.pass === 1 && diffs.length === 0 && proposals.length === 0) return null;
+  return (
+    <Section title="Optimization">
+      {snapshot.pass === 2 && (
+        <div className="text-sm bg-bg-elevated/40 rounded p-2">
+          Pass 2 optimization improved end-state net worth by <span className={"font-semibold tabular-nums " + (improvement >= 0 ? "text-accent-success" : "text-accent-danger")}>{fmtUsd(improvement, { sign: true })}</span>.
+        </div>
+      )}
+
+      {diffs.length > 0 && (
+        <div>
+          <div className="text-xs text-text-muted mb-1">{diffs.length} allocation change{diffs.length !== 1 ? "s" : ""}</div>
+          <table className="w-full text-xs">
+            <thead className="text-text-muted uppercase tracking-wide bg-bg-elevated">
+              <tr>
+                <th className="text-left px-2 py-1">Year</th>
+                <th className="text-left px-2 py-1">Pass 1</th>
+                <th className="text-left px-2 py-1">Pass 2</th>
+                <th className="text-right px-2 py-1">Δ NW</th>
+              </tr>
+            </thead>
+            <tbody>
+              {diffs.slice(0, 10).map((d, i) => (
+                <tr key={i} className="border-t border-border">
+                  <td className="px-2 py-1">{d.period_date.slice(0, 7)}</td>
+                  <td className="px-2 py-1 text-xs">{d.pass1_action}</td>
+                  <td className="px-2 py-1 text-xs">{d.pass2_action}</td>
+                  <td className="px-2 py-1 text-right tabular-nums">{fmtUsd(d.net_worth_impact, { sign: true })}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {proposals.length > 0 && (
+        <div>
+          <div className="text-xs text-text-muted mb-1">{proposals.length} Roth conversion proposal{proposals.length !== 1 ? "s" : ""}</div>
+          <table className="w-full text-xs">
+            <thead className="text-text-muted uppercase tracking-wide bg-bg-elevated">
+              <tr>
+                <th className="text-left px-2 py-1">Year</th>
+                <th className="text-right px-2 py-1">Convert</th>
+                <th className="text-right px-2 py-1">Tax cost now</th>
+                <th className="text-right px-2 py-1">NPV savings</th>
+                <th className="text-right px-2 py-1">Net</th>
+                <th className="text-left px-2 py-1">Rate now → RMD</th>
+                <th className="text-right px-2 py-1"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {proposals.map((p, i) => (
+                <tr key={i} className="border-t border-border">
+                  <td className="px-2 py-1">{p.year}</td>
+                  <td className="px-2 py-1 text-right tabular-nums">{fmtUsd(p.conversion_amount)}</td>
+                  <td className="px-2 py-1 text-right tabular-nums">{fmtUsd(p.tax_cost_now)}</td>
+                  <td className="px-2 py-1 text-right tabular-nums">{fmtUsd(p.npv_savings)}</td>
+                  <td className="px-2 py-1 text-right tabular-nums text-accent-success font-medium">{fmtUsd(p.net_benefit, { sign: true })}</td>
+                  <td className="px-2 py-1">{(p.current_marginal_rate * 100).toFixed(1)}% → {(p.projected_rmd_rate * 100).toFixed(1)}%</td>
+                  <td className="px-2 py-1 text-right">
+                    <Button size="sm" variant="primary" onClick={() => void onAcceptRoth(p)}>Accept</Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Section>
   );
 }
 
@@ -1719,6 +1865,237 @@ function TaxProfileTab() {
             </div>
           )}
       </Card>
+    </div>
+  );
+}
+
+// ── Scenario comparison drawer ──────────────────────────────────────────────
+
+function ScenarioComparisonDrawer({
+  scenarios, onClose,
+}: {
+  scenarios: ScenarioListItem[];
+  onClose: () => void;
+}) {
+  const [aId, setAId] = useState<string>(scenarios[0]?.id ?? "");
+  const [bId, setBId] = useState<string>(scenarios[1]?.id ?? scenarios[0]?.id ?? "");
+  const [aData, setADData] = useState<SnapshotPeriodRow[]>([]);
+  const [bData, setBData] = useState<SnapshotPeriodRow[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const a = scenarios.find(s => s.id === aId);
+  const b = scenarios.find(s => s.id === bId);
+
+  const load = useCallback(async () => {
+    if (!a?.latest_snapshot_id || !b?.latest_snapshot_id) return;
+    setLoading(true);
+    try {
+      const [resA, resB] = await Promise.all([
+        api.get<{ periods: SnapshotPeriodRow[] }>(`/api/web/scenarios/${a.id}/snapshots/${a.latest_snapshot_id}`),
+        api.get<{ periods: SnapshotPeriodRow[] }>(`/api/web/scenarios/${b.id}/snapshots/${b.latest_snapshot_id}`),
+      ]);
+      setADData(resA.periods);
+      setBData(resB.periods);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally { setLoading(false); }
+  }, [a, b]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  // Merge on period_date; both sides are typically yearly.
+  const merged = useMemo(() => {
+    const byDate = new Map<string, { date: string; a?: number; b?: number }>();
+    for (const r of aData) byDate.set(r.period_date, { date: r.period_date, a: r.net_worth });
+    for (const r of bData) {
+      const existing = byDate.get(r.period_date);
+      if (existing) existing.b = r.net_worth;
+      else byDate.set(r.period_date, { date: r.period_date, b: r.net_worth });
+    }
+    return [...byDate.values()].sort((x, y) => x.date.localeCompare(y.date));
+  }, [aData, bData]);
+
+  // Identify divergence point: first row where |b - a| > 25_000.
+  const divergence = merged.find(r => r.a != null && r.b != null && Math.abs((r.b - r.a)) > 25000);
+
+  return (
+    <Drawer open onClose={onClose} title="Compare scenarios">
+      <div className="space-y-4">
+        <div className="flex gap-2">
+          <div className="flex-1">
+            <label className="block text-xs text-text-muted mb-1">Scenario A (solid)</label>
+            <Select value={aId} onChange={e => setAId(e.target.value)}>
+              {scenarios.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </Select>
+          </div>
+          <div className="flex-1">
+            <label className="block text-xs text-text-muted mb-1">Scenario B (dashed)</label>
+            <Select value={bId} onChange={e => setBId(e.target.value)}>
+              {scenarios.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </Select>
+          </div>
+        </div>
+
+        {loading
+          ? <EmptyState>Loading…</EmptyState>
+          : merged.length === 0
+            ? <EmptyState>No overlapping periods.</EmptyState>
+            : (
+              <>
+                <Card className="p-3">
+                  <div className="h-64">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={merged}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+                        <XAxis dataKey="date" tick={{ fontSize: 10 }} stroke="#64748B" />
+                        <YAxis tickFormatter={v => fmtUsd(v as number)} tick={{ fontSize: 10 }} stroke="#64748B" width={80} />
+                        <Tooltip formatter={(v: number) => fmtUsd(v)} contentStyle={{ fontSize: 12 }} />
+                        <Legend wrapperStyle={{ fontSize: 11 }} />
+                        <Line type="monotone" dataKey="a" name={a?.name ?? "A"} stroke="#4F46E5" strokeWidth={2} dot={false} isAnimationActive={false} />
+                        <Line type="monotone" dataKey="b" name={b?.name ?? "B"} stroke="#059669" strokeWidth={2} strokeDasharray="5 3" dot={false} isAnimationActive={false} />
+                        {divergence && (
+                          <ReferenceLine x={divergence.date} stroke="#D97706" strokeDasharray="3 3" label={{ value: "Diverges", fontSize: 10, fill: "#D97706" }} />
+                        )}
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </Card>
+
+                {divergence && (
+                  <div className="text-sm bg-accent-warn/10 border border-accent-warn/30 rounded p-2">
+                    Scenarios diverge significantly in <span className="font-medium">{divergence.date.slice(0, 4)}</span> — net worth gap exceeds $25K.
+                  </div>
+                )}
+
+                <div className="max-h-72 overflow-y-auto">
+                  <table className="w-full text-xs">
+                    <thead className="text-text-muted uppercase tracking-wide bg-bg-elevated sticky top-0">
+                      <tr>
+                        <th className="text-left px-2 py-1">Year</th>
+                        <th className="text-right px-2 py-1">NW (A)</th>
+                        <th className="text-right px-2 py-1">NW (B)</th>
+                        <th className="text-right px-2 py-1">Δ (B − A)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {merged.map(r => {
+                        const delta = r.a != null && r.b != null ? r.b - r.a : null;
+                        const big = delta != null && Math.abs(delta) > 50000;
+                        return (
+                          <tr key={r.date} className={"border-t border-border " + (big ? "bg-accent-warn/5" : "")}>
+                            <td className="px-2 py-1">{r.date.slice(0, 7)}</td>
+                            <td className="px-2 py-1 text-right tabular-nums">{r.a != null ? fmtUsd(r.a) : "—"}</td>
+                            <td className="px-2 py-1 text-right tabular-nums">{r.b != null ? fmtUsd(r.b) : "—"}</td>
+                            <td className={"px-2 py-1 text-right tabular-nums " + (delta != null && delta >= 0 ? "text-accent-success" : delta != null ? "text-accent-danger" : "")}>
+                              {delta != null ? fmtUsd(delta, { sign: true }) : "—"}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+      </div>
+    </Drawer>
+  );
+}
+
+// ── Sell-on-date modal ──────────────────────────────────────────────────────
+
+interface SaleCalcResult {
+  estimated_market_value: number;
+  cost_basis: number;
+  total_gain: number;
+  depreciation_recapture_gain: number;
+  capital_gain: number;
+  estimated_recapture_tax: number;
+  estimated_capital_gains_tax: number;
+  section_121_exclusion: number;
+  estimated_net_proceeds: number;
+  assumptions: string[];
+}
+
+export function SellOnDateModal({
+  account, open, onClose,
+}: {
+  account: ScenarioAccount | null;
+  open: boolean;
+  onClose: () => void;
+}) {
+  const inFiveYears = new Date(); inFiveYears.setUTCFullYear(inFiveYears.getUTCFullYear() + 5);
+  const [saleDate, setSaleDate] = useState(inFiveYears.toISOString().slice(0, 10));
+  const [otherIncome, setOtherIncome] = useState("0");
+  const [result, setResult] = useState<SaleCalcResult | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const compute = async () => {
+    if (!account) return;
+    setBusy(true);
+    try {
+      const res = await api.post<SaleCalcResult>(`/api/web/scenario-accounts/${account.id}/sale-calc`, {
+        sale_date: saleDate,
+        other_taxable_income: Number(otherIncome) || 0,
+        primary_residence_years_used: 2,
+      });
+      setResult(res);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} title={`Sell on date: ${account?.name ?? ""}`} width="max-w-xl">
+      <div className="space-y-4">
+        <div className="flex gap-2 items-end">
+          <Field label="Sale date">
+            <Input type="date" value={saleDate} onChange={e => setSaleDate(e.target.value)} />
+          </Field>
+          <Field label="Other taxable income (year)">
+            <Input type="number" step="1000" value={otherIncome} onChange={e => setOtherIncome(e.target.value)} className="w-40" />
+          </Field>
+          <Button variant="primary" onClick={() => void compute()} disabled={busy}>
+            <RefreshCw className={"w-4 h-4 " + (busy ? "animate-spin" : "")} /> Calculate
+          </Button>
+        </div>
+        {result && (
+          <div className="space-y-2 text-sm">
+            <Row label="Estimated market value" value={fmtUsd(result.estimated_market_value)} />
+            <Row label="Cost basis"             value={fmtUsd(result.cost_basis)} />
+            <Row label="Total gain"             value={fmtUsd(result.total_gain)} />
+            {result.depreciation_recapture_gain > 0 && (
+              <Row label="Depreciation recapture gain" value={fmtUsd(result.depreciation_recapture_gain)} />
+            )}
+            {result.section_121_exclusion > 0 && (
+              <Row label="§121 exclusion" value={`− ${fmtUsd(result.section_121_exclusion)}`} />
+            )}
+            <Row label="Capital gain (taxable)"  value={fmtUsd(result.capital_gain)} />
+            {result.estimated_recapture_tax > 0 && (
+              <Row label="Recapture tax (25%)" value={`− ${fmtUsd(result.estimated_recapture_tax)}`} />
+            )}
+            <Row label="Federal LTCG tax"       value={`− ${fmtUsd(result.estimated_capital_gains_tax)}`} />
+            <div className="border-t border-border pt-2 flex justify-between font-semibold">
+              <span>Estimated net proceeds</span>
+              <span className="tabular-nums text-accent-success">{fmtUsd(result.estimated_net_proceeds)}</span>
+            </div>
+            <div className="pt-2 space-y-0.5">
+              {result.assumptions.map((a, i) => (
+                <div key={i} className="text-xs text-text-muted">• {a}</div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between">
+      <span className="text-text-muted">{label}</span>
+      <span className="tabular-nums">{value}</span>
     </div>
   );
 }

@@ -112,6 +112,7 @@ import {
   handleRateComparison,
   handleListScenarios, handleCreateScenario, handleGetScenario, handleUpdateScenario, handleDeleteScenario,
   handleRunScenario, handleScenarioStatus, handleGetSnapshot,
+  handleSaleProceeds, handleAcceptRothProposal,
   runAndSaveProjection, type ScenarioJobMessage,
 } from './routes/scenarios';
 import { handleMcp, type JsonRpcMessage } from './mcp-tools';
@@ -224,6 +225,8 @@ const ROUTES: Route[] = [
   { method: 'POST',   pattern: /^\/api\/web\/scenarios\/([^/]+)\/run$/,                                    auth: 'api', handler: (req, env, id) => handleRunScenario(req, env, id!) },
   { method: 'GET',    pattern: /^\/api\/web\/scenarios\/([^/]+)\/status$/,                                 auth: 'api', handler: (req, env, id) => handleScenarioStatus(req, env, id!) },
   { method: 'GET',    pattern: /^\/api\/web\/scenarios\/([^/]+)\/snapshots\/([^/]+)$/,                     auth: 'api', handler: (req, env, id, sid) => handleGetSnapshot(req, env, id!, sid!) },
+  { method: 'POST',   pattern: /^\/api\/web\/scenarios\/([^/]+)\/roth-proposals\/accept$/,                  auth: 'api', handler: (req, env, id) => handleAcceptRothProposal(req, env, id!) },
+  { method: 'POST',   pattern: /^\/api\/web\/scenario-accounts\/([^/]+)\/sale-calc$/,                       auth: 'api', handler: (req, env, id) => handleSaleProceeds(req, env, id!) },
 
   // Tax & profile configuration
   { method: 'GET',    pattern: /^\/api\/web\/profiles$/,                                                   auth: 'api', handler: (req, env) => handleListProfiles(req, env) },
