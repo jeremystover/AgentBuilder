@@ -60,6 +60,22 @@ For multi-step tasks, state a brief plan:
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
+
+## 5. Deploy Workflow
+
+After completing any change that should go live:
+
+1. Commit and push to the current branch (or main for small fixes)
+2. Run `wrangler deploy` directly — do not wait for a PR merge to trigger deploy
+3. Confirm deploy succeeded before reporting back
+
+For small fixes and single-commit changes: push directly to main.
+For multi-commit phases: use a branch, but still run `wrangler deploy` 
+immediately after pushing — don't open a PR and wait.
+
+PRs are for code review only, not for triggering deploys. Deploy is 
+always `wrangler deploy` run locally.
+
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
