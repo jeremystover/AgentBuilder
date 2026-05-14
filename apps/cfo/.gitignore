@@ -1,0 +1,5 @@
+# Teller migration artifacts contain plaintext access tokens —
+# never commit. See docs/migrate-teller-from-d1.md.
+scripts/teller-enrollments-export.json
+scripts/teller-accounts-export.json
+scripts/teller-migration.sql
