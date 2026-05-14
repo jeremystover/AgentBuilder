@@ -7,7 +7,7 @@
 
 import type { Env } from '../types';
 import { jsonOk, jsonError } from '../types';
-import { db, type Sql } from '../lib/db';
+import { db, withDb, type Sql } from '../lib/db';
 
 const ALLOWED_SORT_COLS = new Set(['date', 'amount', 'description', 'ingest_at']);
 
@@ -67,52 +67,51 @@ export async function handleListReview(req: Request, env: Env): Promise<Response
   const limit = Math.max(1, Math.min(500, Number(url.searchParams.get('limit') ?? '50')));
   const offset = Math.max(0, Number(url.searchParams.get('offset') ?? '0'));
 
-  const sql = db(env);
   try {
-    const where = whereClauses(sql, f);
+    return await withDb(env, async (sql) => {
+      const where = whereClauses(sql, f);
 
-    const totalRows = await sql<Array<{ total: string }>>`
-      SELECT COUNT(*)::text AS total FROM raw_transactions WHERE ${where}
-    `;
-    const total = Number(totalRows[0]?.total ?? 0);
+      const totalRows = await sql<Array<{ total: string }>>`
+        SELECT COUNT(*)::text AS total FROM raw_transactions WHERE ${where}
+      `;
+      const total = Number(totalRows[0]?.total ?? 0);
 
-    const rows = await sql<Array<{
-      id: string; date: string; amount: string; description: string; merchant: string | null;
-      account_id: string | null; account_name: string | null; account_type: string | null;
-      entity_id: string | null; category_id: string | null; category_slug: string | null;
-      classification_method: string | null; ai_confidence: string | null; ai_notes: string | null;
-      human_notes: string | null; is_transfer: boolean; is_reimbursable: boolean;
-      status: string; waiting_for: string | null; supplement_json: unknown;
-    }>>`
-      SELECT
-        r.id, to_char(r.date, 'YYYY-MM-DD') AS date, r.amount::text AS amount, r.description, r.merchant,
-        r.account_id, a.name AS account_name, a.type AS account_type,
-        r.entity_id, r.category_id, c.slug AS category_slug,
-        r.classification_method, r.ai_confidence::text AS ai_confidence, r.ai_notes,
-        r.human_notes, r.is_transfer, r.is_reimbursable,
-        r.status, r.waiting_for, r.supplement_json
-      FROM raw_transactions r
-      LEFT JOIN gather_accounts a ON a.id = r.account_id
-      LEFT JOIN categories c ON c.id = r.category_id
-      WHERE ${where}
-      ORDER BY ${sql.unsafe(`r.${sortBy} ${sortDir}, r.id ${sortDir}`)}
-      LIMIT ${limit} OFFSET ${offset}
-    `;
+      const rows = await sql<Array<{
+        id: string; date: string; amount: string; description: string; merchant: string | null;
+        account_id: string | null; account_name: string | null; account_type: string | null;
+        entity_id: string | null; category_id: string | null; category_slug: string | null;
+        classification_method: string | null; ai_confidence: string | null; ai_notes: string | null;
+        human_notes: string | null; is_transfer: boolean; is_reimbursable: boolean;
+        status: string; waiting_for: string | null; supplement_json: unknown;
+      }>>`
+        SELECT
+          r.id, to_char(r.date, 'YYYY-MM-DD') AS date, r.amount::text AS amount, r.description, r.merchant,
+          r.account_id, a.name AS account_name, a.type AS account_type,
+          r.entity_id, r.category_id, c.slug AS category_slug,
+          r.classification_method, r.ai_confidence::text AS ai_confidence, r.ai_notes,
+          r.human_notes, r.is_transfer, r.is_reimbursable,
+          r.status, r.waiting_for, r.supplement_json
+        FROM raw_transactions r
+        LEFT JOIN gather_accounts a ON a.id = r.account_id
+        LEFT JOIN categories c ON c.id = r.category_id
+        WHERE ${where}
+        ORDER BY ${sql.unsafe(`r.${sortBy} ${sortDir}, r.id ${sortDir}`)}
+        LIMIT ${limit} OFFSET ${offset}
+      `;
 
-    return jsonOk({
-      rows: rows.map(r => ({
-        ...r,
-        amount: Number(r.amount),
-        ai_confidence: r.ai_confidence === null ? null : Number(r.ai_confidence),
-      })),
-      total,
-      offset,
-      limit,
+      return jsonOk({
+        rows: rows.map(r => ({
+          ...r,
+          amount: Number(r.amount),
+          ai_confidence: r.ai_confidence === null ? null : Number(r.ai_confidence),
+        })),
+        total,
+        offset,
+        limit,
+      });
     });
   } catch (err) {
     return jsonError(`list review failed: ${err instanceof Error ? err.stack : JSON.stringify(err)}`, 500);
-  } finally {
-    await sql.end({ timeout: 5 }).catch(() => {});
   }
 }
 
