@@ -93,7 +93,7 @@ export async function buildSpendingReport(sql: Sql, params: BuildParams): Promis
         SELECT g.id, g.name, m.category_id AS member_id
         FROM category_groups g
         LEFT JOIN category_group_members m ON m.group_id = g.id
-        WHERE g.id = ANY(${params.groupIds})
+        WHERE g.id = ANY(${params.groupIds}::text[])
         ORDER BY g.name, m.category_id
       `;
   const groupNameById = new Map<string, string>();
@@ -107,7 +107,7 @@ export async function buildSpendingReport(sql: Sql, params: BuildParams): Promis
   const catRows = params.categoryIds.length === 0
     ? []
     : await sql<Array<{ id: string; name: string }>>`
-        SELECT id, name FROM categories WHERE id = ANY(${params.categoryIds}) ORDER BY name
+        SELECT id, name FROM categories WHERE id = ANY(${params.categoryIds}::text[]) ORDER BY name
       `;
 
   // Track every category id referenced (for filtering transaction queries).
@@ -119,7 +119,7 @@ export async function buildSpendingReport(sql: Sql, params: BuildParams): Promis
   const plans = params.planIds.length === 0
     ? []
     : await sql<Array<{ id: string; name: string; status: string; is_active: boolean }>>`
-        SELECT id, name, status, is_active FROM plans WHERE id = ANY(${params.planIds})
+        SELECT id, name, status, is_active FROM plans WHERE id = ANY(${params.planIds}::text[])
       `;
   const planMeta: PlanMeta[] = params.planIds.map(id => {
     const found = plans.find(p => p.id === id);
@@ -160,8 +160,8 @@ export async function buildSpendingReport(sql: Sql, params: BuildParams): Promis
         FROM transactions t
         WHERE t.status = 'approved'
           AND t.date BETWEEN ${iso(params.dateFrom)} AND ${iso(params.dateTo)}
-          AND t.category_id = ANY(${[...allCategoryIds]})
-          ${params.entityIds.length > 0 ? sql`AND t.entity_id = ANY(${params.entityIds})` : sql``}
+          AND t.category_id = ANY(${[...allCategoryIds]}::text[])
+          ${params.entityIds.length > 0 ? sql`AND t.entity_id = ANY(${params.entityIds}::text[])` : sql``}
         GROUP BY t.category_id, period_start
       `;
   // actualByCatBucket[categoryId][bucketStartISO] = number

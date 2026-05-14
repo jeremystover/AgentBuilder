@@ -114,7 +114,7 @@ async function fetchEntityNames(sql: Sql, entityIds: string[]): Promise<string[]
     const rows = await sql<Array<{ name: string }>>`SELECT name FROM entities WHERE is_active = true ORDER BY name`;
     return rows.map(r => r.name);
   }
-  const rows = await sql<Array<{ name: string }>>`SELECT name FROM entities WHERE id = ANY(${entityIds}) ORDER BY name`;
+  const rows = await sql<Array<{ name: string }>>`SELECT name FROM entities WHERE id = ANY(${entityIds}::text[]) ORDER BY name`;
   return rows.map(r => r.name);
 }
 
@@ -125,7 +125,7 @@ async function countUnreviewed(sql: Sql, config: ReportConfig, from: string, to:
         LEFT JOIN gather_accounts a ON a.id = r.account_id
         WHERE r.status IN ('staged', 'waiting')
           AND r.date BETWEEN ${from} AND ${to}
-          AND (r.entity_id = ANY(${config.entity_ids}) OR a.entity_id = ANY(${config.entity_ids}))
+          AND (r.entity_id = ANY(${config.entity_ids}::text[]) OR a.entity_id = ANY(${config.entity_ids}::text[]))
       `
     : await sql<Array<{ n: string }>>`
         SELECT COUNT(*)::text AS n FROM raw_transactions
@@ -153,10 +153,10 @@ async function fetchTransactions(sql: Sql, config: ReportConfig, from: string, t
     LEFT JOIN categories c ON c.id = t.category_id
     WHERE t.status = 'approved'
       AND t.date BETWEEN ${from} AND ${to}
-      ${config.entity_ids.length > 0 ? sql`AND t.entity_id = ANY(${config.entity_ids})` : sql``}
+      ${config.entity_ids.length > 0 ? sql`AND t.entity_id = ANY(${config.entity_ids}::text[])` : sql``}
       ${config.category_mode === 'tax'    ? sql`AND c.category_set IN ('schedule_c', 'schedule_e')` : sql``}
       ${config.category_mode === 'budget' ? sql`AND c.category_set = 'budget'`                       : sql``}
-      ${config.category_ids.length > 0    ? sql`AND t.category_id = ANY(${config.category_ids})`     : sql``}
+      ${config.category_ids.length > 0    ? sql`AND t.category_id = ANY(${config.category_ids}::text[])`     : sql``}
     ORDER BY c.form_line NULLS LAST, c.name, t.date
   `;
   return rows.map(r => ({

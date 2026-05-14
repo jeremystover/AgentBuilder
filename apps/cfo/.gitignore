@@ -3,3 +3,8 @@
 scripts/teller-enrollments-export.json
 scripts/teller-accounts-export.json
 scripts/teller-migration.sql
+
+# Data migration artifacts (transactions, classifications, rules,
+# review_queue, splits, old categories) — see docs/migrate-data-from-d1.md.
+scripts/d1-*.json
+scripts/d1-migration.sql

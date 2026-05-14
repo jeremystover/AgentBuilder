@@ -126,7 +126,7 @@ async function fetchUnclassified(sql: Sql, opts: { ids?: string[]; limit?: numbe
     LEFT JOIN gather_accounts a ON a.id = r.account_id
     WHERE r.status = 'staged'
       AND r.category_id IS NULL
-      ${opts.ids && opts.ids.length > 0 ? sql`AND r.id = ANY(${opts.ids})` : sql``}
+      ${opts.ids && opts.ids.length > 0 ? sql`AND r.id = ANY(${opts.ids}::text[])` : sql``}
     ORDER BY r.ingest_at DESC
     LIMIT ${limit}
   `;

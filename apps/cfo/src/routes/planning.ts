@@ -298,7 +298,7 @@ export async function handleListPlanCategories(_req: Request, env: Env, planId: 
              delta_amount::text AS delta_amount,
              notes
       FROM plan_category_changes
-      WHERE plan_category_amount_id = ANY(${ids})
+      WHERE plan_category_amount_id = ANY(${ids}::text[])
       ORDER BY effective_date
     `;
     const changesById = new Map<string, unknown[]>();
