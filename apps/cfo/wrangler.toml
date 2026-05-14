@@ -22,6 +22,14 @@ bucket_name = "cfo-storage"
 binding = "SCENARIO_QUEUE"
 queue = "cfo-scenarios"
 
+# Consumes the same queue — the Worker's queue() handler runs the
+# projection engine asynchronously, off the request path.
+[[queues.consumers]]
+queue = "cfo-scenarios"
+max_batch_size = 1
+max_batch_timeout = 5
+max_retries = 1
+
 # Shared fleet-wide D1 — observability tables (cron_runs, cron_errors).
 # Read by the AgentBuilder dashboard.
 [[d1_databases]]

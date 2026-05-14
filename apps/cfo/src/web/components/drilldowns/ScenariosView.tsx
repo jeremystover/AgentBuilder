@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
-  ResponsiveContainer,
+  ResponsiveContainer, ReferenceLine,
 } from "recharts";
 import {
   Plus, RefreshCw, Trash2, Save, Edit2, Archive, Star,
@@ -12,7 +12,7 @@ import {
 } from "../ui";
 import { api, type Entity } from "../../api";
 
-type Tab = "accounts" | "networth" | "scenarios";
+type Tab = "accounts" | "networth" | "scenarios" | "tax";
 
 const ACCOUNT_TYPES = [
   { value: "checking",               label: "Checking / Savings",  group: "asset" },
@@ -89,6 +89,7 @@ export function ScenariosView() {
         <TabButton active={tab === "accounts"}  onClick={() => setTab("accounts")}>Accounts</TabButton>
         <TabButton active={tab === "networth"}  onClick={() => setTab("networth")}>Net Worth</TabButton>
         <TabButton active={tab === "scenarios"} onClick={() => setTab("scenarios")}>Scenarios</TabButton>
+        <TabButton active={tab === "tax"}       onClick={() => setTab("tax")}>Tax &amp; Profile</TabButton>
       </div>
 
       {tab === "accounts" && (
@@ -100,8 +101,9 @@ export function ScenariosView() {
         />
       )}
       {tab === "networth" && <NetWorthTab accounts={accounts} />}
+      {tab === "tax" && <TaxProfileTab />}
       {tab === "scenarios" && (
-        <Card className="p-6"><EmptyState>Projection engine arrives in Phase 6.</EmptyState></Card>
+        <ScenariosTab accounts={accounts} />
       )}
 
       <AccountEditor
@@ -995,5 +997,728 @@ function AccountDetail({
         </Section>
       </div>
     </Drawer>
+  );
+}
+
+// ── Scenarios tab — list + editor + results ─────────────────────────────────
+
+interface ScenarioListItem {
+  id: string;
+  name: string;
+  status: 'draft' | 'running' | 'complete' | 'failed' | 'stale';
+  plan_id: string | null;
+  plan_name: string | null;
+  start_date: string;
+  end_date: string;
+  end_state_net_worth: number | null;
+  last_run_at: string | null;
+  latest_snapshot_id: string | null;
+  account_ids_json: string[] | null;
+  allocation_rules_json: unknown | null;
+}
+
+interface PlanRow { id: string; name: string }
+
+function ScenariosTab({ accounts }: { accounts: ScenarioAccount[] }) {
+  const [scenarios, setScenarios] = useState<ScenarioListItem[]>([]);
+  const [plans, setPlans] = useState<PlanRow[]>([]);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [viewingId, setViewingId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [s, p] = await Promise.all([
+        api.get<{ scenarios: ScenarioListItem[] }>("/api/web/scenarios").then(r => r.scenarios),
+        api.get<{ plans: PlanRow[] }>("/api/web/plans").then(r => r.plans),
+      ]);
+      setScenarios(s);
+      setPlans(p);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  // Poll while any scenario is queued/running.
+  useEffect(() => {
+    const running = scenarios.some(s => s.status === "running");
+    if (!running) return;
+    const t = setInterval(() => { void refresh(); }, 5000);
+    return () => clearInterval(t);
+  }, [scenarios, refresh]);
+
+  const run = async (id: string) => {
+    try {
+      await api.post(`/api/web/scenarios/${id}/run`);
+      toast.success("Run queued");
+      await refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const remove = async (id: string) => {
+    if (!confirm("Delete this scenario?")) return;
+    try {
+      await api.del(`/api/web/scenarios/${id}`);
+      await refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  return (
+    <div>
+      <div className="flex justify-between items-center mb-3">
+        <div className="text-xs text-text-muted">{scenarios.length} scenarios</div>
+        <Button variant="primary" onClick={() => setCreating(true)}>
+          <Plus className="w-4 h-4" /> New scenario
+        </Button>
+      </div>
+
+      <Card>
+        {scenarios.length === 0
+          ? <EmptyState>{loading ? "Loading…" : "No scenarios yet."}</EmptyState>
+          : (
+            <table className="w-full text-sm">
+              <thead className="text-xs text-text-muted uppercase tracking-wide bg-bg-elevated">
+                <tr>
+                  <th className="text-left px-3 py-2">Name</th>
+                  <th className="text-left px-3 py-2">Range</th>
+                  <th className="text-left px-3 py-2">Plan</th>
+                  <th className="text-left px-3 py-2">Status</th>
+                  <th className="text-right px-3 py-2">End-state NW</th>
+                  <th className="text-right px-3 py-2">Last run</th>
+                  <th className="text-right px-3 py-2"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {scenarios.map(s => (
+                  <tr key={s.id} className="border-t border-border">
+                    <td className="px-3 py-2 font-medium">{s.name}</td>
+                    <td className="px-3 py-2 text-xs">{s.start_date} → {s.end_date}</td>
+                    <td className="px-3 py-2 text-text-muted">{s.plan_name ?? "—"}</td>
+                    <td className="px-3 py-2"><StatusBadge status={s.status} /></td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {s.end_state_net_worth != null ? fmtUsd(s.end_state_net_worth, { sign: true }) : "—"}
+                    </td>
+                    <td className="px-3 py-2 text-right text-xs text-text-muted">
+                      {s.last_run_at ? s.last_run_at.slice(0, 16).replace("T", " ") : "—"}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <div className="flex gap-1 justify-end">
+                        <Button size="sm" variant="ghost" onClick={() => setViewingId(s.id)} disabled={!s.latest_snapshot_id}>Results</Button>
+                        <Button size="sm" variant="ghost" onClick={() => setEditingId(s.id)}><Edit2 className="w-3.5 h-3.5" /></Button>
+                        <Button size="sm" variant="primary" onClick={() => void run(s.id)} disabled={s.status === "running"}>
+                          Run
+                        </Button>
+                        <Button size="sm" variant="danger" onClick={() => void remove(s.id)}><Trash2 className="w-3.5 h-3.5" /></Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+      </Card>
+
+      <ScenarioEditor
+        scenarioId={editingId}
+        accounts={accounts}
+        plans={plans}
+        open={editingId !== null || creating}
+        creating={creating}
+        onClose={() => { setEditingId(null); setCreating(false); }}
+        onSaved={async (id) => { await refresh(); setEditingId(id); setCreating(false); }}
+      />
+
+      {viewingId && (
+        <ScenarioResultsDrawer
+          scenario={scenarios.find(s => s.id === viewingId)!}
+          onClose={() => setViewingId(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function StatusBadge({ status }: { status: ScenarioListItem["status"] }) {
+  const tone = status === "complete" ? "ok"
+             : status === "failed"   ? "danger"
+             : status === "running"  ? "warn"
+             : status === "stale"    ? "warn"
+             : "neutral";
+  return <Badge tone={tone}>{status}</Badge>;
+}
+
+// ── Scenario editor ─────────────────────────────────────────────────────────
+
+interface AllocRulesShape {
+  surplus: Array<{ kind: string; max_per_year?: number; rate_threshold?: number }>;
+  deficit: Array<{ kind: string }>;
+}
+
+const DEFAULT_ALLOC: AllocRulesShape = {
+  surplus: [
+    { kind: "emergency_reserve" },
+    { kind: "retirement", max_per_year: 23000 },
+    { kind: "high_interest_paydown", rate_threshold: 0.06 },
+    { kind: "taxable_brokerage" },
+  ],
+  deficit: [
+    { kind: "checking" },
+    { kind: "taxable_brokerage" },
+    { kind: "roth_contributions" },
+    { kind: "traditional_retirement" },
+  ],
+};
+
+interface ScenarioEditBody {
+  name: string;
+  start_date: string;
+  end_date: string;
+  plan_id: string | null;
+  account_ids: string[];
+  allocation_rules: AllocRulesShape;
+}
+
+function ScenarioEditor({
+  scenarioId, accounts, plans, open, creating, onClose, onSaved,
+}: {
+  scenarioId: string | null;
+  accounts: ScenarioAccount[];
+  plans: PlanRow[];
+  open: boolean;
+  creating: boolean;
+  onClose: () => void;
+  onSaved: (id: string) => Promise<void>;
+}) {
+  const today = new Date();
+  const inTenYears = new Date(today); inTenYears.setUTCFullYear(today.getUTCFullYear() + 10);
+  const defaultStart = today.toISOString().slice(0, 10);
+  const defaultEnd = inTenYears.toISOString().slice(0, 10);
+
+  const [body, setBody] = useState<ScenarioEditBody>({
+    name: "", start_date: defaultStart, end_date: defaultEnd,
+    plan_id: null, account_ids: accounts.map(a => a.id), allocation_rules: DEFAULT_ALLOC,
+  });
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    if (creating) {
+      setBody({
+        name: "", start_date: defaultStart, end_date: defaultEnd,
+        plan_id: plans[0]?.id ?? null,
+        account_ids: accounts.map(a => a.id),
+        allocation_rules: DEFAULT_ALLOC,
+      });
+      return;
+    }
+    if (!scenarioId) return;
+    try {
+      const s = await api.get<{
+        name: string; start_date: string; end_date: string;
+        plan_id: string | null; account_ids_json: string[] | null;
+        allocation_rules_json: AllocRulesShape | null;
+      }>(`/api/web/scenarios/${scenarioId}`);
+      setBody({
+        name: s.name,
+        start_date: s.start_date, end_date: s.end_date,
+        plan_id: s.plan_id,
+        account_ids: s.account_ids_json ?? [],
+        allocation_rules: s.allocation_rules_json ?? DEFAULT_ALLOC,
+      });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scenarioId, creating]);
+
+  useEffect(() => { if (open) void load(); }, [open, load]);
+
+  const save = async () => {
+    if (!body.name.trim()) return;
+    setBusy(true);
+    try {
+      if (creating) {
+        const res = await api.post<{ id: string }>("/api/web/scenarios", body);
+        toast.success("Scenario created");
+        await onSaved(res.id);
+      } else if (scenarioId) {
+        await api.put(`/api/web/scenarios/${scenarioId}`, body);
+        toast.success("Saved");
+        await onSaved(scenarioId);
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally { setBusy(false); }
+  };
+
+  const toggleAccount = (id: string) => {
+    setBody(b => ({
+      ...b,
+      account_ids: b.account_ids.includes(id) ? b.account_ids.filter(x => x !== id) : [...b.account_ids, id],
+    }));
+  };
+
+  return (
+    <Drawer
+      open={open}
+      onClose={onClose}
+      title={creating ? "New scenario" : "Edit scenario"}
+      footer={
+        <div className="flex gap-2 w-full justify-end">
+          <Button onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button variant="primary" onClick={() => void save()} disabled={busy || !body.name.trim()}>
+            <Save className="w-4 h-4" /> Save
+          </Button>
+        </div>
+      }
+    >
+      <div className="space-y-5">
+        <Section title="Basics">
+          <Field label="Name">
+            <Input className="w-full" value={body.name} onChange={e => setBody(b => ({ ...b, name: e.target.value }))} />
+          </Field>
+          <div className="flex gap-2">
+            <Field label="Start">
+              <Input type="date" value={body.start_date} onChange={e => setBody(b => ({ ...b, start_date: e.target.value }))} />
+            </Field>
+            <Field label="End">
+              <Input type="date" value={body.end_date} onChange={e => setBody(b => ({ ...b, end_date: e.target.value }))} />
+            </Field>
+          </div>
+          <Field label="Plan">
+            <Select value={body.plan_id ?? ""} onChange={e => setBody(b => ({ ...b, plan_id: e.target.value || null }))}>
+              <option value="">— Select plan —</option>
+              {plans.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </Select>
+          </Field>
+        </Section>
+
+        <Section title="Accounts included">
+          <div className="grid grid-cols-2 gap-1 text-sm">
+            {accounts.map(a => (
+              <label key={a.id} className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={body.account_ids.includes(a.id)}
+                  onChange={() => toggleAccount(a.id)}
+                />
+                <span className="truncate">{a.name}</span>
+              </label>
+            ))}
+          </div>
+        </Section>
+
+        <Section title="Surplus waterfall (top priority first)">
+          <WaterfallList
+            items={body.allocation_rules.surplus.map(s => s.kind)}
+            options={["emergency_reserve", "retirement", "high_interest_paydown", "taxable_brokerage"]}
+            onChange={kinds => setBody(b => ({
+              ...b,
+              allocation_rules: {
+                ...b.allocation_rules,
+                surplus: kinds.map(k => {
+                  const existing = b.allocation_rules.surplus.find(s => s.kind === k);
+                  return existing ?? { kind: k };
+                }),
+              },
+            }))}
+          />
+        </Section>
+        <Section title="Deficit waterfall (top priority first)">
+          <WaterfallList
+            items={body.allocation_rules.deficit.map(d => d.kind)}
+            options={["checking", "taxable_brokerage", "roth_contributions", "traditional_retirement"]}
+            onChange={kinds => setBody(b => ({
+              ...b,
+              allocation_rules: { ...b.allocation_rules, deficit: kinds.map(k => ({ kind: k })) },
+            }))}
+          />
+        </Section>
+      </div>
+    </Drawer>
+  );
+}
+
+function WaterfallList({
+  items, options, onChange,
+}: { items: string[]; options: string[]; onChange: (next: string[]) => void }) {
+  const moveUp   = (i: number) => i > 0 && onChange([...items.slice(0, i - 1), items[i]!, items[i - 1]!, ...items.slice(i + 1)]);
+  const moveDown = (i: number) => i < items.length - 1 && onChange([...items.slice(0, i), items[i + 1]!, items[i]!, ...items.slice(i + 2)]);
+  const remove   = (i: number) => onChange(items.filter((_, j) => j !== i));
+  const add      = (kind: string) => !items.includes(kind) && onChange([...items, kind]);
+  const remaining = options.filter(o => !items.includes(o));
+  return (
+    <div className="space-y-1">
+      {items.map((k, i) => (
+        <div key={k} className="flex items-center gap-2 bg-bg-elevated/40 rounded px-2 py-1">
+          <span className="flex-1 text-sm font-mono">{i + 1}. {k}</span>
+          <Button size="sm" variant="ghost" onClick={() => moveUp(i)} disabled={i === 0}>↑</Button>
+          <Button size="sm" variant="ghost" onClick={() => moveDown(i)} disabled={i === items.length - 1}>↓</Button>
+          <Button size="sm" variant="danger" onClick={() => remove(i)}><Trash2 className="w-3.5 h-3.5" /></Button>
+        </div>
+      ))}
+      {remaining.length > 0 && (
+        <Select value="" onChange={e => { if (e.target.value) add(e.target.value); }}>
+          <option value="">+ Add step</option>
+          {remaining.map(o => <option key={o} value={o}>{o}</option>)}
+        </Select>
+      )}
+    </div>
+  );
+}
+
+// ── Results drawer ──────────────────────────────────────────────────────────
+
+interface SnapshotPeriodRow {
+  period_date: string;
+  period_type: "month" | "year";
+  gross_income: number; total_expenses: number;
+  net_cash_pretax: number; estimated_tax: number; net_cash_aftertax: number;
+  total_asset_value: number; total_liability_value: number; net_worth: number;
+  account_balances_json: Record<string, number>;
+}
+
+interface SnapshotFlagRow {
+  period_date: string; flag_type: string; description: string;
+  severity: "info" | "warning" | "critical";
+}
+
+function ScenarioResultsDrawer({
+  scenario, onClose,
+}: {
+  scenario: ScenarioListItem;
+  onClose: () => void;
+}) {
+  const [periods, setPeriods] = useState<SnapshotPeriodRow[]>([]);
+  const [flags, setFlags] = useState<SnapshotFlagRow[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    if (!scenario.latest_snapshot_id) return;
+    setLoading(true);
+    try {
+      const res = await api.get<{
+        periods: SnapshotPeriodRow[]; flags: SnapshotFlagRow[];
+      }>(`/api/web/scenarios/${scenario.id}/snapshots/${scenario.latest_snapshot_id}`);
+      setPeriods(res.periods);
+      setFlags(res.flags);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally { setLoading(false); }
+  }, [scenario]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  return (
+    <Drawer open onClose={onClose} title={`Results: ${scenario.name}`}>
+      <div className="space-y-4">
+        <div className="text-xs text-text-muted">
+          {scenario.start_date} → {scenario.end_date} • {periods.length} periods • {flags.length} flags
+        </div>
+
+        {loading
+          ? <EmptyState>Loading…</EmptyState>
+          : periods.length === 0
+            ? <EmptyState>No results yet — run the scenario.</EmptyState>
+            : (
+              <>
+                <Card className="p-3">
+                  <div className="h-64">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={periods}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+                        <XAxis dataKey="period_date" tick={{ fontSize: 10 }} stroke="#64748B" />
+                        <YAxis tickFormatter={v => fmtUsd(v as number)} tick={{ fontSize: 10 }} stroke="#64748B" width={80} />
+                        <Tooltip formatter={(v: number) => fmtUsd(v)} contentStyle={{ fontSize: 12 }} />
+                        <Legend wrapperStyle={{ fontSize: 11 }} />
+                        <Line type="monotone" dataKey="net_worth" name="Net worth" stroke="#0F172A" strokeWidth={3} dot={false} isAnimationActive={false} />
+                        <Line type="monotone" dataKey="total_asset_value" name="Assets" stroke="#059669" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                        <Line type="monotone" dataKey="total_liability_value" name="Liabilities" stroke="#DC2626" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                        {periods.find(p => p.period_date >= today) && (
+                          <ReferenceLine x={today} stroke="#94A3B8" strokeDasharray="3 3" label={{ value: "Today", fontSize: 10 }} />
+                        )}
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </Card>
+
+                <Section title="Annual summary">
+                  <div className="max-h-72 overflow-y-auto">
+                    <table className="w-full text-xs">
+                      <thead className="text-text-muted uppercase tracking-wide bg-bg-elevated sticky top-0">
+                        <tr>
+                          <th className="text-left px-2 py-1">Period</th>
+                          <th className="text-right px-2 py-1">Income</th>
+                          <th className="text-right px-2 py-1">Expenses</th>
+                          <th className="text-right px-2 py-1">Tax</th>
+                          <th className="text-right px-2 py-1">Net</th>
+                          <th className="text-right px-2 py-1">Net worth</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {periods.map(p => (
+                          <tr key={p.period_date} className="border-t border-border">
+                            <td className="px-2 py-1">{p.period_date}</td>
+                            <td className="px-2 py-1 text-right tabular-nums">{fmtUsd(p.gross_income)}</td>
+                            <td className="px-2 py-1 text-right tabular-nums">{fmtUsd(p.total_expenses)}</td>
+                            <td className="px-2 py-1 text-right tabular-nums">{fmtUsd(p.estimated_tax)}</td>
+                            <td className={"px-2 py-1 text-right tabular-nums " + (p.net_cash_aftertax >= 0 ? "text-accent-success" : "text-accent-danger")}>
+                              {fmtUsd(p.net_cash_aftertax, { sign: true })}
+                            </td>
+                            <td className="px-2 py-1 text-right tabular-nums font-medium">{fmtUsd(p.net_worth)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </Section>
+
+                <Section title={`Flags (${flags.length})`}>
+                  {flags.length === 0
+                    ? <div className="text-xs text-text-muted">No flags.</div>
+                    : (
+                      <div className="space-y-1">
+                        {flags.map((f, i) => (
+                          <div key={i} className="flex items-center gap-2 text-sm">
+                            <Badge tone={f.severity === "critical" ? "danger" : f.severity === "warning" ? "warn" : "neutral"}>
+                              {f.flag_type}
+                            </Badge>
+                            <span className="text-xs text-text-muted">{f.period_date}</span>
+                            <span className="text-xs">{f.description}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                </Section>
+              </>
+            )}
+      </div>
+    </Drawer>
+  );
+}
+
+// ── Tax & Profile tab ───────────────────────────────────────────────────────
+
+interface ProfileRow {
+  id: string;
+  name: string;
+  role: string;
+  date_of_birth: string;
+  expected_retirement_date: string | null;
+}
+
+interface StateTimelineEntry { id?: string; state: string; effective_date: string }
+
+interface TaxBracketRow {
+  id: string;
+  year: number;
+  filing_status: string;
+  jurisdiction: string;
+  brackets_json: Array<{ floor: number; ceiling: number | null; rate: number }>;
+  standard_deduction: number | null;
+}
+
+interface DeductionRow {
+  id: string;
+  type: "salt" | "charitable" | "mortgage_interest" | "other";
+  label: string | null;
+  annual_amount: number;
+  effective_date: string;
+  source: string;
+}
+
+function TaxProfileTab() {
+  const [profiles, setProfiles] = useState<ProfileRow[]>([]);
+  const [timeline, setTimeline] = useState<StateTimelineEntry[]>([]);
+  const [brackets, setBrackets] = useState<TaxBracketRow[]>([]);
+  const [deductions, setDeductions] = useState<DeductionRow[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [pr, tl, br, dd] = await Promise.all([
+        api.get<{ profiles: ProfileRow[] }>("/api/web/profiles").then(r => r.profiles),
+        api.get<{ entries: StateTimelineEntry[] }>("/api/web/state-timeline").then(r => r.entries),
+        api.get<{ brackets: TaxBracketRow[] }>("/api/web/tax-brackets").then(r => r.brackets),
+        api.get<{ deductions: DeductionRow[] }>("/api/web/deductions").then(r => r.deductions),
+      ]);
+      setProfiles(pr);
+      setTimeline(tl);
+      setBrackets(br);
+      setDeductions(dd);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  const updateProfile = async (id: string, patch: Partial<ProfileRow>) => {
+    try {
+      await api.put(`/api/web/profiles/${id}`, patch);
+      setProfiles(p => p.map(x => x.id === id ? { ...x, ...patch } : x));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const saveTimeline = async () => {
+    try {
+      await api.put("/api/web/state-timeline", { entries: timeline });
+      toast.success("State timeline saved");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const saveDeductions = async () => {
+    try {
+      await api.put("/api/web/deductions", { entries: deductions });
+      toast.success("Deductions saved");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <Card className="p-4">
+        <div className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-3">User profiles</div>
+        {profiles.length === 0
+          ? <EmptyState>{loading ? "Loading…" : "No profiles"}</EmptyState>
+          : (
+            <div className="space-y-3">
+              {profiles.map(p => (
+                <div key={p.id} className="flex items-center gap-3 text-sm">
+                  <div className="font-medium w-20">{p.name}</div>
+                  <div className="text-xs text-text-muted w-14">{p.role}</div>
+                  <label className="text-xs text-text-muted">DOB</label>
+                  <Input type="date" value={p.date_of_birth} onChange={e => void updateProfile(p.id, { date_of_birth: e.target.value })} />
+                  <label className="text-xs text-text-muted">Retire</label>
+                  <Input type="date" value={p.expected_retirement_date ?? ""}
+                    onChange={e => void updateProfile(p.id, { expected_retirement_date: e.target.value || null })} />
+                </div>
+              ))}
+            </div>
+          )}
+      </Card>
+
+      <Card className="p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-xs font-semibold uppercase tracking-wide text-text-muted">State residence timeline</div>
+          <Button size="sm" variant="primary" onClick={() => void saveTimeline()}><Save className="w-3.5 h-3.5" /> Save</Button>
+        </div>
+        <div className="space-y-2">
+          {timeline.map((t, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <Input
+                value={t.state}
+                onChange={e => setTimeline(tl => tl.map((x, j) => j === i ? { ...x, state: e.target.value } : x))}
+                className="w-16"
+              />
+              <Input
+                type="date" value={t.effective_date}
+                onChange={e => setTimeline(tl => tl.map((x, j) => j === i ? { ...x, effective_date: e.target.value } : x))}
+              />
+              <Button size="sm" variant="danger" onClick={() => setTimeline(tl => tl.filter((_, j) => j !== i))}>
+                <Trash2 className="w-3.5 h-3.5" />
+              </Button>
+            </div>
+          ))}
+          <Button size="sm" onClick={() => setTimeline(tl => [...tl, { state: "", effective_date: new Date().toISOString().slice(0, 10) }])}>
+            <Plus className="w-3.5 h-3.5" /> Add entry
+          </Button>
+        </div>
+      </Card>
+
+      <Card className="p-4">
+        <div className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-3">Tax brackets</div>
+        <table className="w-full text-xs">
+          <thead className="text-text-muted uppercase tracking-wide bg-bg-elevated">
+            <tr>
+              <th className="text-left px-2 py-1">Year</th>
+              <th className="text-left px-2 py-1">Filing</th>
+              <th className="text-left px-2 py-1">Jurisdiction</th>
+              <th className="text-right px-2 py-1">Std deduction</th>
+              <th className="text-left px-2 py-1">Bracket count</th>
+              <th className="text-left px-2 py-1">Source</th>
+            </tr>
+          </thead>
+          <tbody>
+            {brackets.map(b => (
+              <tr key={b.id} className="border-t border-border">
+                <td className="px-2 py-1">{b.year}</td>
+                <td className="px-2 py-1">{b.filing_status}</td>
+                <td className="px-2 py-1">{b.jurisdiction}</td>
+                <td className="px-2 py-1 text-right tabular-nums">
+                  {b.standard_deduction != null ? fmtUsd(b.standard_deduction) : "—"}
+                </td>
+                <td className="px-2 py-1">{b.brackets_json?.length ?? 0}</td>
+                <td className="px-2 py-1 text-text-muted">—</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
+
+      <Card className="p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-xs font-semibold uppercase tracking-wide text-text-muted">Deductions</div>
+          <div className="flex gap-2">
+            <Button size="sm" onClick={() => setDeductions(d => [...d, {
+              id: "", type: "charitable", label: "", annual_amount: 0,
+              effective_date: new Date().toISOString().slice(0, 10), source: "manual",
+            }])}><Plus className="w-3.5 h-3.5" /> Add</Button>
+            <Button size="sm" variant="primary" onClick={() => void saveDeductions()}>
+              <Save className="w-3.5 h-3.5" /> Save
+            </Button>
+          </div>
+        </div>
+        {deductions.length === 0
+          ? <div className="text-xs text-text-muted">No deductions configured.</div>
+          : (
+            <div className="space-y-2">
+              {deductions.map((d, i) => (
+                <div key={i} className="flex items-center gap-2 text-sm">
+                  <Select value={d.type} onChange={e => setDeductions(arr => arr.map((x, j) => j === i ? { ...x, type: e.target.value as DeductionRow["type"] } : x))}>
+                    <option value="salt">SALT</option>
+                    <option value="charitable">Charitable</option>
+                    <option value="mortgage_interest">Mortgage interest</option>
+                    <option value="other">Other</option>
+                  </Select>
+                  <Input
+                    placeholder="Label"
+                    value={d.label ?? ""}
+                    onChange={e => setDeductions(arr => arr.map((x, j) => j === i ? { ...x, label: e.target.value } : x))}
+                  />
+                  <Input
+                    type="number" step="100"
+                    value={d.annual_amount}
+                    onChange={e => setDeductions(arr => arr.map((x, j) => j === i ? { ...x, annual_amount: Number(e.target.value) } : x))}
+                    className="w-32 text-right tabular-nums"
+                  />
+                  <Input
+                    type="date" value={d.effective_date}
+                    onChange={e => setDeductions(arr => arr.map((x, j) => j === i ? { ...x, effective_date: e.target.value } : x))}
+                  />
+                  <Button size="sm" variant="danger" onClick={() => setDeductions(arr => arr.filter((_, j) => j !== i))}>
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+      </Card>
+    </div>
   );
 }

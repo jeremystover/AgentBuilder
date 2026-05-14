@@ -99,11 +99,20 @@ import {
   handleListOneTimeItems, handleCreateOneTimeItem, handleUpdateOneTimeItem, handleDeleteOneTimeItem,
 } from './routes/planning';
 import {
+  handleListProfiles, handleUpdateProfile,
+  handleGetStateTimeline, handlePutStateTimeline,
+  handleListTaxBrackets, handleUpsertTaxBracket,
+  handleListDeductions, handlePutDeductions,
+} from './routes/tax-config';
+import {
   handleListScenarioAccounts, handleCreateScenarioAccount, handleGetScenarioAccount,
   handleUpdateScenarioAccount, handleArchiveScenarioAccount,
   handleGetRateSchedule, handleReplaceRateSchedule,
   handleListBalanceHistory, handleCreateBalanceEntry, handleUpdateBalanceEntry, handleDeleteBalanceEntry,
   handleRateComparison,
+  handleListScenarios, handleCreateScenario, handleGetScenario, handleUpdateScenario, handleDeleteScenario,
+  handleRunScenario, handleScenarioStatus, handleGetSnapshot,
+  runAndSaveProjection, type ScenarioJobMessage,
 } from './routes/scenarios';
 import { handleMcp, type JsonRpcMessage } from './mcp-tools';
 import { handleWebChat } from './web-chat';
@@ -205,6 +214,26 @@ const ROUTES: Route[] = [
   { method: 'PUT',    pattern: /^\/api\/web\/scenario-accounts\/([^/]+)\/balance-history\/([^/]+)$/,       auth: 'api', handler: (req, env, id, eid) => handleUpdateBalanceEntry(req, env, id!, eid!) },
   { method: 'DELETE', pattern: /^\/api\/web\/scenario-accounts\/([^/]+)\/balance-history\/([^/]+)$/,       auth: 'api', handler: (req, env, id, eid) => handleDeleteBalanceEntry(req, env, id!, eid!) },
   { method: 'GET',    pattern: /^\/api\/web\/scenario-accounts\/([^/]+)\/rate-comparison$/,                auth: 'api', handler: (req, env, id) => handleRateComparison(req, env, id!) },
+
+  // Scenarios (Module 5) — Phase 6: scenario CRUD + async run + results
+  { method: 'GET',    pattern: /^\/api\/web\/scenarios$/,                                                  auth: 'api', handler: (req, env) => handleListScenarios(req, env) },
+  { method: 'POST',   pattern: /^\/api\/web\/scenarios$/,                                                  auth: 'api', handler: (req, env) => handleCreateScenario(req, env) },
+  { method: 'GET',    pattern: /^\/api\/web\/scenarios\/([^/]+)$/,                                         auth: 'api', handler: (req, env, id) => handleGetScenario(req, env, id!) },
+  { method: 'PUT',    pattern: /^\/api\/web\/scenarios\/([^/]+)$/,                                         auth: 'api', handler: (req, env, id) => handleUpdateScenario(req, env, id!) },
+  { method: 'DELETE', pattern: /^\/api\/web\/scenarios\/([^/]+)$/,                                         auth: 'api', handler: (req, env, id) => handleDeleteScenario(req, env, id!) },
+  { method: 'POST',   pattern: /^\/api\/web\/scenarios\/([^/]+)\/run$/,                                    auth: 'api', handler: (req, env, id) => handleRunScenario(req, env, id!) },
+  { method: 'GET',    pattern: /^\/api\/web\/scenarios\/([^/]+)\/status$/,                                 auth: 'api', handler: (req, env, id) => handleScenarioStatus(req, env, id!) },
+  { method: 'GET',    pattern: /^\/api\/web\/scenarios\/([^/]+)\/snapshots\/([^/]+)$/,                     auth: 'api', handler: (req, env, id, sid) => handleGetSnapshot(req, env, id!, sid!) },
+
+  // Tax & profile configuration
+  { method: 'GET',    pattern: /^\/api\/web\/profiles$/,                                                   auth: 'api', handler: (req, env) => handleListProfiles(req, env) },
+  { method: 'PUT',    pattern: /^\/api\/web\/profiles\/([^/]+)$/,                                          auth: 'api', handler: (req, env, id) => handleUpdateProfile(req, env, id!) },
+  { method: 'GET',    pattern: /^\/api\/web\/state-timeline$/,                                             auth: 'api', handler: (req, env) => handleGetStateTimeline(req, env) },
+  { method: 'PUT',    pattern: /^\/api\/web\/state-timeline$/,                                             auth: 'api', handler: (req, env) => handlePutStateTimeline(req, env) },
+  { method: 'GET',    pattern: /^\/api\/web\/tax-brackets$/,                                               auth: 'api', handler: (req, env) => handleListTaxBrackets(req, env) },
+  { method: 'POST',   pattern: /^\/api\/web\/tax-brackets$/,                                               auth: 'api', handler: (req, env) => handleUpsertTaxBracket(req, env) },
+  { method: 'GET',    pattern: /^\/api\/web\/deductions$/,                                                 auth: 'api', handler: (req, env) => handleListDeductions(req, env) },
+  { method: 'PUT',    pattern: /^\/api\/web\/deductions$/,                                                 auth: 'api', handler: (req, env) => handlePutDeductions(req, env) },
 ];
 
 function requireMcpAuth(request: Request, env: Env): { ok: true } | { ok: false; response: Response } {
@@ -352,4 +381,20 @@ export default {
     }
     console.warn('[scheduled] unknown cron expression', event.cron);
   },
-} satisfies ExportedHandler<Env>;
+
+  // Cloudflare Queue consumer — runs the scenario projection
+  // off the request path. One message per scenario run.
+  async queue(batch: MessageBatch<ScenarioJobMessage>, env: Env): Promise<void> {
+    for (const message of batch.messages) {
+      try {
+        await runAndSaveProjection(env, message.body);
+        message.ack();
+      } catch (err) {
+        console.error('[queue] scenario job failed', err);
+        // ack to prevent infinite retry — `runAndSaveProjection` has
+        // already marked the job + scenario failed in the DB.
+        message.ack();
+      }
+    }
+  },
+} satisfies ExportedHandler<Env, ScenarioJobMessage>;

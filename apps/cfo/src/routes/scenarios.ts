@@ -27,6 +27,7 @@ import {
   type AccountType,
 } from '../lib/account-config-validation';
 import { calculateActualRate, getConfiguredRateAtDate } from '../lib/account-analytics';
+import { runProjection, DEFAULT_RULES, type AllocationRules } from '../lib/projection-engine';
 
 // ── Accounts CRUD ────────────────────────────────────────────────────────────
 
@@ -363,6 +364,359 @@ export async function handleRateComparison(req: Request, env: Env, id: string): 
     });
   } catch (err) {
     return jsonError(`rate comparison failed: ${String(err)}`, 500);
+  } finally {
+    await sql.end({ timeout: 5 }).catch(() => {});
+  }
+}
+
+// ── Scenario CRUD ────────────────────────────────────────────────────────────
+
+interface ScenarioBody {
+  name: string;
+  start_date: string;
+  end_date: string;
+  plan_id?: string | null;
+  account_ids?: string[];
+  allocation_rules?: AllocationRules;
+}
+
+export async function handleListScenarios(_req: Request, env: Env): Promise<Response> {
+  const sql = db(env);
+  try {
+    const rows = await sql<Array<Record<string, unknown>>>`
+      SELECT s.id, s.name, s.status, s.plan_id,
+             to_char(s.start_date, 'YYYY-MM-DD') AS start_date,
+             to_char(s.end_date,   'YYYY-MM-DD') AS end_date,
+             to_char(s.updated_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS updated_at,
+             s.account_ids_json, s.allocation_rules_json,
+             (SELECT to_char(ss.run_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') FROM scenario_snapshots ss
+              WHERE ss.scenario_id = s.id ORDER BY ss.run_at DESC LIMIT 1) AS last_run_at,
+             (SELECT ss.id FROM scenario_snapshots ss
+              WHERE ss.scenario_id = s.id ORDER BY ss.run_at DESC LIMIT 1) AS latest_snapshot_id,
+             p.name AS plan_name,
+             (SELECT (spr.net_worth)::text FROM scenario_snapshots ss
+              JOIN scenario_period_results spr ON spr.snapshot_id = ss.id
+              WHERE ss.scenario_id = s.id
+              ORDER BY ss.run_at DESC, spr.period_date DESC LIMIT 1) AS end_state_net_worth
+      FROM scenarios s
+      LEFT JOIN plans p ON p.id = s.plan_id
+      ORDER BY s.updated_at DESC
+    `;
+    return jsonOk({
+      scenarios: rows.map(r => ({
+        ...r,
+        end_state_net_worth: r.end_state_net_worth == null ? null : Number(r.end_state_net_worth),
+      })),
+    });
+  } catch (err) {
+    return jsonError(`list scenarios failed: ${String(err)}`, 500);
+  } finally {
+    await sql.end({ timeout: 5 }).catch(() => {});
+  }
+}
+
+export async function handleCreateScenario(req: Request, env: Env): Promise<Response> {
+  const body = await req.json().catch(() => null) as ScenarioBody | null;
+  if (!body?.name || !body.start_date || !body.end_date) {
+    return jsonError('name, start_date, end_date required', 400);
+  }
+  const sql = db(env);
+  try {
+    const rows = await sql<Array<{ id: string }>>`
+      INSERT INTO scenarios (name, start_date, end_date, plan_id, account_ids_json, allocation_rules_json, status)
+      VALUES (
+        ${body.name}, ${body.start_date}, ${body.end_date},
+        ${body.plan_id ?? null},
+        ${JSON.stringify(body.account_ids ?? [])}::jsonb,
+        ${JSON.stringify(body.allocation_rules ?? DEFAULT_RULES)}::jsonb,
+        'draft'
+      )
+      RETURNING id
+    `;
+    return jsonOk({ id: rows[0]!.id });
+  } catch (err) {
+    return jsonError(`create scenario failed: ${String(err)}`, 500);
+  } finally {
+    await sql.end({ timeout: 5 }).catch(() => {});
+  }
+}
+
+export async function handleGetScenario(_req: Request, env: Env, id: string): Promise<Response> {
+  const sql = db(env);
+  try {
+    const rows = await sql<Array<Record<string, unknown>>>`
+      SELECT id, name, status, plan_id,
+             to_char(start_date, 'YYYY-MM-DD') AS start_date,
+             to_char(end_date,   'YYYY-MM-DD') AS end_date,
+             account_ids_json, allocation_rules_json
+      FROM scenarios WHERE id = ${id}
+    `;
+    if (rows.length === 0) return jsonError('scenario not found', 404);
+    return jsonOk(rows[0]);
+  } catch (err) {
+    return jsonError(`get scenario failed: ${String(err)}`, 500);
+  } finally {
+    await sql.end({ timeout: 5 }).catch(() => {});
+  }
+}
+
+export async function handleUpdateScenario(req: Request, env: Env, id: string): Promise<Response> {
+  const body = await req.json().catch(() => null) as Partial<ScenarioBody> | null;
+  if (!body) return jsonError('invalid body', 400);
+  const sql = db(env);
+  try {
+    if ('name' in body)             await sql`UPDATE scenarios SET name = ${body.name ?? ''}, updated_at = now() WHERE id = ${id}`;
+    if ('start_date' in body)       await sql`UPDATE scenarios SET start_date = ${body.start_date ?? null}, updated_at = now() WHERE id = ${id}`;
+    if ('end_date' in body)         await sql`UPDATE scenarios SET end_date = ${body.end_date ?? null}, updated_at = now() WHERE id = ${id}`;
+    if ('plan_id' in body)          await sql`UPDATE scenarios SET plan_id = ${body.plan_id ?? null}, updated_at = now() WHERE id = ${id}`;
+    if ('account_ids' in body)      await sql`UPDATE scenarios SET account_ids_json = ${JSON.stringify(body.account_ids ?? [])}::jsonb, updated_at = now() WHERE id = ${id}`;
+    if ('allocation_rules' in body) await sql`UPDATE scenarios SET allocation_rules_json = ${JSON.stringify(body.allocation_rules ?? DEFAULT_RULES)}::jsonb, updated_at = now() WHERE id = ${id}`;
+    // Mark stale: any edit invalidates the prior run.
+    await sql`UPDATE scenarios SET status = 'stale' WHERE id = ${id} AND status = 'complete'`;
+    return jsonOk({ ok: true });
+  } catch (err) {
+    return jsonError(`update scenario failed: ${String(err)}`, 500);
+  } finally {
+    await sql.end({ timeout: 5 }).catch(() => {});
+  }
+}
+
+export async function handleDeleteScenario(_req: Request, env: Env, id: string): Promise<Response> {
+  const sql = db(env);
+  try {
+    await sql`DELETE FROM scenarios WHERE id = ${id}`;
+    return jsonOk({ ok: true });
+  } catch (err) {
+    return jsonError(`delete scenario failed: ${String(err)}`, 500);
+  } finally {
+    await sql.end({ timeout: 5 }).catch(() => {});
+  }
+}
+
+// ── Run + status ─────────────────────────────────────────────────────────────
+
+export async function handleRunScenario(_req: Request, env: Env, id: string): Promise<Response> {
+  const sql = db(env);
+  try {
+    const rows = await sql<Array<{ id: string; status: string }>>`SELECT id, status FROM scenarios WHERE id = ${id}`;
+    if (rows.length === 0) return jsonError('scenario not found', 404);
+
+    const jobRows = await sql<Array<{ id: string }>>`
+      INSERT INTO scenario_jobs (scenario_id, status) VALUES (${id}, 'queued') RETURNING id
+    `;
+    const jobId = jobRows[0]!.id;
+    await sql`UPDATE scenarios SET status = 'running', updated_at = now() WHERE id = ${id}`;
+
+    // Hand off to the queue consumer.
+    await env.SCENARIO_QUEUE.send({ scenario_id: id, job_id: jobId } satisfies ScenarioJobMessage);
+
+    return jsonOk({ job_id: jobId, status: 'queued' });
+  } catch (err) {
+    return jsonError(`run scenario failed: ${String(err)}`, 500);
+  } finally {
+    await sql.end({ timeout: 5 }).catch(() => {});
+  }
+}
+
+export async function handleScenarioStatus(_req: Request, env: Env, id: string): Promise<Response> {
+  const sql = db(env);
+  try {
+    const scenarioRows = await sql<Array<{ status: string }>>`SELECT status FROM scenarios WHERE id = ${id}`;
+    if (scenarioRows.length === 0) return jsonError('scenario not found', 404);
+    const jobRows = await sql<Array<{
+      id: string; status: string; error_message: string | null; progress_note: string | null;
+      completed_at: string | null;
+    }>>`
+      SELECT id, status, error_message, progress_note,
+             to_char(completed_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS completed_at
+      FROM scenario_jobs WHERE scenario_id = ${id}
+      ORDER BY queued_at DESC LIMIT 1
+    `;
+    const snapshotRows = await sql<Array<{ id: string }>>`
+      SELECT id FROM scenario_snapshots WHERE scenario_id = ${id}
+      ORDER BY run_at DESC LIMIT 1
+    `;
+    return jsonOk({
+      scenario_status: scenarioRows[0]!.status,
+      job: jobRows[0] ?? null,
+      latest_snapshot_id: snapshotRows[0]?.id ?? null,
+    });
+  } catch (err) {
+    return jsonError(`status failed: ${String(err)}`, 500);
+  } finally {
+    await sql.end({ timeout: 5 }).catch(() => {});
+  }
+}
+
+export async function handleGetSnapshot(_req: Request, env: Env, scenarioId: string, snapshotId: string): Promise<Response> {
+  const sql = db(env);
+  try {
+    const rows = await sql<Array<Record<string, unknown>>>`
+      SELECT id, scenario_id, pass, status,
+             to_char(run_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS run_at,
+             inputs_json, results_json
+      FROM scenario_snapshots WHERE id = ${snapshotId} AND scenario_id = ${scenarioId}
+    `;
+    if (rows.length === 0) return jsonError('snapshot not found', 404);
+    const periodRows = await sql<Array<Record<string, unknown>>>`
+      SELECT to_char(period_date, 'YYYY-MM-DD') AS period_date, period_type,
+             gross_income::text       AS gross_income,
+             total_expenses::text     AS total_expenses,
+             net_cash_pretax::text    AS net_cash_pretax,
+             estimated_tax::text      AS estimated_tax,
+             net_cash_aftertax::text  AS net_cash_aftertax,
+             total_asset_value::text  AS total_asset_value,
+             total_liability_value::text AS total_liability_value,
+             net_worth::text          AS net_worth,
+             account_balances_json
+      FROM scenario_period_results WHERE snapshot_id = ${snapshotId}
+      ORDER BY period_date
+    `;
+    const flagRows = await sql<Array<Record<string, unknown>>>`
+      SELECT to_char(period_date, 'YYYY-MM-DD') AS period_date, flag_type, description, severity
+      FROM scenario_flags WHERE snapshot_id = ${snapshotId}
+      ORDER BY period_date
+    `;
+    const decisionRows = await sql<Array<Record<string, unknown>>>`
+      SELECT to_char(period_date, 'YYYY-MM-DD') AS period_date, decision_type,
+             pass1_action, pass2_action,
+             net_worth_impact::text AS net_worth_impact,
+             rationale, flagged_for_review
+      FROM allocation_decisions WHERE snapshot_id = ${snapshotId}
+      ORDER BY period_date
+    `;
+    return jsonOk({
+      snapshot: rows[0],
+      periods: periodRows.map(p => ({
+        ...p,
+        gross_income: Number(p.gross_income),
+        total_expenses: Number(p.total_expenses),
+        net_cash_pretax: Number(p.net_cash_pretax),
+        estimated_tax: Number(p.estimated_tax),
+        net_cash_aftertax: Number(p.net_cash_aftertax),
+        total_asset_value: Number(p.total_asset_value),
+        total_liability_value: Number(p.total_liability_value),
+        net_worth: Number(p.net_worth),
+      })),
+      flags: flagRows,
+      decisions: decisionRows.map(d => ({
+        ...d,
+        net_worth_impact: d.net_worth_impact == null ? 0 : Number(d.net_worth_impact),
+      })),
+    });
+  } catch (err) {
+    return jsonError(`get snapshot failed: ${String(err)}`, 500);
+  } finally {
+    await sql.end({ timeout: 5 }).catch(() => {});
+  }
+}
+
+// ── Queue consumer plumbing ──────────────────────────────────────────────────
+
+export interface ScenarioJobMessage { scenario_id: string; job_id: string }
+
+/**
+ * Runs the projection (off the request path) and writes one atomic
+ * snapshot. Called from the Queue consumer handler in src/index.ts.
+ */
+export async function runAndSaveProjection(env: Env, msg: ScenarioJobMessage): Promise<void> {
+  const sql = db(env);
+  try {
+    await sql`UPDATE scenario_jobs SET status = 'running', started_at = now() WHERE id = ${msg.job_id}`;
+
+    const scenarioRows = await sql<Array<{
+      id: string; name: string; plan_id: string | null;
+      start_date: string; end_date: string;
+      account_ids_json: string[] | null; allocation_rules_json: AllocationRules | null;
+    }>>`
+      SELECT id, name, plan_id,
+             to_char(start_date, 'YYYY-MM-DD') AS start_date,
+             to_char(end_date,   'YYYY-MM-DD') AS end_date,
+             account_ids_json, allocation_rules_json
+      FROM scenarios WHERE id = ${msg.scenario_id}
+    `;
+    if (scenarioRows.length === 0) throw new Error(`scenario ${msg.scenario_id} not found`);
+    const scenario = scenarioRows[0]!;
+    if (!scenario.plan_id) throw new Error('scenario has no plan_id');
+
+    const accountIds = scenario.account_ids_json ?? [];
+    const rules = scenario.allocation_rules_json ?? DEFAULT_RULES;
+
+    const projection = await runProjection(sql, {
+      scenarioId:  scenario.id,
+      snapshotId:  '',
+      planId:      scenario.plan_id,
+      accountIds,
+      startDate:   new Date(`${scenario.start_date}T00:00:00Z`),
+      endDate:     new Date(`${scenario.end_date}T00:00:00Z`),
+      allocationRules: rules,
+      filingStatus: 'married_filing_jointly',
+    });
+
+    // Single atomic write: snapshot + all rows.
+    await sql.begin(async tx => {
+      const inputs = {
+        plan_id: scenario.plan_id,
+        account_ids: accountIds,
+        start_date: scenario.start_date,
+        end_date:   scenario.end_date,
+        allocation_rules: rules,
+      };
+      const summary = {
+        period_count: projection.periods.length,
+        flag_count:   projection.flags.length,
+        end_state_net_worth: projection.periods[projection.periods.length - 1]?.net_worth ?? 0,
+      };
+      const snapshotRows = await tx<Array<{ id: string }>>`
+        INSERT INTO scenario_snapshots (scenario_id, inputs_json, results_json, pass, status)
+        VALUES (${msg.scenario_id}, ${JSON.stringify(inputs)}::jsonb, ${JSON.stringify(summary)}::jsonb, 1, 'complete')
+        RETURNING id
+      `;
+      const snapshotId = snapshotRows[0]!.id;
+
+      for (const p of projection.periods) {
+        await tx`
+          INSERT INTO scenario_period_results
+            (snapshot_id, period_date, period_type, gross_income, total_expenses,
+             net_cash_pretax, estimated_tax, net_cash_aftertax,
+             total_asset_value, total_liability_value, net_worth, account_balances_json)
+          VALUES
+            (${snapshotId}, ${p.period_date}, ${p.period_type},
+             ${p.gross_income}, ${p.total_expenses},
+             ${p.net_cash_pretax}, ${p.estimated_tax}, ${p.net_cash_aftertax},
+             ${p.total_asset_value}, ${p.total_liability_value}, ${p.net_worth},
+             ${JSON.stringify(p.account_balances)}::jsonb)
+        `;
+      }
+      for (const f of projection.flags) {
+        await tx`
+          INSERT INTO scenario_flags (snapshot_id, period_date, flag_type, description, severity)
+          VALUES (${snapshotId}, ${f.period_date}, ${f.flag_type}, ${f.description}, ${f.severity})
+        `;
+      }
+      for (const d of projection.decisions) {
+        await tx`
+          INSERT INTO allocation_decisions
+            (snapshot_id, period_date, decision_type, pass1_action, net_worth_impact, rationale, flagged_for_review)
+          VALUES
+            (${snapshotId}, ${d.period_date}, ${d.decision_type}, ${d.pass1_action},
+             ${d.net_worth_impact}, ${d.rationale}, ${d.flagged_for_review})
+        `;
+      }
+      await tx`UPDATE scenarios SET status = 'complete', updated_at = now() WHERE id = ${msg.scenario_id}`;
+      await tx`
+        UPDATE scenario_jobs
+        SET status = 'complete', completed_at = now(), progress_note = ${`Wrote ${projection.periods.length} period results, ${projection.flags.length} flags`}
+        WHERE id = ${msg.job_id}
+      `;
+    });
+  } catch (err) {
+    await sql`
+      UPDATE scenario_jobs SET status = 'failed', completed_at = now(), error_message = ${String(err)}
+      WHERE id = ${msg.job_id}
+    `;
+    await sql`UPDATE scenarios SET status = 'failed', updated_at = now() WHERE id = ${msg.scenario_id}`;
+    throw err;
   } finally {
     await sql.end({ timeout: 5 }).catch(() => {});
   }
