@@ -567,14 +567,14 @@ async function loadAccounts(sql: Sql, ids: string[]): Promise<AccountState[]> {
            atc.config_json
     FROM scenario_accounts sa
     LEFT JOIN account_type_config atc ON atc.account_id = sa.id
-    WHERE sa.id = ANY(${ids})
+    WHERE sa.id = ANY(${ids}::text[])
   `;
   // Look up the rate in effect today per account.
   const rateRows = await sql<Array<{ account_id: string; base_rate: string }>>`
     SELECT DISTINCT ON (account_id)
       account_id, base_rate::text AS base_rate
     FROM account_rate_schedule
-    WHERE effective_date <= CURRENT_DATE AND account_id = ANY(${ids})
+    WHERE effective_date <= CURRENT_DATE AND account_id = ANY(${ids}::text[])
     ORDER BY account_id, effective_date DESC
   `;
   const rateByAccount = new Map(rateRows.map(r => [r.account_id, Number(r.base_rate)]));

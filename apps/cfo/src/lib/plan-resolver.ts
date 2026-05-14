@@ -66,7 +66,7 @@ export async function resolvePlan(
            base_rate_pct::text   AS base_rate_pct,
            to_char(base_rate_start, 'YYYY-MM-DD') AS base_rate_start
     FROM plan_category_amounts
-    WHERE plan_id = ANY(${planIds})
+    WHERE plan_id = ANY(${planIds}::text[])
   `;
   const changeRows = amountRows.length === 0
     ? []
@@ -75,7 +75,7 @@ export async function resolvePlan(
                to_char(effective_date, 'YYYY-MM-DD') AS effective_date,
                delta_amount::text AS delta_amount
         FROM plan_category_changes
-        WHERE plan_category_amount_id = ANY(${amountRows.map(a => a.id)})
+        WHERE plan_category_amount_id = ANY(${amountRows.map(a => a.id)}::text[])
         ORDER BY effective_date
       `;
   const changesByAmount = new Map<string, ChangeRow[]>();
