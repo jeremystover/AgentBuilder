@@ -237,9 +237,32 @@ function fail(msg: string): never { console.error(`error: ${msg}`); process.exit
 
 function loadRows<T>(path: string): T[] {
   const raw = JSON.parse(readFileSync(path, 'utf8'));
+  const errorMessage = extractWranglerError(raw);
+  if (errorMessage) {
+    throw new Error(
+      `Wrangler returned an error response in ${path} instead of rows:\n  ${errorMessage}\n` +
+      `Re-authenticate with 'wrangler login' (or fix the database/table name) and re-export.`,
+    );
+  }
   const rows = findRows<T>(raw);
   if (rows === null) throw new Error(`Unexpected JSON shape in ${path}`);
   return rows;
+}
+
+function extractWranglerError(value: unknown): string | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const obj = value as Record<string, unknown>;
+  if (typeof obj.error === 'string') return obj.error;
+  if (obj.error && typeof obj.error === 'object') {
+    const e = obj.error as Record<string, unknown>;
+    if (typeof e.text === 'string')    return e.text;
+    if (typeof e.message === 'string') return e.message;
+    return JSON.stringify(obj.error);
+  }
+  if (Array.isArray(obj.errors) && obj.errors.length > 0) {
+    return obj.errors.map(e => typeof e === 'string' ? e : JSON.stringify(e)).join('; ');
+  }
+  return null;
 }
 
 function findRows<T>(value: unknown): T[] | null {
