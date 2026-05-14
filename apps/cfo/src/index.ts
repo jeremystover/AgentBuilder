@@ -1,15 +1,33 @@
 /**
- * CFO worker entrypoint (Phase 1a — scaffold).
+ * CFO worker entrypoint.
  *
  * Surfaces:
- *   - GET    /health                     — db + email sync health
- *   - POST   /teller/enroll              — start a Teller enrollment
- *   - GET    /teller/accounts            — list enrolled accounts
- *   - POST   /teller/sync                — sync transactions into raw_transactions
- *   - DELETE /teller/enrollments/:id     — remove an enrollment
- *   - GET    /gmail/status               — per-vendor email sync counts
- *   - POST   /gmail/sync                 — run email enrichment for all vendors
- *   - POST   /gmail/sync/:vendor         — run for one vendor (amazon|venmo|apple|etsy)
+ *   - GET    /health                            db + email sync health
+ *   - GET    /login                             login form
+ *   - POST   /login                             create cookie session
+ *   - GET    /logout                            destroy session, redirect
+ *   - GET    /api/web/snapshot                  dashboard counters
+ *   - GET    /api/web/entities                  entity dropdown
+ *   - GET    /api/web/categories                category dropdown
+ *   - GET    /api/web/accounts                  gather accounts list
+ *   - PUT    /api/web/accounts/:id              update account entity/active
+ *   - GET    /api/web/review                    review queue (filtered/paged)
+ *   - GET    /api/web/review/:id                review row detail
+ *   - PUT    /api/web/review/:id                edit fields on a review row
+ *   - POST   /api/web/review/:id/approve        promote raw → transactions
+ *   - POST   /api/web/review/:id/advance        promote waiting → staged
+ *   - POST   /api/web/review/bulk               bulk action over ids/filter
+ *   - GET    /api/web/transactions              approved transactions
+ *   - PUT    /api/web/transactions/:id          edit / re-open
+ *   - GET    /api/web/rules                     rules list
+ *   - POST   /api/web/rules                     create rule
+ *   - GET    /api/web/gather/status             sync health for Gather page
+ *   - POST   /api/web/gather/sync/:source       manual sync trigger
+ *   - POST   /teller/enroll, GET /teller/accounts, POST /teller/sync,
+ *     DELETE /teller/enrollments/:id            external Teller surface
+ *   - GET    /gmail/status, POST /gmail/sync, POST /gmail/sync/:vendor
+ *                                               external Gmail surface
+ *   - GET   any unmatched (cookie-gated)        SPA shell from ASSETS
  *
  * Scheduled:
  *   - "0 9 * * *"  → nightly Teller sync + email enrichment (~05:00 ET)
@@ -21,36 +39,61 @@ import { jsonError } from './types';
 
 import { handleHealth } from './routes/health';
 import {
-  handleTellerEnroll,
-  handleTellerListAccounts,
-  handleTellerSync,
-  handleTellerDeleteEnrollment,
-  runTellerSync,
+  handleTellerEnroll, handleTellerListAccounts, handleTellerSync,
+  handleTellerDeleteEnrollment, runTellerSync,
 } from './routes/teller';
-import {
-  handleGmailSyncAll,
-  handleGmailSyncVendor,
-  handleGmailStatus,
-} from './routes/gmail';
+import { handleGmailSyncAll, handleGmailSyncVendor, handleGmailStatus } from './routes/gmail';
 import { runEmailSync } from './lib/email-sync';
 
-type Handler = (req: Request, env: Env, ...params: string[]) => Promise<Response>;
+import { handleSnapshot } from './routes/web-snapshot';
+import {
+  handleListEntities, handleListCategories, handleListAccounts, handleUpdateAccount,
+} from './routes/web-lookups';
+import {
+  handleListReview, handleGetReview, handleUpdateReview,
+  handleApproveReview, handleBulkReview, handleAdvanceWaiting,
+} from './routes/web-review';
+import { handleListTransactions, handleUpdateTransaction } from './routes/web-transactions';
+import { handleListRules, handleCreateRule } from './routes/web-rules';
+import { handleGatherStatus, handleGatherSync } from './routes/web-gather';
 
-interface Route {
-  method: string;
-  pattern: RegExp;
-  handler: Handler;
-}
+import {
+  createSession, destroySession, requireWebSession, requireApiAuth,
+  setSessionCookieHeader, clearSessionCookieHeader, verifyPassword, loginHtml,
+} from './lib/sessions';
+
+type Handler = (req: Request, env: Env, ...params: string[]) => Promise<Response>;
+interface Route { method: string; pattern: RegExp; handler: Handler; auth: 'public' | 'cookie' | 'api' }
 
 const ROUTES: Route[] = [
-  { method: 'GET',    pattern: /^\/health$/,                          handler: (req, env) => handleHealth(req, env) },
-  { method: 'POST',   pattern: /^\/teller\/enroll$/,                  handler: (req, env) => handleTellerEnroll(req, env) },
-  { method: 'GET',    pattern: /^\/teller\/accounts$/,                handler: (req, env) => handleTellerListAccounts(req, env) },
-  { method: 'POST',   pattern: /^\/teller\/sync$/,                    handler: (req, env) => handleTellerSync(req, env) },
-  { method: 'DELETE', pattern: /^\/teller\/enrollments\/([^/]+)$/,    handler: (req, env, id) => handleTellerDeleteEnrollment(req, env, id!) },
-  { method: 'GET',    pattern: /^\/gmail\/status$/,                     handler: (req, env) => handleGmailStatus(req, env) },
-  { method: 'POST',   pattern: /^\/gmail\/sync$/,                       handler: (req, env) => handleGmailSyncAll(req, env) },
-  { method: 'POST',   pattern: /^\/gmail\/sync\/([^/]+)$/,              handler: (req, env, vendor) => handleGmailSyncVendor(req, env, vendor!) },
+  // Public ops surfaces (Teller webhook-style + health).
+  { method: 'GET',    pattern: /^\/health$/,                            auth: 'public', handler: (req, env) => handleHealth(req, env) },
+  { method: 'POST',   pattern: /^\/teller\/enroll$/,                    auth: 'public', handler: (req, env) => handleTellerEnroll(req, env) },
+  { method: 'GET',    pattern: /^\/teller\/accounts$/,                  auth: 'public', handler: (req, env) => handleTellerListAccounts(req, env) },
+  { method: 'POST',   pattern: /^\/teller\/sync$/,                      auth: 'public', handler: (req, env) => handleTellerSync(req, env) },
+  { method: 'DELETE', pattern: /^\/teller\/enrollments\/([^/]+)$/,      auth: 'public', handler: (req, env, id) => handleTellerDeleteEnrollment(req, env, id!) },
+  { method: 'GET',    pattern: /^\/gmail\/status$/,                     auth: 'public', handler: (req, env) => handleGmailStatus(req, env) },
+  { method: 'POST',   pattern: /^\/gmail\/sync$/,                       auth: 'public', handler: (req, env) => handleGmailSyncAll(req, env) },
+  { method: 'POST',   pattern: /^\/gmail\/sync\/([^/]+)$/,              auth: 'public', handler: (req, env, vendor) => handleGmailSyncVendor(req, env, vendor!) },
+
+  // SPA-facing API (cookie or bearer)
+  { method: 'GET',    pattern: /^\/api\/web\/snapshot$/,                auth: 'api',    handler: (req, env) => handleSnapshot(req, env) },
+  { method: 'GET',    pattern: /^\/api\/web\/entities$/,                auth: 'api',    handler: (req, env) => handleListEntities(req, env) },
+  { method: 'GET',    pattern: /^\/api\/web\/categories$/,              auth: 'api',    handler: (req, env) => handleListCategories(req, env) },
+  { method: 'GET',    pattern: /^\/api\/web\/accounts$/,                auth: 'api',    handler: (req, env) => handleListAccounts(req, env) },
+  { method: 'PUT',    pattern: /^\/api\/web\/accounts\/([^/]+)$/,       auth: 'api',    handler: (req, env, id) => handleUpdateAccount(req, env, id!) },
+  { method: 'GET',    pattern: /^\/api\/web\/review$/,                  auth: 'api',    handler: (req, env) => handleListReview(req, env) },
+  { method: 'POST',   pattern: /^\/api\/web\/review\/bulk$/,            auth: 'api',    handler: (req, env) => handleBulkReview(req, env) },
+  { method: 'GET',    pattern: /^\/api\/web\/review\/([^/]+)$/,         auth: 'api',    handler: (req, env, id) => handleGetReview(req, env, id!) },
+  { method: 'PUT',    pattern: /^\/api\/web\/review\/([^/]+)$/,         auth: 'api',    handler: (req, env, id) => handleUpdateReview(req, env, id!) },
+  { method: 'POST',   pattern: /^\/api\/web\/review\/([^/]+)\/approve$/,auth: 'api',    handler: (req, env, id) => handleApproveReview(req, env, id!) },
+  { method: 'POST',   pattern: /^\/api\/web\/review\/([^/]+)\/advance$/,auth: 'api',    handler: (req, env, id) => handleAdvanceWaiting(req, env, id!) },
+  { method: 'GET',    pattern: /^\/api\/web\/transactions$/,            auth: 'api',    handler: (req, env) => handleListTransactions(req, env) },
+  { method: 'PUT',    pattern: /^\/api\/web\/transactions\/([^/]+)$/,   auth: 'api',    handler: (req, env, id) => handleUpdateTransaction(req, env, id!) },
+  { method: 'GET',    pattern: /^\/api\/web\/rules$/,                   auth: 'api',    handler: (req, env) => handleListRules(req, env) },
+  { method: 'POST',   pattern: /^\/api\/web\/rules$/,                   auth: 'api',    handler: (req, env) => handleCreateRule(req, env) },
+  { method: 'GET',    pattern: /^\/api\/web\/gather\/status$/,          auth: 'api',    handler: (req, env) => handleGatherStatus(req, env) },
+  { method: 'POST',   pattern: /^\/api\/web\/gather\/sync\/(.+)$/,      auth: 'api',    handler: (req, env, source) => handleGatherSync(req, env, source!) },
 ];
 
 async function handleNightlySync(env: Env): Promise<void> {
@@ -72,21 +115,80 @@ export default {
 
     const url = new URL(request.url);
     const path = url.pathname;
+    const method = request.method;
 
-    for (const route of ROUTES) {
-      if (route.method !== request.method) continue;
-      const match = path.match(route.pattern);
-      if (match) {
-        try {
-          const params = match.slice(1).map(p => p ?? '');
-          const response = await route.handler(request, env, ...params);
-          response.headers.set('Access-Control-Allow-Origin', '*');
-          return response;
-        } catch (err) {
-          console.error(`Error in ${request.method} ${path}:`, err);
-          return jsonError(`Internal server error: ${String(err)}`, 500);
-        }
+    // ── Login / logout ────────────────────────────────────────────────────
+    if (path === '/login' && method === 'GET') {
+      return new Response(loginHtml(), {
+        status: 200,
+        headers: { 'content-type': 'text/html; charset=utf-8' },
+      });
+    }
+    if (path === '/login' && method === 'POST') {
+      if (!env.WEB_UI_PASSWORD) {
+        return new Response(loginHtml({ error: 'WEB_UI_PASSWORD is not configured.' }), {
+          status: 500, headers: { 'content-type': 'text/html; charset=utf-8' },
+        });
       }
+      const form = await request.formData().catch(() => null);
+      const password = form?.get('password') ?? '';
+      if (!verifyPassword(env, password)) {
+        return new Response(loginHtml({ error: 'Wrong password.' }), {
+          status: 401, headers: { 'content-type': 'text/html; charset=utf-8' },
+        });
+      }
+      const { sessionId } = await createSession(env);
+      const secure = url.protocol === 'https:';
+      return new Response(null, {
+        status: 302,
+        headers: {
+          location: '/',
+          'set-cookie': setSessionCookieHeader(sessionId, { secure }),
+        },
+      });
+    }
+    if (path === '/logout') {
+      const session = await requireWebSession(request, env, { mode: 'page' });
+      if (session.ok && session.sessionId) await destroySession(env, session.sessionId);
+      const secure = url.protocol === 'https:';
+      return new Response(null, {
+        status: 302,
+        headers: {
+          location: '/login',
+          'set-cookie': clearSessionCookieHeader({ secure }),
+        },
+      });
+    }
+
+    // ── Match registered routes ───────────────────────────────────────────
+    for (const route of ROUTES) {
+      if (route.method !== method) continue;
+      const match = path.match(route.pattern);
+      if (!match) continue;
+
+      if (route.auth === 'api') {
+        const auth = await requireApiAuth(request, env);
+        if (!auth.ok) return auth.response;
+      }
+      try {
+        const params = match.slice(1).map(p => p ?? '');
+        const response = await route.handler(request, env, ...params);
+        response.headers.set('Access-Control-Allow-Origin', '*');
+        return response;
+      } catch (err) {
+        console.error(`Error in ${method} ${path}:`, err);
+        return jsonError(`Internal server error: ${String(err)}`, 500);
+      }
+    }
+
+    // ── SPA shell: cookie-gated, fall through to ASSETS ───────────────────
+    if (method === 'GET') {
+      const session = await requireWebSession(request, env, { mode: 'page' });
+      if (!session.ok) return session.response;
+      // Vite-built static assets land under /assets/* (hashed). Anything
+      // else is the SPA shell.
+      if (path.startsWith('/assets/')) return env.ASSETS.fetch(request);
+      return env.ASSETS.fetch(new Request(new URL('/index.html', request.url).toString(), request));
     }
 
     return jsonError('Not found', 404);
@@ -103,7 +205,6 @@ export default {
       );
       return;
     }
-
     console.warn('[scheduled] unknown cron expression', event.cron);
   },
 } satisfies ExportedHandler<Env>;

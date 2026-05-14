@@ -9,7 +9,7 @@
     "web:build": "vite build",
     "deploy": "pnpm web:build && wrangler deploy",
     "build": "pnpm web:build && wrangler deploy --dry-run --outdir=.wrangler-dist",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.web.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
   },
