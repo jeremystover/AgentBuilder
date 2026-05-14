@@ -27,6 +27,18 @@
  *   - GET    /api/web/review/next                interview-mode next row
  *   - GET    /api/web/transactions/summary       entity/category rollup
  *   - POST   /api/web/chat                       SSE streaming chat (10 tools)
+ *   - GET    /api/web/spending/report            run a spending report
+ *   - GET    /api/web/spending/views             list saved spending views
+ *   - POST   /api/web/spending/views             save a spending view
+ *   - PUT    /api/web/spending/views/:id         update a spending view
+ *   - DELETE /api/web/spending/views/:id         delete a spending view
+ *   - GET    /api/web/spending/groups            list category groups
+ *   - POST   /api/web/spending/groups            create a category group
+ *   - PUT    /api/web/spending/groups/:id        update a category group
+ *   - DELETE /api/web/spending/groups/:id        delete a category group
+ *   - GET    /api/web/spending/plans             list selectable plans
+ *   - GET    /api/web/plans/active               get the active plan id
+ *   - PUT    /api/web/plans/active               set the active plan id
  *   - GET    /api/web/reports/configs            list saved report configs
  *   - POST   /api/web/reports/configs            create config
  *   - PUT    /api/web/reports/configs/:id        update config
@@ -74,6 +86,11 @@ import {
   handleListReportConfigs, handleCreateReportConfig, handleUpdateReportConfig,
   handleListReportRuns, handleGetReportRun, handleGenerateReport,
 } from './routes/reports';
+import {
+  handleSpendingReport, handleListViews, handleCreateView, handleUpdateView, handleDeleteView,
+  handleListGroups, handleCreateGroup, handleUpdateGroup, handleDeleteGroup,
+  handleListPlans, handleGetActivePlan, handleSetActivePlan,
+} from './routes/spending';
 import { handleMcp, type JsonRpcMessage } from './mcp-tools';
 import { handleWebChat } from './web-chat';
 import { runClassify } from './lib/classify';
@@ -127,6 +144,20 @@ const ROUTES: Route[] = [
   { method: 'POST',   pattern: /^\/api\/web\/rules$/,                   auth: 'api',    handler: (req, env) => handleCreateRule(req, env) },
   { method: 'GET',    pattern: /^\/api\/web\/gather\/status$/,          auth: 'api',    handler: (req, env) => handleGatherStatus(req, env) },
   { method: 'POST',   pattern: /^\/api\/web\/gather\/sync\/(.+)$/,      auth: 'api',    handler: (req, env, source) => handleGatherSync(req, env, source!) },
+
+  // Spending (Module 4)
+  { method: 'GET',    pattern: /^\/api\/web\/spending\/report$/,             auth: 'api', handler: (req, env) => handleSpendingReport(req, env) },
+  { method: 'GET',    pattern: /^\/api\/web\/spending\/views$/,              auth: 'api', handler: (req, env) => handleListViews(req, env) },
+  { method: 'POST',   pattern: /^\/api\/web\/spending\/views$/,              auth: 'api', handler: (req, env) => handleCreateView(req, env) },
+  { method: 'PUT',    pattern: /^\/api\/web\/spending\/views\/([^/]+)$/,     auth: 'api', handler: (req, env, id) => handleUpdateView(req, env, id!) },
+  { method: 'DELETE', pattern: /^\/api\/web\/spending\/views\/([^/]+)$/,     auth: 'api', handler: (req, env, id) => handleDeleteView(req, env, id!) },
+  { method: 'GET',    pattern: /^\/api\/web\/spending\/groups$/,             auth: 'api', handler: (req, env) => handleListGroups(req, env) },
+  { method: 'POST',   pattern: /^\/api\/web\/spending\/groups$/,             auth: 'api', handler: (req, env) => handleCreateGroup(req, env) },
+  { method: 'PUT',    pattern: /^\/api\/web\/spending\/groups\/([^/]+)$/,    auth: 'api', handler: (req, env, id) => handleUpdateGroup(req, env, id!) },
+  { method: 'DELETE', pattern: /^\/api\/web\/spending\/groups\/([^/]+)$/,    auth: 'api', handler: (req, env, id) => handleDeleteGroup(req, env, id!) },
+  { method: 'GET',    pattern: /^\/api\/web\/spending\/plans$/,              auth: 'api', handler: (req, env) => handleListPlans(req, env) },
+  { method: 'GET',    pattern: /^\/api\/web\/plans\/active$/,                auth: 'api', handler: (req, env) => handleGetActivePlan(req, env) },
+  { method: 'PUT',    pattern: /^\/api\/web\/plans\/active$/,                auth: 'api', handler: (req, env) => handleSetActivePlan(req, env) },
 ];
 
 function requireMcpAuth(request: Request, env: Env): { ok: true } | { ok: false; response: Response } {

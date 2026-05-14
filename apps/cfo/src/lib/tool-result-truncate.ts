@@ -85,7 +85,7 @@ export const TOOL_DRILL_IN_HINTS: Record<string, string> = {
   review_bulk_accept:   '/#/review',
   review_status:        '/#/review',
   transactions_list:    '/#/transactions',
-  transactions_summary: '/#/transactions',
+  spending_summary:     '/#/spending',
   rules_list:           '/#/review',
   rules_create:         '/#/review',
   accounts_list:        '/#/gather',

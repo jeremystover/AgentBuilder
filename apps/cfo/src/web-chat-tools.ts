@@ -20,7 +20,7 @@ export const TOOL_ALLOWLIST: string[] = [
   'review_next',
   'review_resolve',
   'review_bulk_accept',
-  'transactions_summary',
+  'spending_summary',
   'transactions_list',
   'rules_list',
   'rules_create',
