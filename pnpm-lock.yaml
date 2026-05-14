@@ -63,9 +63,9 @@ importers:
 
   apps/cfo:
     dependencies:
-      '@agentbuilder/core':
+      '@agentbuilder/auth-google':
         specifier: workspace:*
-        version: link:../../packages/core
+        version: link:../../packages/auth-google
       '@agentbuilder/llm':
         specifier: workspace:*
         version: link:../../packages/llm
@@ -75,6 +75,9 @@ importers:
       '@agentbuilder/web-ui-kit':
         specifier: workspace:*
         version: link:../../packages/web-ui-kit
+      postgres:
+        specifier: ^3.4.5
+        version: 3.4.9
       zod:
         specifier: ^3.23.8
         version: 3.25.76
@@ -3103,6 +3106,10 @@ packages:
     resolution: {integrity: sha512-SoSL4+OSEtR99LHFZQiJLkT59C5B1amGO1NzTwj7TT1qCUgUO6hxOvzkOYxD+vMrXBM3XJIKzokoERdqQq/Zmg==}
     engines: {node: ^10 || ^12 || >=14}
 
+  postgres@3.4.9:
+    resolution: {integrity: sha512-GD3qdB0x1z9xgFI6cdRD6xu2Sp2WCOEoe3mtnyB5Ee0XrrL5Pe+e4CCnJrRMnL1zYtRDZmQQVbvOttLnKDLnaw==}
+    engines: {node: '>=12'}
+
   printable-characters@1.0.42:
     resolution: {integrity: sha512-dKp+C4iXWK4vVYZmYSd0KBH5F/h1HoZRsbJ82AVKRO3PEo8L4lBS/vLwhVtpwwuYcoIsVY+1JYKR268yn480uQ==}
 
@@ -5778,6 +5785,8 @@ snapshots:
       nanoid: 3.3.11
       picocolors: 1.1.1
       source-map-js: 1.2.1
+
+  postgres@3.4.9: {}
 
   printable-characters@1.0.42: {}
 

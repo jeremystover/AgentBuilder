@@ -1,108 +1,150 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeftRight, ChevronDown, ChevronUp, Sparkles, RefreshCw, Loader2 } from "lucide-react";
-import { txAmountColor } from "../../utils/txColor";
+import { RefreshCw, ArrowLeftRight, Sparkles, Clock } from "lucide-react";
 import { toast } from "sonner";
 import {
-  Button, Card, Badge, Input, Select, Drawer, PageHeader, EmptyState, fmtUsd, humanizeSlug,
+  Button, Card, Badge, Input, Select, Drawer, PageHeader, EmptyState,
+  IndeterminateCheckbox, ConfidenceBadge, SortTh, fmtUsd, humanizeSlug,
 } from "../ui";
-import { useReviewQueue } from "../../hooks/useReviewQueue";
-import { resolveReview, bulkResolveReview, runClassification, reclassifyWithAI } from "../../api";
-import type { ReviewItem, ReviewStatus, ResolveAction } from "../../types";
-import { ENTITY_OPTIONS, type OptionCategory } from "../../catalog";
-import { useCategoryOptions } from "../../hooks/useCategoryOptions";
-import { ProposeRuleModal, buildRuleProposal, type RuleProposal } from "../ProposeRuleModal";
+import { txAmountColor } from "../../utils/txColor";
+import {
+  api, type Entity, type Category, type AccountRow, type ReviewRow, type ReviewListResponse,
+} from "../../api";
+import { ProposeRuleModal } from "../ProposeRuleModal";
 
 const PAGE_SIZE = 50;
 
-type CategoryFilter = "" | "__uncategorized__" | string; // tax category slug
+type ConfidenceFilter = "" | "high" | "medium" | "low" | "rule";
+type StatusTab = "staged" | "waiting";
 
-function SortTh({ col, label, sortBy, sortDir, onSort, className = "" }: {
-  col: string; label: string; sortBy: string; sortDir: "asc" | "desc";
-  onSort: (col: string) => void; className?: string;
-}) {
-  const active = sortBy === col;
-  const Icon = active && sortDir === "asc" ? ChevronUp : ChevronDown;
-  return (
-    <th
-      className={`cursor-pointer select-none hover:text-text-primary transition-colors ${className}`}
-      onClick={() => onSort(col)}
-    >
-      <span className="inline-flex items-center gap-0.5">
-        {label}
-        <Icon className={`w-3 h-3 ${active ? "opacity-100" : "opacity-25"}`} />
-      </span>
-    </th>
-  );
+interface Filters {
+  q: string;
+  date_from: string;
+  date_to: string;
+  entity_ids: string[];
+  category_ids: string[];
+  confidence: ConfidenceFilter;
+  account_ids: string[];
+}
+
+const EMPTY_FILTERS: Filters = {
+  q: "",
+  date_from: "",
+  date_to: "",
+  entity_ids: [],
+  category_ids: [],
+  confidence: "",
+  account_ids: [],
+};
+
+function activeFilterCount(f: Filters): number {
+  let n = 0;
+  if (f.q) n++;
+  if (f.date_from) n++;
+  if (f.date_to) n++;
+  if (f.entity_ids.length) n++;
+  if (f.category_ids.length) n++;
+  if (f.confidence) n++;
+  if (f.account_ids.length) n++;
+  return n;
+}
+
+function filtersToParams(f: Filters, status: StatusTab, sortBy: string, sortDir: "asc" | "desc", offset: number): URLSearchParams {
+  const p = new URLSearchParams();
+  p.set("status", status);
+  if (f.q) p.set("q", f.q);
+  if (f.date_from) p.set("date_from", f.date_from);
+  if (f.date_to) p.set("date_to", f.date_to);
+  for (const id of f.entity_ids) p.append("entity_id", id);
+  for (const id of f.category_ids) p.append("category_id", id);
+  for (const id of f.account_ids) p.append("account_id", id);
+  if (f.confidence) p.set("confidence", f.confidence);
+  p.set("sort_by", sortBy);
+  p.set("sort_dir", sortDir);
+  p.set("offset", String(offset));
+  p.set("limit", String(PAGE_SIZE));
+  return p;
 }
 
 export function ReviewQueueView() {
-  const { budgetOptions, taxOptions, allOptions } = useCategoryOptions();
-  const [status, setStatus] = useState<ReviewStatus>("pending");
-  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("");
-  const [search, setSearch] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [sortBy, setSortBy] = useState("created_at");
+  const [tab, setTab] = useState<StatusTab>("staged");
+  const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
+  const [debouncedQ, setDebouncedQ] = useState("");
+  const [sortBy, setSortBy] = useState<string>("date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [offset, setOffset] = useState(0);
 
-  const [suggestRules, setSuggestRules] = useState(() => {
-    try { return localStorage.getItem("cfo_suggest_rules") !== "false"; }
-    catch { return true; }
-  });
-  const [pendingRuleProposal, setPendingRuleProposal] = useState<RuleProposal | null>(null);
+  const [data, setData] = useState<ReviewListResponse | null>(null);
+  const [entities, setEntities] = useState<Entity[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [accounts, setAccounts] = useState<AccountRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedSearch(search), 400);
-    return () => clearTimeout(t);
-  }, [search]);
-
-  const onSort = (col: string) => {
-    if (sortBy === col) {
-      setSortDir((d) => d === "asc" ? "desc" : "asc");
-    } else {
-      setSortBy(col);
-      setSortDir("desc");
-    }
-    setOffset(0);
-  };
-
-  const { data, offset, setOffset, loading, error, refresh } = useReviewQueue({
-    status,
-    category_tax: categoryFilter || null,
-    q: debouncedSearch || undefined,
-    sort_by: sortBy,
-    sort_dir: sortDir,
-    pageSize: PAGE_SIZE,
-  });
-  const items = data?.items ?? [];
-  const total = data?.total ?? 0;
-
-  // Selection state — tracks IDs visible-page-only by default; "select
-  // filtered" flips selectedAllFiltered, which the bulk apply path
-  // forwards as apply_to_filtered=true.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectedAllFiltered, setSelectedAllFiltered] = useState(false);
 
-  // Open drawer for a single item.
-  const [openItem, setOpenItem] = useState<ReviewItem | null>(null);
+  const [openRow, setOpenRow] = useState<ReviewRow | null>(null);
+  const [proposeFor, setProposeFor] = useState<ReviewRow | null>(null);
 
-  // Bulk reclassify form state.
-  const [bulkEntity, setBulkEntity] = useState<string>("elyse_coaching");
-  const [bulkCategory, setBulkCategory] = useState<string>("");
-  const [busy, setBusy] = useState(false);
+  const [bulkEntityId, setBulkEntityId] = useState("");
+  const [bulkCategoryId, setBulkCategoryId] = useState("");
 
-  // Classify flow: null = idle, "picking" = scope picker visible, "running" = in-flight
-  type ClassifyState = null | "picking" | "running";
-  const [classifyState, setClassifyState] = useState<ClassifyState>(null);
-  const [classifyStatus, setClassifyStatus] = useState("");
+  // Debounce search
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQ(filters.q), 200);
+    return () => clearTimeout(t);
+  }, [filters.q]);
 
-  // ── Selection helpers ──────────────────────────────────────────────────
-  const visibleIds = useMemo(() => items.map((it) => it.id), [items]);
+  // Load lookups once
+  useEffect(() => {
+    (async () => {
+      try {
+        const [es, cs, as] = await Promise.all([
+          api.get<{ entities: Entity[] }>("/api/web/entities").then(r => r.entities),
+          api.get<{ categories: Category[] }>("/api/web/categories").then(r => r.categories),
+          api.get<{ accounts: AccountRow[] }>("/api/web/accounts").then(r => r.accounts),
+        ]);
+        setEntities(es);
+        setCategories(cs);
+        setAccounts(as);
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : String(e));
+      }
+    })();
+  }, []);
+
+  // Effective filters with debounced search
+  const effectiveFilters = useMemo(() => ({ ...filters, q: debouncedQ }), [filters, debouncedQ]);
+
+  // Reset offset when filters/tab/sort change
+  useEffect(() => { setOffset(0); }, [tab, debouncedQ, filters.entity_ids, filters.category_ids, filters.account_ids, filters.confidence, filters.date_from, filters.date_to, sortBy, sortDir]);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = filtersToParams(effectiveFilters, tab, sortBy, sortDir, offset);
+      const res = await api.get<ReviewListResponse>(`/api/web/review?${params.toString()}`);
+      setData(res);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [effectiveFilters, tab, sortBy, sortDir, offset]);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  const rows = data?.rows ?? [];
+  const total = data?.total ?? 0;
+
+  // ── Selection helpers (3-state pattern) ────────────────────────────────
+  const visibleIds = useMemo(() => rows.map(r => r.id), [rows]);
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedIds.has(id));
+  const someVisibleSelected = visibleIds.some(id => selectedIds.has(id));
   const selectedCount = selectedIds.size;
-  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
-  const someVisibleSelected = visibleIds.some((id) => selectedIds.has(id));
 
   const toggleId = (id: string, on: boolean) => {
-    setSelectedIds((prev) => {
+    setSelectedIds(prev => {
       const next = new Set(prev);
       if (on) next.add(id); else next.delete(id);
       return next;
@@ -110,8 +152,8 @@ export function ReviewQueueView() {
     setSelectedAllFiltered(false);
   };
 
-  const toggleAllVisible = (on: boolean) => {
-    setSelectedIds((prev) => {
+  const togglePage = (on: boolean) => {
+    setSelectedIds(prev => {
       const next = new Set(prev);
       for (const id of visibleIds) {
         if (on) next.add(id); else next.delete(id);
@@ -126,31 +168,48 @@ export function ReviewQueueView() {
     setSelectedAllFiltered(false);
   };
 
-  // ── Actions ────────────────────────────────────────────────────────────
-  const onBulk = useCallback(async (action: ResolveAction, applyToFiltered = false) => {
+  // ── Sort ───────────────────────────────────────────────────────────────
+  const onSort = (col: string) => {
+    if (sortBy === col) {
+      setSortDir(d => d === "asc" ? "desc" : "asc");
+    } else {
+      setSortBy(col);
+      setSortDir("desc");
+    }
+  };
+
+  // ── Bulk actions ───────────────────────────────────────────────────────
+  type BulkBody = {
+    action: "set_entity" | "set_category" | "set_transfer" | "set_reimbursable" | "approve";
+    entity_id?: string;
+    category_id?: string;
+    is_transfer?: boolean;
+    is_reimbursable?: boolean;
+    ids?: string[];
+    apply_to_filtered?: boolean;
+    filters?: Record<string, unknown>;
+  };
+
+  const runBulk = async (body: BulkBody) => {
     if (busy) return;
-    const target = applyToFiltered
-      ? `all ${total} ${status} item${total !== 1 ? "s" : ""}`
-      : `${selectedCount} item${selectedCount !== 1 ? "s" : ""}`;
-    if (!applyToFiltered && selectedCount === 0) {
-      toast.error("Select at least one item.");
+    if (!selectedAllFiltered && selectedCount === 0) {
+      toast.error("Select at least one row.");
       return;
     }
-    if (!confirm(`Apply ${action} to ${target}?`)) return;
+    if (selectedAllFiltered) {
+      const confirmed = confirm(`Apply ${body.action} to ALL ${total} matching rows?`);
+      if (!confirmed) return;
+    }
     setBusy(true);
     try {
-      const res = await bulkResolveReview({
-        action,
-        review_ids: applyToFiltered ? undefined : Array.from(selectedIds),
-        apply_to_filtered: applyToFiltered || undefined,
-        status,
-        filter_category_tax: categoryFilter || undefined,
-        ...(action === "classify" ? {
-          entity: bulkEntity,
-          category_tax: bulkCategory || undefined,
-        } : {}),
-      });
-      toast.success(`Updated ${res.updated} item${res.updated !== 1 ? "s" : ""}`);
+      const payload: BulkBody = {
+        ...body,
+        ...(selectedAllFiltered
+          ? { apply_to_filtered: true, filters: Object.fromEntries(filtersToParams(effectiveFilters, tab, sortBy, sortDir, 0)) }
+          : { ids: Array.from(selectedIds) }),
+      };
+      const res = await api.post<{ updated: number }>("/api/web/review/bulk", payload);
+      toast.success(`Updated ${res.updated} row${res.updated !== 1 ? "s" : ""}`);
       clearSelection();
       await refresh();
     } catch (e) {
@@ -158,514 +217,436 @@ export function ReviewQueueView() {
     } finally {
       setBusy(false);
     }
-  }, [busy, total, status, selectedCount, selectedIds, categoryFilter, bulkEntity, bulkCategory, refresh]);
+  };
 
-  const runClassify = useCallback(async (transactionIds?: string[]) => {
-    const count = transactionIds ? transactionIds.length : total;
-    setClassifyState("running");
-    setClassifyStatus(`Classifying ${count} transaction${count !== 1 ? "s" : ""}…`);
+  const updateRow = async (id: string, body: Partial<ReviewRow>) => {
     setBusy(true);
     try {
-      const r = await runClassification(transactionIds);
-      const processed = r.total_processed ?? 0;
-      const byRules = r.classified_by_rules ?? 0;
-      const byAI = r.classified_by_ai ?? 0;
-      const needsReview = r.queued_for_review ?? 0;
-      if (processed === 0) {
-        toast.success("Nothing to classify — all transactions already have a category.");
-      } else {
-        toast.success(
-          `Classified ${processed}: ${byRules} by rules, ${byAI} by AI` +
-          (needsReview > 0 ? `, ${needsReview} need review` : ""),
-        );
-      }
+      await api.put(`/api/web/review/${id}`, body);
       await refresh();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-      setClassifyState(null);
-      setClassifyStatus("");
-    }
-  }, [total, refresh]);
-
-  const onResolveOne = useCallback(async (id: string, input: Parameters<typeof resolveReview>[1]) => {
-    setBusy(true);
-    const snapshotItem = openItem;
-    try {
-      await resolveReview(id, input);
-      toast.success(`${input.action} applied`);
-      setOpenItem(null);
-      await refresh();
-
-      if (suggestRules && snapshotItem && (input.action === "classify" || input.action === "accept")) {
-        const entity = input.entity ?? snapshotItem.suggested_entity ?? snapshotItem.current_entity ?? "";
-        const categoryTax = input.category_tax ?? snapshotItem.suggested_category_tax ?? snapshotItem.current_category_tax ?? "";
-        const proposal = buildRuleProposal({
-          merchantName: snapshotItem.merchant_name,
-          description: snapshotItem.description,
-          entity,
-          categoryTax,
-          categoryBudget: input.category_budget ?? snapshotItem.suggested_category_budget,
-        });
-        if (proposal) setPendingRuleProposal(proposal);
+      if (openRow?.id === id) {
+        const updated = await api.get<ReviewRow>(`/api/web/review/${id}`);
+        setOpenRow(updated);
       }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
-  }, [refresh, openItem, suggestRules]);
+  };
 
-  // ── Render ─────────────────────────────────────────────────────────────
+  const approveOne = async (id: string) => {
+    setBusy(true);
+    try {
+      await api.post(`/api/web/review/${id}/approve`);
+      toast.success("Approved");
+      setOpenRow(null);
+      await refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const advanceWaiting = async (id: string) => {
+    setBusy(true);
+    try {
+      await api.post(`/api/web/review/${id}/advance`);
+      toast.success("Advanced");
+      await refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // ── Filter helpers ─────────────────────────────────────────────────────
+  const setMultiSelect = (key: "entity_ids" | "category_ids" | "account_ids") => (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const ids = Array.from(e.target.selectedOptions).map(o => o.value).filter(Boolean);
+    setFilters(f => ({ ...f, [key]: ids }));
+  };
+
+  const accountById = useMemo(() => new Map(accounts.map(a => [a.id, a])), [accounts]);
+
   return (
     <div className="p-6 max-w-7xl mx-auto">
       <PageHeader
         title="Review queue"
         subtitle={
           loading ? "Loading…" :
-          total === 0 ? `No ${status} items` :
-          `${total} ${status} item${total !== 1 ? "s" : ""}${categoryFilter === "__uncategorized__" ? " (uncategorized)" : categoryFilter ? ` (${humanizeSlug(categoryFilter)})` : ""}`
+          total === 0 ? `No ${tab === "staged" ? "pending review" : "waiting"} items` :
+          `${total} ${tab === "staged" ? "to review" : "waiting"} item${total !== 1 ? "s" : ""}`
         }
         actions={
-          <>
-            <label className="flex items-center gap-1.5 text-sm text-text-muted cursor-pointer select-none" title="After categorizing, propose a rule for future transactions">
-              <button
-                role="switch"
-                aria-checked={suggestRules}
-                onClick={() => {
-                  const next = !suggestRules;
-                  setSuggestRules(next);
-                  try { localStorage.setItem("cfo_suggest_rules", next ? "true" : "false"); } catch {}
-                }}
-                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${suggestRules ? "bg-accent-primary" : "bg-bg-elevated border border-border"}`}
-              >
-                <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${suggestRules ? "translate-x-4" : "translate-x-0.5"}`} />
-              </button>
-              Suggest rules
-            </label>
-            {classifyState === "picking" ? (
-              <>
-                <span className="text-sm text-text-muted self-center">Classify:</span>
-                <Button
-                  variant="primary"
-                  onClick={() => void runClassify(items.map(it => it.transaction_id))}
-                  disabled={items.length === 0}
-                >
-                  This page ({items.length})
-                </Button>
-                <Button variant="primary" onClick={() => void runClassify()}>
-                  All unclassified ({total})
-                </Button>
-                <Button variant="ghost" onClick={() => setClassifyState(null)}>Cancel</Button>
-              </>
-            ) : (
-              <Button
-                variant="primary"
-                onClick={() => setClassifyState("picking")}
-                disabled={busy || total === 0}
-              >
-                <Sparkles className="w-4 h-4" /> Classify unclassified
-              </Button>
-            )}
-            <Button onClick={() => void refresh()} title="Refresh" disabled={busy}>
-              <RefreshCw className={"w-4 h-4 " + (loading ? "animate-spin" : "")} />
-            </Button>
-          </>
+          <Button onClick={() => void refresh()} disabled={loading}>
+            <RefreshCw className={"w-4 h-4 " + (loading ? "animate-spin" : "")} /> Refresh
+          </Button>
         }
       />
 
-      {classifyState === "running" && (
-        <div className="flex items-center gap-3 px-4 py-3 mb-4 rounded-lg bg-accent-primary/10 border border-accent-primary/20 text-sm text-accent-primary">
-          <Loader2 className="w-4 h-4 animate-spin flex-none" />
-          <span>{classifyStatus}</span>
-          <span className="text-text-muted ml-auto">This may take 30–60 seconds for large batches</span>
-        </div>
-      )}
+      {/* Tabs: pending / waiting */}
+      <div className="flex items-center gap-1 mb-4 border-b border-border">
+        <TabButton active={tab === "staged"} onClick={() => { setTab("staged"); clearSelection(); }}>
+          <Inbox className="w-4 h-4" /> Pending review
+        </TabButton>
+        <TabButton active={tab === "waiting"} onClick={() => { setTab("waiting"); clearSelection(); }}>
+          <Clock className="w-4 h-4" /> Holds
+        </TabButton>
+      </div>
 
+      {/* Filter bar */}
       <Card className="p-4 mb-4">
-        <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-end gap-3 flex-wrap">
+          <div className="flex-1 min-w-[220px]">
+            <label className="block text-xs text-text-muted mb-1">Search</label>
+            <Input
+              type="text" placeholder="description or merchant"
+              value={filters.q}
+              onChange={e => setFilters(f => ({ ...f, q: e.target.value }))}
+              className="w-full"
+            />
+          </div>
           <div>
-            <label className="block text-xs text-text-muted mb-1">Status</label>
-            <Select value={status} onChange={(e) => setStatus(e.target.value as ReviewStatus)}>
-              <option value="pending">Pending</option>
-              <option value="resolved">Resolved</option>
-              <option value="skipped">Skipped</option>
+            <label className="block text-xs text-text-muted mb-1">From</label>
+            <Input type="date" value={filters.date_from}
+              onChange={e => setFilters(f => ({ ...f, date_from: e.target.value }))} />
+          </div>
+          <div>
+            <label className="block text-xs text-text-muted mb-1">To</label>
+            <Input type="date" value={filters.date_to}
+              onChange={e => setFilters(f => ({ ...f, date_to: e.target.value }))} />
+          </div>
+          <div>
+            <label className="block text-xs text-text-muted mb-1">Entity</label>
+            <Select multiple value={filters.entity_ids} onChange={setMultiSelect("entity_ids")} className="min-w-[140px] h-24">
+              {entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
             </Select>
           </div>
           <div>
             <label className="block text-xs text-text-muted mb-1">Category</label>
-            <Select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
-              <option value="">All categories</option>
-              <option value="__uncategorized__">Uncategorized</option>
-              {allOptions.map(({ slug, label }) => (
-                <option key={slug} value={slug}>{label}</option>
-              ))}
+            <Select multiple value={filters.category_ids} onChange={setMultiSelect("category_ids")} className="min-w-[180px] h-24">
+              {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </Select>
           </div>
-          <div className="flex-1 min-w-[180px]">
-            <label className="block text-xs text-text-muted mb-1">Search</label>
-            <Input
-              type="text"
-              placeholder="merchant or description"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full"
-            />
+          <div>
+            <label className="block text-xs text-text-muted mb-1">Confidence</label>
+            <Select value={filters.confidence} onChange={e => setFilters(f => ({ ...f, confidence: e.target.value as ConfidenceFilter }))}>
+              <option value="">Any</option>
+              <option value="high">High (≥0.9)</option>
+              <option value="medium">Medium (0.7–0.9)</option>
+              <option value="low">Low (&lt;0.7)</option>
+              <option value="rule">Rule-matched</option>
+            </Select>
           </div>
+          <div>
+            <label className="block text-xs text-text-muted mb-1">Account</label>
+            <Select multiple value={filters.account_ids} onChange={setMultiSelect("account_ids")} className="min-w-[160px] h-24">
+              {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </Select>
+          </div>
+          {activeFilterCount(filters) > 0 && (
+            <div>
+              <label className="block text-xs text-text-muted mb-1">&nbsp;</label>
+              <Button onClick={() => setFilters(EMPTY_FILTERS)}>Clear ({activeFilterCount(filters)})</Button>
+            </div>
+          )}
         </div>
       </Card>
 
-      {error && (
-        <Card className="p-3 mb-4 border-accent-danger/40 bg-accent-danger/5 text-sm text-accent-danger">
-          {error}
+      {/* Bulk action bar */}
+      {(selectedCount > 0 || selectedAllFiltered) && (
+        <Card className="p-3 mb-4 border-accent-primary/30 bg-accent-primary/5">
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="text-sm font-medium">
+              {selectedAllFiltered ? `All ${total} matching rows selected.` : `${selectedCount} selected.`}
+            </div>
+            <Select value={bulkEntityId} onChange={e => setBulkEntityId(e.target.value)}>
+              <option value="">Set entity…</option>
+              {entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+            </Select>
+            <Button disabled={!bulkEntityId || busy} onClick={() => void runBulk({ action: "set_entity", entity_id: bulkEntityId })}>Apply entity</Button>
+            <Select value={bulkCategoryId} onChange={e => setBulkCategoryId(e.target.value)}>
+              <option value="">Set category…</option>
+              {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </Select>
+            <Button disabled={!bulkCategoryId || busy} onClick={() => void runBulk({ action: "set_category", category_id: bulkCategoryId })}>Apply category</Button>
+            <Button disabled={busy} onClick={() => void runBulk({ action: "set_transfer", is_transfer: true })}>Mark transfer</Button>
+            <Button disabled={busy} onClick={() => void runBulk({ action: "set_reimbursable", is_reimbursable: true })}>Mark reimbursable</Button>
+            <Button variant="success" disabled={busy} onClick={() => void runBulk({ action: "approve" })}>
+              <Sparkles className="w-4 h-4" /> Approve
+            </Button>
+            <Button onClick={clearSelection}>Clear</Button>
+          </div>
         </Card>
       )}
 
-      {/* Bulk action bar */}
-      <Card className="p-4 mb-4">
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div className="text-sm">
-            <div className="font-semibold text-text-primary">Bulk actions</div>
-            <div className="text-text-muted text-xs">
-              {selectedAllFiltered
-                ? `Targeting all ${total} filtered.`
-                : selectedCount > 0
-                  ? `${selectedCount} selected.`
-                  : "Select rows below or apply to all filtered."}
-            </div>
-          </div>
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <Button onClick={() => toggleAllVisible(!allVisibleSelected)} disabled={visibleIds.length === 0}>
-              {allVisibleSelected ? "Deselect visible" : "Select visible"}
-            </Button>
-            <Button onClick={() => setSelectedAllFiltered(true)} disabled={total === 0}>
-              Select filtered ({total})
-            </Button>
-            <Button onClick={clearSelection} disabled={selectedCount === 0 && !selectedAllFiltered}>
-              Clear
-            </Button>
-          </div>
-        </div>
-        <div className="flex items-end gap-2 mt-3 flex-wrap">
-          <Button variant="success" disabled={status !== "pending" || busy || (!selectedAllFiltered && selectedCount === 0)} onClick={() => onBulk("accept", selectedAllFiltered)}>
-            Accept selected
-          </Button>
-          <Button disabled={(status !== "resolved" && status !== "skipped") || busy || (!selectedAllFiltered && selectedCount === 0)} onClick={() => onBulk("reopen", selectedAllFiltered)}>
-            Reopen selected
-          </Button>
-          <div className="h-6 border-l border-border mx-1" />
-          <div>
-            <label className="block text-[11px] text-text-muted mb-0.5">Bulk entity</label>
-            <Select value={bulkEntity} onChange={(e) => setBulkEntity(e.target.value)}>
-              {ENTITY_OPTIONS.map(({ slug, label }) => (
-                <option key={slug} value={slug}>{label}</option>
-              ))}
-            </Select>
-          </div>
-          <div>
-            <label className="block text-[11px] text-text-muted mb-0.5">Bulk category</label>
-            <Select value={bulkCategory} onChange={(e) => setBulkCategory(e.target.value)}>
-              <option value="">— select —</option>
-              {allOptions.map(({ slug, label }) => (
-                <option key={slug} value={slug}>{label}</option>
-              ))}
-            </Select>
-          </div>
-          <Button variant="primary" disabled={status !== "pending" || busy || !bulkCategory || (!selectedAllFiltered && selectedCount === 0)} onClick={() => onBulk("classify", selectedAllFiltered)}>
-            Reclassify selected
-          </Button>
-        </div>
-      </Card>
+      {/* Select-all-filtered banner */}
+      {allVisibleSelected && !selectedAllFiltered && total > rows.length && (
+        <Card className="p-3 mb-4 text-sm flex items-center justify-between gap-3">
+          <span>All {rows.length} rows on this page are selected.</span>
+          <button
+            className="text-accent-primary font-medium hover:underline"
+            onClick={() => setSelectedAllFiltered(true)}
+          >
+            Select all {total} matching rows →
+          </button>
+        </Card>
+      )}
 
-      {/* Table */}
-      <Card className="overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs text-text-muted uppercase tracking-wide border-b border-border bg-bg-elevated">
-                <th className="pl-4 py-2 w-10">
-                  <input
-                    type="checkbox"
-                    checked={allVisibleSelected}
-                    ref={(el) => {
-                      if (el) el.indeterminate = !allVisibleSelected && someVisibleSelected;
-                    }}
-                    onChange={(e) => toggleAllVisible(e.target.checked)}
-                  />
-                </th>
-                <SortTh col="posted_date"   label="Date"     sortBy={sortBy} sortDir={sortDir} onSort={onSort} className="py-2" />
-                <SortTh col="merchant_name" label="Merchant" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-                <SortTh col="amount"        label="Amount"   sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-                <SortTh col="account_name"  label="Account"  sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-                <th>Entity</th>
-                <th>Suggested</th>
-                <th>Conf.</th>
-                <th className="pr-4">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.length === 0 ? (
-                <tr><td colSpan={9}><EmptyState>Nothing in queue.</EmptyState></td></tr>
-              ) : items.map((it) => (
-                <ReviewRow
-                  key={it.id}
-                  item={it}
-                  selected={selectedIds.has(it.id)}
-                  onToggle={(on) => toggleId(it.id, on)}
-                  onOpen={() => setOpenItem(it)}
-                />
-              ))}
-            </tbody>
-          </table>
-        </div>
+      {/* Transactions table */}
+      <Card>
+        {rows.length === 0 && !loading
+          ? <EmptyState>{tab === "staged" ? "No transactions waiting for review." : "No transactions on hold."}</EmptyState>
+          : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="text-left text-xs uppercase text-text-muted bg-bg-elevated">
+                  <tr>
+                    <th className="px-3 py-2 w-8">
+                      <IndeterminateCheckbox
+                        checked={allVisibleSelected}
+                        indeterminate={someVisibleSelected && !allVisibleSelected}
+                        onChange={e => togglePage(e.target.checked)}
+                      />
+                    </th>
+                    <SortTh col="date" currentSort={sortBy} currentDir={sortDir} onSort={onSort} className="px-3 py-2">Date</SortTh>
+                    <th className="px-3 py-2">Description</th>
+                    <SortTh col="amount" currentSort={sortBy} currentDir={sortDir} onSort={onSort} className="px-3 py-2 text-right">Amount</SortTh>
+                    <th className="px-3 py-2">Account</th>
+                    <th className="px-3 py-2">Entity</th>
+                    <th className="px-3 py-2">Category</th>
+                    <th className="px-3 py-2">Confidence</th>
+                    <th className="px-3 py-2">Method</th>
+                    <th className="px-3 py-2 w-8"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map(r => {
+                    const acct = r.account_id ? accountById.get(r.account_id) : null;
+                    const acctType = acct?.type ?? null;
+                    return (
+                      <tr key={r.id} className="border-t border-border hover:bg-bg-elevated/50">
+                        <td className="px-3 py-2">
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.has(r.id)}
+                            onChange={e => toggleId(r.id, e.target.checked)}
+                            className="rounded border-border focus:ring-accent-primary"
+                          />
+                        </td>
+                        <td className="px-3 py-2 text-text-muted whitespace-nowrap">{r.date}</td>
+                        <td className="px-3 py-2 max-w-md">
+                          <div className="font-medium truncate">{r.description}</div>
+                          {r.merchant && <div className="text-xs text-text-muted truncate">{r.merchant}</div>}
+                          {(r.is_transfer || r.is_reimbursable || r.waiting_for) && (
+                            <div className="mt-1 flex gap-1">
+                              {r.is_transfer && <Badge tone="info"><ArrowLeftRight className="w-3 h-3" /> transfer</Badge>}
+                              {r.is_reimbursable && <Badge tone="warn">reimbursable</Badge>}
+                              {r.waiting_for && <Badge tone="warn">waiting: {r.waiting_for}</Badge>}
+                            </div>
+                          )}
+                        </td>
+                        <td className={`px-3 py-2 text-right whitespace-nowrap font-medium ${txAmountColor(r.amount, acctType, r.category_slug)}`}>
+                          {fmtUsd(r.amount, { sign: true })}
+                        </td>
+                        <td className="px-3 py-2 text-text-muted truncate max-w-[140px]">{r.account_name ?? "—"}</td>
+                        <td className="px-3 py-2 min-w-[140px]">
+                          <Select value={r.entity_id ?? ""} onChange={e => void updateRow(r.id, { entity_id: e.target.value || null })}>
+                            <option value="">—</option>
+                            {entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+                          </Select>
+                        </td>
+                        <td className="px-3 py-2 min-w-[180px]">
+                          <Select value={r.category_id ?? ""} onChange={e => void updateRow(r.id, { category_id: e.target.value || null, classification_method: "manual" })}>
+                            <option value="">—</option>
+                            {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                          </Select>
+                        </td>
+                        <td className="px-3 py-2"><ConfidenceBadge confidence={r.ai_confidence} /></td>
+                        <td className="px-3 py-2">{r.classification_method ? <Badge tone="neutral">{r.classification_method}</Badge> : <Badge tone="neutral">—</Badge>}</td>
+                        <td className="px-3 py-2">
+                          <button className="text-accent-primary hover:underline text-sm" onClick={() => setOpenRow(r)}>→</button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )
+        }
       </Card>
 
       {/* Pagination */}
-      <div className="flex items-center justify-between mt-4 text-sm text-text-muted">
-        <div>
-          {total === 0 ? "" : `Showing ${offset + 1}–${Math.min(offset + PAGE_SIZE, total)} of ${total}`}
+      {total > PAGE_SIZE && (
+        <div className="flex items-center justify-between mt-3 text-sm text-text-muted">
+          <span>Showing {offset + 1}–{Math.min(offset + rows.length, total)} of {total}</span>
+          <div className="flex items-center gap-2">
+            <Button onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))} disabled={offset === 0}>Prev</Button>
+            <Button onClick={() => setOffset(offset + PAGE_SIZE)} disabled={offset + PAGE_SIZE >= total}>Next</Button>
+          </div>
         </div>
-        <div className="flex gap-1.5">
-          <Button onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))} disabled={offset === 0}>← Prev</Button>
-          <Button onClick={() => setOffset(offset + PAGE_SIZE)} disabled={offset + PAGE_SIZE >= total}>Next →</Button>
-        </div>
-      </div>
-
-      <ReviewDrawer
-        item={openItem}
-        budgetOptions={budgetOptions}
-        taxOptions={taxOptions}
-        onClose={() => setOpenItem(null)}
-        onResolve={onResolveOne}
-        onReclassify={async (txId) => {
-          const item = openItem;
-          try {
-            const result = await reclassifyWithAI(txId);
-            if (result._debug) {
-              console.group(`[CFO classify] ${item?.merchant_name ?? item?.description ?? txId}`);
-              console.log('Pass:', result._debug.pass);
-              console.log('Prompt (user message):\n', result._debug.userMessage);
-              console.log('Raw API response:', result._debug.rawResponse);
-              console.groupEnd();
-            }
-            console.log('[CFO classify] result:', result);
-            toast.success(`Reclassified via ${result.method}`);
-            void refresh();
-          } catch (e) {
-            toast.error(e instanceof Error ? e.message : String(e));
-          }
-        }}
-        busy={busy}
-      />
-
-      {pendingRuleProposal && (
-        <ProposeRuleModal
-          proposal={pendingRuleProposal}
-          taxOptions={taxOptions}
-          onDismiss={() => setPendingRuleProposal(null)}
-          onSaved={() => { setPendingRuleProposal(null); void refresh(); }}
-        />
       )}
+
+      {/* Detail drawer */}
+      <Drawer
+        open={openRow !== null}
+        onClose={() => setOpenRow(null)}
+        title={openRow ? `${openRow.date} · ${fmtUsd(openRow.amount, { sign: true })}` : ""}
+        footer={openRow && (
+          <div className="flex items-center justify-between">
+            <button className="text-sm text-accent-primary hover:underline" onClick={() => setProposeFor(openRow)}>Propose rule</button>
+            <div className="flex items-center gap-2">
+              {openRow.status === "waiting" && (
+                <Button onClick={() => void advanceWaiting(openRow.id)} disabled={busy}>Advance anyway</Button>
+              )}
+              <Button variant="success" disabled={busy} onClick={() => void approveOne(openRow.id)}>
+                <Sparkles className="w-4 h-4" /> Approve
+              </Button>
+            </div>
+          </div>
+        )}
+      >
+        {openRow && <DetailDrawerBody row={openRow} entities={entities} categories={categories} accounts={accounts} onUpdate={updateRow} />}
+      </Drawer>
+
+      {/* Propose rule modal */}
+      <ProposeRuleModal
+        open={proposeFor !== null}
+        onClose={() => setProposeFor(null)}
+        sourceRow={proposeFor}
+        entities={entities}
+        categories={categories}
+        onCreated={() => { setProposeFor(null); toast.success("Rule created"); }}
+      />
     </div>
   );
 }
 
-// ── Row ─────────────────────────────────────────────────────────────────────
-
-function ReviewRow({
-  item, selected, onToggle, onOpen,
-}: { item: ReviewItem; selected: boolean; onToggle(on: boolean): void; onOpen(): void }) {
-  const amtCls = txAmountColor(item.amount ?? 0, item.account_type ?? null, item.current_category_tax ?? null);
-  const sug = item.suggested_category_tax ?? item.current_category_tax;
-  const conf = item.suggested_confidence ?? item.current_confidence;
-  const confTone =
-    conf == null ? "neutral" :
-    conf >= 0.9 ? "ok" :
-    conf >= 0.7 ? "warn" : "danger";
-
+function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
-    <tr className="border-b border-border last:border-b-0 hover:bg-bg-elevated/50">
-      <td className="pl-4 py-2.5">
-        <input type="checkbox" checked={selected} onChange={(e) => onToggle(e.target.checked)} />
-      </td>
-      <td className="py-2.5 text-text-muted whitespace-nowrap">{item.posted_date ?? "—"}</td>
-      <td className="max-w-[24rem]">
-        <div className="text-text-primary truncate">{item.merchant_name ?? item.description ?? "—"}</div>
-        {item.description && item.merchant_name && (
-          <div className="text-xs text-text-subtle truncate">{item.description}</div>
-        )}
-      </td>
-      <td className={`tabular-nums ${amtCls}`}>{fmtUsd(item.amount, { sign: true })}</td>
-      <td className="text-text-muted">{item.account_name ?? "—"}</td>
-      <td>
-        {(item.suggested_entity ?? item.current_entity) ? (
-          <Badge tone="neutral">{humanizeSlug(item.suggested_entity ?? item.current_entity ?? "")}</Badge>
-        ) : (
-          <span className="text-text-subtle">—</span>
-        )}
-      </td>
-      <td>
-        {sug ? (
-          <Badge tone="info">{humanizeSlug(sug)}</Badge>
-        ) : (
-          <span className="text-text-subtle">—</span>
-        )}
-      </td>
-      <td>
-        {conf != null ? <Badge tone={confTone}>{Math.round(conf * 100)}%</Badge> : <span className="text-text-subtle">—</span>}
-      </td>
-      <td className="pr-4">
-        <Button size="sm" onClick={onOpen}>Open</Button>
-      </td>
-    </tr>
+    <button
+      onClick={onClick}
+      className={
+        "inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 transition-colors -mb-px " +
+        (active
+          ? "border-accent-primary text-accent-primary"
+          : "border-transparent text-text-muted hover:text-text-primary")
+      }
+    >
+      {children}
+    </button>
   );
 }
 
-// ── Drawer ──────────────────────────────────────────────────────────────────
+function Inbox(props: { className?: string }) {
+  // Inline SVG to avoid an extra lucide import name collision
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={props.className}>
+      <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
+      <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11Z" />
+    </svg>
+  );
+}
 
-function ReviewDrawer({
-  item, budgetOptions, taxOptions, onClose, onResolve, onReclassify, busy,
-}: {
-  item: ReviewItem | null;
-  budgetOptions: OptionCategory[];
-  taxOptions: OptionCategory[];
-  onClose(): void;
-  onResolve(id: string, input: { action: ResolveAction; entity?: string; category_tax?: string; category_budget?: string; cut_status?: "flagged" | "complete" | null }): Promise<void>;
-  onReclassify(txId: string): Promise<void>;
-  busy: boolean;
-}) {
-  const [entity, setEntity] = useState(item?.suggested_entity ?? item?.current_entity ?? "elyse_coaching");
-  const [categoryTax, setCategoryTax] = useState(item?.suggested_category_tax ?? item?.current_category_tax ?? "");
-  const [categoryBudget, setCategoryBudget] = useState(item?.suggested_category_budget ?? "");
-  const [cutStatus, setCutStatus] = useState<"flagged" | "complete" | "">("");
+interface DetailProps {
+  row: ReviewRow;
+  entities: Entity[];
+  categories: Category[];
+  accounts: AccountRow[];
+  onUpdate: (id: string, body: Partial<ReviewRow>) => Promise<void>;
+}
 
-  // Sync state when a different item is opened.
-  useMemo(() => {
-    if (item) {
-      setEntity(item.suggested_entity ?? item.current_entity ?? "elyse_coaching");
-      setCategoryTax(item.suggested_category_tax ?? item.current_category_tax ?? "");
-      setCategoryBudget(item.suggested_category_budget ?? "");
-      setCutStatus("");
-    }
-  }, [item?.id]);
-
-  if (!item) return null;
+function DetailDrawerBody({ row, entities, categories, accounts, onUpdate }: DetailProps) {
+  const [notes, setNotes] = useState(row.human_notes ?? "");
+  const account = row.account_id ? accounts.find(a => a.id === row.account_id) : null;
+  const supplement = row.supplement_json;
 
   return (
-    <Drawer
-      open={!!item}
-      onClose={onClose}
-      title={item.merchant_name ?? item.description ?? "Review"}
-      footer={
-        <div className="flex items-center justify-between gap-2">
-          <Button onClick={() => void onResolve(item.id, { action: "skip" })} disabled={busy}>Skip</Button>
-          <div className="flex gap-2">
-            <Button
-              variant="ghost"
-              onClick={() => void onResolve(item.id, { action: "classify", category_tax: "transfer" })}
-              disabled={busy}
-              title="Mark as a transfer between accounts — excluded from taxes and budget"
-            >
-              <ArrowLeftRight className="w-4 h-4" /> Transfer
-            </Button>
-            <Button
-              variant="ghost"
-              onClick={() => void onReclassify(item.transaction_id)}
-              disabled={busy}
-              title="Re-run AI classifier (check browser console for prompt + response)"
-            >
-              <Sparkles className="w-4 h-4" /> Reclassify
-            </Button>
-            <Button variant="ghost" onClick={onClose}>Cancel</Button>
-            <Button
-              variant="success"
-              onClick={() => void onResolve(item.id, { action: "accept" })}
-              disabled={busy || !item.suggested_entity}
-              title={!item.suggested_entity ? "No suggestion to accept — pick a category and use Apply" : ""}
-            >
-              Accept suggestion
-            </Button>
-            <Button
-              variant="primary"
-              onClick={() => void onResolve(item.id, {
-                action: "classify",
-                entity,
-                category_tax: categoryTax || undefined,
-                category_budget: categoryBudget || undefined,
-                cut_status: cutStatus || null,
-              })}
-              disabled={busy}
-            >
-              Apply override
-            </Button>
-          </div>
+    <div className="space-y-4 text-sm">
+      <section>
+        <div className="text-xs uppercase text-text-muted mb-1">Transaction</div>
+        <div className="font-medium">{row.description}</div>
+        {row.merchant && <div className="text-text-muted">{row.merchant}</div>}
+        <div className="mt-1 text-text-muted">
+          {row.date} · {fmtUsd(row.amount, { sign: true })} · {account?.name ?? "—"}
         </div>
-      }
-    >
-      <dl className="grid grid-cols-2 gap-3 text-sm mb-4">
-        <div><dt className="text-xs text-text-muted">Date</dt><dd className="text-text-primary">{item.posted_date ?? "—"}</dd></div>
-        <div><dt className="text-xs text-text-muted">Amount</dt><dd className="text-text-primary tabular-nums">{fmtUsd(item.amount, { sign: true })}</dd></div>
-        <div><dt className="text-xs text-text-muted">Account</dt><dd className="text-text-primary">{item.account_name ?? "—"}</dd></div>
-        <div><dt className="text-xs text-text-muted">Owner</dt><dd className="text-text-primary">{item.owner_tag ?? "—"}</dd></div>
-        <div className="col-span-2"><dt className="text-xs text-text-muted">Description</dt><dd className="text-text-primary">{item.description ?? "—"}</dd></div>
-      </dl>
+      </section>
 
-      {item.details && (
-        <div className="mb-4">
-          <div className="text-xs text-text-muted mb-1">Why this is in the queue</div>
-          <pre className="whitespace-pre-wrap text-sm bg-bg-elevated rounded-md p-3 text-text-primary">{item.details}</pre>
-        </div>
+      {supplement && Object.keys(supplement).length > 0 && (
+        <section>
+          <div className="text-xs uppercase text-text-muted mb-1">Email enrichment</div>
+          <pre className="bg-bg-elevated rounded-lg p-3 text-xs whitespace-pre-wrap break-words">
+            {JSON.stringify(supplement, null, 2)}
+          </pre>
+        </section>
       )}
 
-      {item.needs_input && (
-        <div className="mb-4">
-          <div className="text-xs text-text-muted mb-1">What I need from you</div>
-          <p className="text-sm text-text-primary">{item.needs_input}</p>
-        </div>
+      {row.ai_notes && (
+        <section>
+          <div className="text-xs uppercase text-text-muted mb-1">AI reasoning</div>
+          <div className="bg-bg-elevated rounded-lg p-3 text-text-muted">{row.ai_notes}</div>
+        </section>
       )}
 
-      <div className="grid grid-cols-2 gap-3">
-        <div className="col-span-2">
-          <label className="block text-xs text-text-muted mb-1">Entity</label>
-          <Select value={entity} onChange={(e) => setEntity(e.target.value)} className="w-full">
-            {ENTITY_OPTIONS.map(({ slug, label }) => (
-              <option key={slug} value={slug}>{label}</option>
-            ))}
+      <section className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="block text-xs uppercase text-text-muted mb-1">Entity</label>
+          <Select value={row.entity_id ?? ""} onChange={e => void onUpdate(row.id, { entity_id: e.target.value || null })}>
+            <option value="">—</option>
+            {entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
           </Select>
         </div>
         <div>
-          <label className="block text-xs text-text-muted mb-1">Tax category</label>
-          <Select value={categoryTax} onChange={(e) => setCategoryTax(e.target.value)} className="w-full">
-            <option value="">— none —</option>
-            {taxOptions.map(({ slug, label }) => (
-              <option key={slug} value={slug}>{label}</option>
-            ))}
+          <label className="block text-xs uppercase text-text-muted mb-1">Category</label>
+          <Select value={row.category_id ?? ""} onChange={e => void onUpdate(row.id, { category_id: e.target.value || null, classification_method: "manual" })}>
+            <option value="">—</option>
+            {categories
+              .filter(c => {
+                if (!row.entity_id) return true;
+                const ent = entities.find(en => en.id === row.entity_id);
+                if (!ent) return true;
+                if (c.entity_type === "all") return true;
+                return c.entity_type === ent.type;
+              })
+              .map(c => <option key={c.id} value={c.id}>{humanizeSlug(c.slug)} · {c.name}</option>)}
           </Select>
         </div>
-        <div>
-          <label className="block text-xs text-text-muted mb-1">Budget category (optional)</label>
-          <Select value={categoryBudget} onChange={(e) => setCategoryBudget(e.target.value)} className="w-full">
-            <option value="">— none —</option>
-            {budgetOptions.map(({ slug, label }) => (
-              <option key={slug} value={slug}>{label}</option>
-            ))}
-          </Select>
-        </div>
-        <div>
-          <label className="block text-xs text-text-muted mb-1">Cut tracking</label>
-          <Select
-            value={cutStatus}
-            onChange={(e) => setCutStatus(e.target.value as "flagged" | "complete" | "")}
-            className="w-full"
-            title="Mark this expense for elimination — applied when you click Apply override."
-          >
-            <option value="">Unflagged</option>
-            <option value="flagged">Flag to cut</option>
-            <option value="complete">Cut complete</option>
-          </Select>
-        </div>
-      </div>
-    </Drawer>
+      </section>
+
+      <section className="flex items-center gap-4">
+        <label className="inline-flex items-center gap-2">
+          <input type="checkbox" checked={row.is_transfer}
+            onChange={e => void onUpdate(row.id, { is_transfer: e.target.checked })}
+          />
+          Transfer
+        </label>
+        <label className="inline-flex items-center gap-2">
+          <input type="checkbox" checked={row.is_reimbursable}
+            onChange={e => void onUpdate(row.id, { is_reimbursable: e.target.checked })}
+          />
+          Reimbursable
+        </label>
+      </section>
+
+      <section>
+        <label className="block text-xs uppercase text-text-muted mb-1">Notes</label>
+        <textarea
+          value={notes}
+          onChange={e => setNotes(e.target.value)}
+          onBlur={() => { if (notes !== (row.human_notes ?? "")) void onUpdate(row.id, { human_notes: notes }); }}
+          rows={3}
+          className="w-full rounded-lg border border-border bg-bg-surface px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent-primary"
+        />
+      </section>
+
+      {row.waiting_for && (
+        <section className="text-xs text-accent-warn">
+          Waiting for: {row.waiting_for}
+        </section>
+      )}
+    </div>
   );
 }

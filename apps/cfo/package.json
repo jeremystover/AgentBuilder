@@ -11,14 +11,14 @@
     "build": "pnpm web:build && wrangler deploy --dry-run --outdir=.wrangler-dist",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.web.json --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest",
-    "db:migrate": "wrangler d1 migrations apply cfo-db"
+    "test:watch": "vitest"
   },
   "dependencies": {
-    "@agentbuilder/core": "workspace:*",
+    "@agentbuilder/auth-google": "workspace:*",
     "@agentbuilder/llm": "workspace:*",
     "@agentbuilder/observability": "workspace:*",
     "@agentbuilder/web-ui-kit": "workspace:*",
+    "postgres": "^3.4.5",
     "zod": "^3.23.8"
   },
   "devDependencies": {

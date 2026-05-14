@@ -1,41 +1,32 @@
 /**
- * Curated tool registry for the web chat.
+ * Tool registry for the in-app chat.
  *
- * The CFO worker exposes a 23-tool MCP surface (see mcp-tools.ts). That
- * full surface is fine for Claude.ai's external custom-tool integration
- * — it's a power-user surface — but for the in-app chat we want fewer
- * choices to keep latency low and the model focused (AGENTS.md rule 2:
- * ≤10 tools per chat surface).
- *
- * The cut below is read-heavy daily-driver tools plus a small set of
- * mutations (resolve_review, classify_transactions). The chat will not
- * trigger Teller syncs, ingest CSVs, edit rules, or commit bookkeeping
- * decisions — those have UI confirmation flows of their own and should
- * stay there.
- *
- * Implementation note: rather than re-implement each tool's wiring, we
- * reuse mcp-tools.ts's `dispatchTool` directly. That keeps MCP and web
- * chat bug-for-bug identical and means new MCP tools can be promoted
- * to the chat by adding their name to TOOL_ALLOWLIST.
+ * All 10 MCP tools are below the AGENTS.md ≤10 limit so the entire MCP
+ * surface is allowlisted as-is. If new tools are added, prune here.
  */
 
 import type { Env } from './types';
 import { dispatchTool, MCP_TOOLS } from './mcp-tools';
 import { truncateForChat, drillInFor } from './lib/tool-result-truncate';
 
-// Curated subset, ordered by likelihood the model will reach for each.
-export const TOOL_ALLOWLIST = [
-  'list_review_queue',
-  'next_review_item',
-  'resolve_review',
+/**
+ * Curated chat allowlist (AGENTS.md rule 2: ≤10 tools). The two ops tools
+ * (accounts_list, sync_run) are dropped from chat — they're still reachable
+ * via direct MCP, but they don't help the model answer questions and slow
+ * tool selection.
+ */
+export const TOOL_ALLOWLIST: string[] = [
+  'review_status',
+  'review_next',
+  'review_resolve',
+  'review_bulk_accept',
   'transactions_summary',
-  'pnl_all_entities',
-  'budget_status',
-  'schedule_c_report',
-  'classify_transactions',
-  'start_bookkeeping_session',
-  'get_bookkeeping_batch',
-] as const;
+  'transactions_list',
+  'rules_list',
+  'rules_create',
+  'report_generate',
+  'report_list_configs',
+];
 
 interface KitTool {
   description: string;
@@ -48,23 +39,17 @@ function envelope(text: string): { content: Array<{ type: 'text'; text: string }
 }
 
 export function buildWebChatTools(env: Env): Record<string, KitTool> {
-  const byName = new Map(MCP_TOOLS.map((t) => [t.name, t] as const));
+  const byName = new Map(MCP_TOOLS.map(t => [t.name, t] as const));
   const reg: Record<string, KitTool> = {};
   for (const name of TOOL_ALLOWLIST) {
-    const def = byName.get(name);
-    if (!def) {
-      // Should never happen — fail loudly so we catch it in CI.
-      throw new Error(`web-chat-tools: TOOL_ALLOWLIST references unknown tool "${name}"`);
-    }
+    const def = byName.get(name as (typeof MCP_TOOLS)[number]['name']);
+    if (!def) throw new Error(`web-chat-tools: TOOL_ALLOWLIST references unknown tool "${name}"`);
     reg[name] = {
       description: def.description,
       inputSchema: def.inputSchema as Record<string, unknown>,
       run: async (args) => {
         try {
           const raw = await dispatchTool(name, args ?? {}, env);
-          // Cap chat-bound payloads so a single tool result can never
-          // blow the model's per-turn context budget. The full data is
-          // always available via the SPA hash route in drillInFor(name).
           const capped = truncateForChat(raw, { drillInHint: drillInFor(name) });
           return envelope(capped);
         } catch (err) {

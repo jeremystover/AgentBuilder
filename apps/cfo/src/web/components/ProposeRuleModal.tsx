@@ -1,101 +1,63 @@
-import { useState } from "react";
-import { Check } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Button, Input, Select, humanizeSlug } from "./ui";
-import { createRule, applyRuleRetroactive, type RuleInput } from "../api";
-import type { RuleMatchField, RuleMatchOperator, EntitySlug } from "../types";
-import { ENTITY_OPTIONS, TAX_OPTIONS, TRANSFER_OPTION } from "../catalog";
-import { useCategoryOptions } from "../hooks/useCategoryOptions";
+import { Button, Input, Select, Modal } from "./ui";
+import { api, type Entity, type Category, type ReviewRow } from "../api";
 
-export const FIELD_OPTIONS: { value: RuleMatchField; label: string }[] = [
-  { value: "merchant_name", label: "Merchant" },
-  { value: "description",   label: "Description" },
-  { value: "account_id",    label: "Account ID" },
-  { value: "amount",        label: "Amount" },
-];
+type MatchKind = "description_contains" | "description_starts_with" | "merchant_equals";
 
-export const OPERATOR_OPTIONS: { value: RuleMatchOperator; label: string }[] = [
-  { value: "contains",    label: "contains" },
-  { value: "equals",      label: "equals" },
-  { value: "starts_with", label: "starts with" },
-  { value: "ends_with",   label: "ends with" },
-  { value: "regex",       label: "regex" },
-];
-
-export type RuleProposal = { draft: RuleInput };
-
-export function buildRuleProposal(opts: {
-  merchantName: string | null | undefined;
-  description: string | null | undefined;
-  entity: string;
-  categoryTax: string;
-  categoryBudget?: string | null;
-}): RuleProposal | null {
-  const merchantName = (opts.merchantName ?? "").trim();
-  const description = (opts.description ?? "").trim();
-  const matchValue = merchantName || description;
-  if (!matchValue || !opts.entity || !opts.categoryTax || opts.categoryTax === "transfer") return null;
-  return {
-    draft: {
-      name: `${matchValue} → ${humanizeSlug(opts.categoryTax)}`,
-      match_field: merchantName ? "merchant_name" : "description",
-      match_operator: "contains",
-      match_value: matchValue,
-      entity: opts.entity as EntitySlug,
-      category_tax: opts.categoryTax,
-      category_budget: opts.categoryBudget ?? "",
-      priority: 50,
-      is_active: true,
-    },
-  };
+interface Props {
+  open: boolean;
+  onClose: () => void;
+  sourceRow: ReviewRow | null;
+  entities: Entity[];
+  categories: Category[];
+  onCreated: () => void;
 }
 
-export function ProposeRuleModal({
-  proposal, onDismiss, onSaved,
-}: {
-  proposal: RuleProposal;
-  onDismiss(): void;
-  onSaved(): void;
-}) {
-  const [draft, setDraft] = useState<RuleInput>(proposal.draft);
-  const [applyRetroactive, setApplyRetroactive] = useState(true);
+function suggestedToken(row: ReviewRow): string {
+  if (row.merchant) return row.merchant;
+  // First meaningful token of description (skip leading "POS", "ACH", etc.)
+  return (row.description ?? "")
+    .split(/\s+/)
+    .find(t => t.length > 3 && !/^(POS|ACH|DBT|CHK|CHECK|DEP|XFER|TRANSFER)$/i.test(t))
+    ?? row.description ?? "";
+}
+
+export function ProposeRuleModal({ open, onClose, sourceRow, entities, categories, onCreated }: Props) {
+  const [matchKind, setMatchKind] = useState<MatchKind>("description_contains");
+  const [matchValue, setMatchValue] = useState("");
+  const [entityId, setEntityId] = useState("");
+  const [categoryId, setCategoryId] = useState("");
+  const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
-  const { budgetOptions } = useCategoryOptions();
 
-  const update = <K extends keyof RuleInput>(key: K, value: RuleInput[K]) =>
-    setDraft((prev) => ({ ...prev, [key]: value }));
+  useEffect(() => {
+    if (!sourceRow) return;
+    const tok = sourceRow.merchant ?? suggestedToken(sourceRow);
+    setMatchKind(sourceRow.merchant ? "merchant_equals" : "description_contains");
+    setMatchValue(tok);
+    setEntityId(sourceRow.entity_id ?? "");
+    setCategoryId(sourceRow.category_id ?? "");
+    setName(`${tok} → ${categories.find(c => c.id === sourceRow.category_id)?.name ?? "?"}`);
+  }, [sourceRow, categories]);
 
-  const isTransfer = draft.category_tax === "transfer";
+  const matchJson = useMemo(() => ({ [matchKind]: matchValue }), [matchKind, matchValue]);
 
-  const handleAdd = async () => {
-    if (!draft.name.trim() || !draft.match_value.trim()) {
-      toast.error("Name and match value are required");
-      return;
-    }
-    if (!isTransfer && !draft.category_tax && !draft.category_budget) {
-      toast.error("Select at least a tax or budget category");
+  const submit = async () => {
+    if (!matchValue || !entityId || !categoryId) {
+      toast.error("Match value, entity, and category are required.");
       return;
     }
     setBusy(true);
     try {
-      const payload: RuleInput = {
-        ...draft,
-        entity: isTransfer ? undefined : draft.entity,
-        category_tax: draft.category_tax || undefined,
-        category_budget: isTransfer ? undefined : (draft.category_budget || undefined),
-      };
-      const { rule } = await createRule(payload);
-      if (applyRetroactive) {
-        const r = await applyRuleRetroactive(rule.id);
-        if (r.applied > 0) {
-          toast.success(`Rule created · applied to ${r.applied} uncategorized transaction${r.applied !== 1 ? "s" : ""}`);
-        } else {
-          toast.success("Rule created (no uncategorized matches found)");
-        }
-      } else {
-        toast.success("Rule created");
-      }
-      onSaved();
+      await api.post("/api/web/rules", {
+        name,
+        match_json: matchJson,
+        entity_id: entityId,
+        category_id: categoryId,
+        created_by: "user",
+      });
+      onCreated();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
@@ -104,122 +66,63 @@ export function ProposeRuleModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/40" onClick={onDismiss} />
-      <div className="relative w-full max-w-lg bg-bg-surface rounded-xl shadow-2xl border border-border">
-        <div className="flex items-center justify-between border-b border-border px-5 py-3">
-          <div className="font-semibold text-text-primary">Create a rule from this categorization?</div>
-          <button className="text-text-muted hover:text-text-primary" onClick={onDismiss} aria-label="Dismiss">✕</button>
-        </div>
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Propose rule"
+      footer={
+        <>
+          <Button onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button variant="primary" onClick={() => void submit()} disabled={busy}>Add rule</Button>
+        </>
+      }
+    >
+      {sourceRow && (
+        <div className="space-y-3 text-sm">
+          <div className="bg-bg-elevated rounded-lg p-3">
+            <div className="text-xs uppercase text-text-muted mb-1">Source transaction</div>
+            <div className="font-medium">{sourceRow.description}</div>
+            {sourceRow.merchant && <div className="text-text-muted">{sourceRow.merchant}</div>}
+          </div>
 
-        <div className="px-5 py-4 space-y-4">
           <div>
             <label className="block text-xs text-text-muted mb-1">Rule name</label>
-            <Input
-              type="text"
-              value={draft.name}
-              onChange={(e) => update("name", e.target.value)}
-              className="w-full"
-            />
+            <Input className="w-full" value={name} onChange={e => setName(e.target.value)} />
           </div>
 
-          <div>
-            <div className="text-xs text-text-muted mb-1">When</div>
-            <div className="grid grid-cols-3 gap-2">
-              <Select value={draft.match_field} onChange={(e) => update("match_field", e.target.value as RuleMatchField)} className="w-full">
-                {FIELD_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </Select>
-              <Select value={draft.match_operator} onChange={(e) => update("match_operator", e.target.value as RuleMatchOperator)} className="w-full">
-                {OPERATOR_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </Select>
-              <Input
-                type="text"
-                value={draft.match_value}
-                onChange={(e) => update("match_value", e.target.value)}
-                className="w-full"
-              />
-            </div>
-          </div>
-
-          <div>
-            <div className="text-xs text-text-muted mb-1">Classify as</div>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="block text-xs text-text-muted mb-1">Tax category</label>
-                <Select
-                  value={draft.category_tax ?? ""}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    update("category_tax", val);
-                    if (val === "transfer") update("category_budget", "");
-                  }}
-                  className="w-full"
-                >
-                  <option value="">— none —</option>
-                  <option value={TRANSFER_OPTION.slug}>{TRANSFER_OPTION.label}</option>
-                  <optgroup label="Schedule C">
-                    {TAX_OPTIONS.filter((c) => c.group === "schedule_c").map(({ slug, label }) => (
-                      <option key={slug} value={slug}>{label}</option>
-                    ))}
-                  </optgroup>
-                  <optgroup label="Schedule E">
-                    {TAX_OPTIONS.filter((c) => c.group === "schedule_e").map(({ slug, label }) => (
-                      <option key={slug} value={slug}>{label}</option>
-                    ))}
-                  </optgroup>
-                </Select>
-              </div>
-              <div>
-                <label className="block text-xs text-text-muted mb-1">Budget category</label>
-                <Select
-                  value={draft.category_budget ?? ""}
-                  onChange={(e) => update("category_budget", e.target.value)}
-                  className="w-full"
-                  disabled={isTransfer}
-                >
-                  <option value="">— none —</option>
-                  {budgetOptions.map(({ slug, label }) => (
-                    <option key={slug} value={slug}>{label}</option>
-                  ))}
-                </Select>
-              </div>
-              {!isTransfer && (
-                <div className="col-span-2">
-                  <label className="block text-xs text-text-muted mb-1">Entity</label>
-                  <Select value={draft.entity ?? "family_personal"} onChange={(e) => update("entity", e.target.value as EntitySlug)} className="w-full">
-                    {ENTITY_OPTIONS.map(({ slug, label }) => <option key={slug} value={slug}>{label}</option>)}
-                  </Select>
-                </div>
-              )}
-              {isTransfer && (
-                <div className="col-span-2 text-xs text-text-muted bg-bg-elevated rounded px-3 py-2">
-                  Transfers are excluded from all tax reports and budgets.
-                </div>
-              )}
-            </div>
-          </div>
-
-          <label className="flex items-start gap-3 p-3 rounded-lg border border-border bg-bg-elevated cursor-pointer">
-            <input
-              type="checkbox"
-              checked={applyRetroactive}
-              onChange={(e) => setApplyRetroactive(e.target.checked)}
-              className="mt-0.5 rounded"
-            />
+          <div className="grid grid-cols-3 gap-2">
             <div>
-              <div className="text-sm font-medium text-text-primary">Apply to past uncategorized transactions</div>
-              <div className="text-xs text-text-muted mt-0.5">Categorize any existing transactions that match this rule and don't have a category yet. Manually categorized transactions are never touched.</div>
+              <label className="block text-xs text-text-muted mb-1">Match</label>
+              <Select value={matchKind} onChange={e => setMatchKind(e.target.value as MatchKind)}>
+                <option value="description_contains">desc contains</option>
+                <option value="description_starts_with">desc starts with</option>
+                <option value="merchant_equals">merchant equals</option>
+              </Select>
             </div>
-          </label>
-        </div>
+            <div className="col-span-2">
+              <label className="block text-xs text-text-muted mb-1">Value</label>
+              <Input className="w-full" value={matchValue} onChange={e => setMatchValue(e.target.value)} />
+            </div>
+          </div>
 
-        <div className="flex items-center justify-between border-t border-border px-5 py-3 bg-bg-elevated rounded-b-xl">
-          <Button variant="ghost" onClick={onDismiss} disabled={busy}>Dismiss</Button>
-          <Button variant="primary" onClick={() => void handleAdd()} disabled={busy}>
-            <Check className="w-4 h-4" /> Add
-          </Button>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-xs text-text-muted mb-1">Entity</label>
+              <Select value={entityId} onChange={e => setEntityId(e.target.value)}>
+                <option value="">— select —</option>
+                {entities.map(en => <option key={en.id} value={en.id}>{en.name}</option>)}
+              </Select>
+            </div>
+            <div>
+              <label className="block text-xs text-text-muted mb-1">Category</label>
+              <Select value={categoryId} onChange={e => setCategoryId(e.target.value)}>
+                <option value="">— select —</option>
+                {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </Select>
+            </div>
+          </div>
         </div>
-      </div>
-    </div>
+      )}
+    </Modal>
   );
 }

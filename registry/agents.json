@@ -205,85 +205,95 @@
     },
     {
       "id": "cfo",
-      "name": "CFO",
-      "purpose": "Owns bookkeeping, budgeting, cash-flow, retirement and financial planning, and tax prep/advice. Hybrid agent: SPA + REST for bulk ops (imports, review, reports) and MCP tools for conversational use from Claude.ai.",
+      "name": "Finances",
+      "purpose": "Family financial management — Teller bank sync, Gmail email enrichment (Amazon, Venmo, Apple, Etsy), AI + rule classification, human review, and Schedule C/E reporting. Six modules (Gather, Review, Planning, Spending, Scenarios, Reporting) share one Neon Postgres database. Hybrid agent: React SPA + REST + MCP.",
       "owner": "jeremystover",
       "status": "active",
       "kind": "app",
       "skills": [
         "transaction-ingest",
         "transaction-categorization",
+        "email-enrichment",
+        "review-queue",
         "tax-prep",
-        "bookkeeping",
         "budgeting",
-        "budget-vs-actual",
-        "cash-flow-forecast",
-        "retirement-analysis",
-        "financial-planning",
-        "tax-advice"
+        "financial-planning"
       ],
       "tools": [
-        "teller-sync",
-        "csv-import",
-        "amazon-import",
-        "tiller-import",
-        "classify-transactions",
-        "list-review-queue",
-        "next-review-item",
-        "resolve-review",
-        "schedule-c-report",
-        "schedule-e-report",
-        "transactions-summary",
-        "list-budget-categories",
-        "create-budget-category",
-        "set-budget-target",
-        "budget-status",
-        "pnl-for-entity",
-        "pnl-all-entities",
-        "pnl-monthly-trend"
+        "review_status",
+        "review_next",
+        "review_resolve",
+        "review_bulk_accept",
+        "transactions_list",
+        "transactions_summary",
+        "rules_list",
+        "rules_create",
+        "accounts_list",
+        "sync_run",
+        "report_list_configs",
+        "report_generate"
       ],
+      "toolDescriptions": {
+        "review_status": "Queue counts: pending, waiting, recently approved.",
+        "review_next": "Interview-mode next pending transaction with similar past rows.",
+        "review_resolve": "Accept, reclassify, skip, or flag a single pending transaction.",
+        "review_bulk_accept": "Approve a filtered batch (rule-matched, high-confidence, etc.).",
+        "transactions_list": "Search/filter approved transactions.",
+        "transactions_summary": "Roll up approved spend by entity + category for a period.",
+        "rules_list": "Active classification rules with match counts.",
+        "rules_create": "Add a rule for description/merchant/amount patterns.",
+        "accounts_list": "All Teller-connected accounts with sync status.",
+        "sync_run": "Trigger Teller and/or per-vendor email sync on demand.",
+        "report_list_configs": "List saved report configurations (Schedule C/E, family summary) with last-run dates.",
+        "report_generate": "Generate a Schedule C/E or summary report; returns a Google Drive link."
+      },
       "mcpServers": [],
       "sharedPackages": [
-        "@agentbuilder/core",
-        "@agentbuilder/llm"
+        "@agentbuilder/auth-google",
+        "@agentbuilder/llm",
+        "@agentbuilder/observability",
+        "@agentbuilder/web-ui-kit"
       ],
       "oauthScopes": [
         "teller:transactions:read",
-        "teller:accounts:read"
+        "teller:accounts:read",
+        "https://www.googleapis.com/auth/gmail.readonly"
       ],
       "cloudflare": {
         "workerName": "cfo",
         "durableObjects": [],
         "d1": [
-          "cfo-db"
+          "cfo-tokens"
         ],
         "kv": [],
         "r2": [
-          "cfo-files"
+          "cfo-storage"
         ],
-        "queues": [],
+        "queues": [
+          "cfo-scenarios"
+        ],
+        "hyperdrive": [
+          "cfo-db"
+        ],
         "hasAssets": true
       },
       "routing": {
         "triggerPhrases": [
+          "what needs review",
           "categorize my transactions",
           "how much did I spend",
           "tax prep",
-          "quarterly taxes",
           "budget vs actual",
-          "retirement projection",
-          "cash flow",
-          "bookkeeping",
-          "financial plan",
-          "set a budget"
+          "sync my accounts",
+          "next transaction",
+          "create a rule"
         ],
         "examples": [
-          "Import last month's transactions from Teller",
-          "Categorize these transactions for Schedule C",
-          "What's my burn rate this quarter?",
-          "Am I on track for my retirement goal?",
-          "Set a $500/mo dining budget and track against it",
-          "How much should I pay in estimated taxes this quarter?"
+          "What's left to review?",
+          "Approve all rule-matched transactions",
+          "How much did we spend on dining last month?",
+          "Set up a rule so all Costco charges go to groceries",
+          "Sync Teller and email and tell me what came in"
         ],
         "nonGoals": [
           "Calendar, tasks, goals, or stakeholder management (that's Chief of Staff)",
@@ -298,12 +308,7 @@
         {
           "schedule": "0 9 * * *",
           "trigger": "nightly-sync",
-          "description": "Nightly Teller transaction sync (~05:00 ET) — pulls and stages new transactions for review."
-        },
-        {
-          "schedule": "*/30 * * * *",
-          "trigger": "sms-dispatch",
-          "description": "Every 30 min — SMS dispatcher; self-checks Pacific local time + per-person preferred slots so 47 of 48 daily fires are no-ops."
+          "description": "Nightly Teller sync + email enrichment + auto-classify (~05:00 ET). Pulls new transactions, applies rules, runs AI classification, and stages everything for human review."
         }
       ],
       "secrets": [
@@ -313,9 +318,9 @@
         "WEB_UI_PASSWORD",
         "EXTERNAL_API_KEY",
         "WEB_UI_USER_ID",
-        "TWILIO_ACCOUNT_SID",
-        "TWILIO_AUTH_TOKEN",
-        "TWILIO_FROM"
+        "GOOGLE_OAUTH_CLIENT_ID",
+        "GOOGLE_OAUTH_CLIENT_SECRET",
+        "GOOGLE_TOKEN_VAULT_KEK"
       ]
     },
     {

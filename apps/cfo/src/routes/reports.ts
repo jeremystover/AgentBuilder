@@ -1,269 +1,230 @@
+/**
+ * Reporting REST endpoints. Generation runs synchronously — the data
+ * volumes here are small enough (single-family bookkeeping) that batch
+ * Sheets writes finish in seconds.
+ */
+
 import type { Env } from '../types';
-import { jsonOk, jsonError, getUserId } from '../types';
+import { jsonOk, jsonError } from '../types';
+import { db } from '../lib/db';
+import { getReportConfig, generateReport, type ReportConfig } from '../lib/report-generator';
+import { publishReport } from '../lib/google-sheets';
 
-// ── GET /reports/schedule-c ───────────────────────────────────────────────────
-// Returns Schedule C worksheet: categories with line totals + transaction drill-down.
-export async function handleScheduleC(request: Request, env: Env): Promise<Response> {
-  const userId = getUserId(request);
-  const url = new URL(request.url);
-  const year = url.searchParams.get('year') ?? new Date().getFullYear().toString();
-  const entity = url.searchParams.get('entity') ?? 'elyse_coaching';
+interface ConfigBody {
+  name: string;
+  entity_ids?: string[];
+  category_ids?: string[];
+  category_mode?: 'tax' | 'budget' | 'all';
+  include_transactions?: boolean;
+  drive_folder_id?: string | null;
+  notes?: string | null;
+}
 
-  if (entity !== 'elyse_coaching' && entity !== 'jeremy_coaching') {
-    return jsonError('entity must be elyse_coaching or jeremy_coaching');
+export async function handleListReportConfigs(_req: Request, env: Env): Promise<Response> {
+  const sql = db(env);
+  try {
+    const configs = await sql<Array<ReportConfig & { updated_at: string }>>`
+      SELECT id, name, entity_ids, category_ids, category_mode,
+             include_transactions, drive_folder_id, notes, updated_at
+      FROM report_configs
+      WHERE is_active = true
+      ORDER BY name
+    `;
+    // Attach last run summary.
+    const lastRuns = await sql<Array<{ config_id: string; generated_at: string; drive_link: string | null; status: string }>>`
+      SELECT DISTINCT ON (config_id) config_id, generated_at, drive_link, status
+      FROM report_runs
+      ORDER BY config_id, generated_at DESC
+    `;
+    const byConfig = new Map(lastRuns.map(r => [r.config_id, r]));
+    return jsonOk({
+      configs: configs.map(c => ({
+        ...c,
+        last_run: byConfig.get(c.id) ?? null,
+      })),
+    });
+  } catch (err) {
+    return jsonError(`list configs failed: ${String(err)}`, 500);
+  } finally {
+    await sql.end({ timeout: 5 }).catch(() => {});
   }
-
-  const coaSlug = entity;
-  const dateFrom = `${year}-01-01`;
-  const dateTo   = `${year}-12-31`;
-
-  const totals = await env.DB.prepare(
-    `SELECT c.category_tax, coa.name AS category_name, coa.form_line,
-            SUM(t.amount) AS total_amount, COUNT(*) AS transaction_count
-     FROM transactions t
-     JOIN classifications c ON c.transaction_id = t.id
-     LEFT JOIN chart_of_accounts coa ON coa.code = c.category_tax
-       AND coa.business_entity_id = (
-         SELECT id FROM business_entities WHERE user_id = ? AND slug = ? LIMIT 1
-       )
-     WHERE t.user_id = ? AND c.entity = ?
-       AND t.posted_date BETWEEN ? AND ?
-       AND c.review_required = 0
-       AND c.category_tax != 'transfer'
-     GROUP BY c.category_tax
-     ORDER BY coa.form_line`,
-  ).bind(userId, coaSlug, userId, entity, dateFrom, dateTo).all<{
-    category_tax: string; category_name: string; form_line: string;
-    total_amount: number; transaction_count: number;
-  }>();
-
-  const income = totals.results.filter(r => r.category_tax === 'income');
-  const expenses = totals.results
-    .filter(r => r.category_tax !== 'income')
-    .map(r => ({ ...r, total_amount: -r.total_amount }));
-  const totalIncome  = income.reduce((s, r) => s + r.total_amount, 0);
-  const totalExpense = expenses.reduce((s, r) => s + r.total_amount, 0);
-  const netProfit    = totalIncome - totalExpense;
-
-  const unreviewedRow = await env.DB.prepare(
-    `SELECT COUNT(*) AS cnt FROM transactions t
-     JOIN classifications c ON c.transaction_id = t.id
-     WHERE t.user_id = ? AND c.entity = ?
-       AND t.posted_date BETWEEN ? AND ? AND c.review_required = 1`,
-  ).bind(userId, entity, dateFrom, dateTo).first<{ cnt: number }>();
-
-  return jsonOk({
-    tax_year: year,
-    entity,
-    schedule: 'C',
-    income: { categories: income, total: totalIncome },
-    expenses: { categories: expenses, total: totalExpense },
-    net_profit: netProfit,
-    pending_review: unreviewedRow?.cnt ?? 0,
-  });
 }
 
-// ── GET /reports/schedule-e (Whitford House) ─────────────────────────────────
-export async function handleScheduleE(request: Request, env: Env): Promise<Response> {
-  const userId = getUserId(request);
-  const url = new URL(request.url);
-  const year = url.searchParams.get('year') ?? new Date().getFullYear().toString();
-
-  const dateFrom = `${year}-01-01`;
-  const dateTo   = `${year}-12-31`;
-
-  const totals = await env.DB.prepare(
-    `SELECT c.category_tax, coa.name AS category_name, coa.form_line,
-            SUM(t.amount) AS total_amount, COUNT(*) AS transaction_count
-     FROM transactions t
-     JOIN classifications c ON c.transaction_id = t.id
-     LEFT JOIN chart_of_accounts coa ON coa.code = c.category_tax
-       AND coa.business_entity_id = (
-         SELECT id FROM business_entities WHERE user_id = ? AND slug = 'airbnb' LIMIT 1
-       )
-     WHERE t.user_id = ? AND c.entity = 'airbnb_activity'
-       AND t.posted_date BETWEEN ? AND ?
-       AND c.review_required = 0
-     GROUP BY c.category_tax
-     ORDER BY coa.form_line`,
-  ).bind(userId, userId, dateFrom, dateTo).all<{
-    category_tax: string; category_name: string; form_line: string;
-    total_amount: number; transaction_count: number;
-  }>();
-
-  // Same sign-flip as Schedule C — expenses are negative in the DB and
-  // Schedule E wants positive figures. Keeping the two handlers in
-  // lockstep so the shape of their output matches.
-  const income = totals.results.filter(r => r.category_tax === 'rental_income');
-  const expenses = totals.results
-    .filter(r => r.category_tax !== 'rental_income')
-    .map(r => ({ ...r, total_amount: -r.total_amount }));
-  const totalIncome  = income.reduce((s, r) => s + r.total_amount, 0);
-  const totalExpense = expenses.reduce((s, r) => s + r.total_amount, 0);
-  const netProfit    = totalIncome - totalExpense;
-
-  const unreviewedRow = await env.DB.prepare(
-    `SELECT COUNT(*) AS cnt FROM transactions t
-     JOIN classifications c ON c.transaction_id = t.id
-     WHERE t.user_id = ? AND c.entity = 'airbnb_activity'
-       AND t.posted_date BETWEEN ? AND ? AND c.review_required = 1`,
-  ).bind(userId, dateFrom, dateTo).first<{ cnt: number }>();
-
-  return jsonOk({
-    tax_year: year,
-    entity: 'airbnb_activity',
-    schedule: 'E',
-    income: { categories: income, total: totalIncome },
-    expenses: { categories: expenses, total: totalExpense },
-    net_profit: netProfit,
-    pending_review: unreviewedRow?.cnt ?? 0,
-  });
+export async function handleCreateReportConfig(req: Request, env: Env): Promise<Response> {
+  const body = await req.json().catch(() => null) as ConfigBody | null;
+  if (!body?.name) return jsonError('name required', 400);
+  const sql = db(env);
+  try {
+    const rows = await sql<Array<{ id: string }>>`
+      INSERT INTO report_configs (name, entity_ids, category_ids, category_mode, include_transactions, drive_folder_id, notes)
+      VALUES (${body.name},
+              ${body.entity_ids ?? []},
+              ${body.category_ids ?? []},
+              ${body.category_mode ?? 'all'},
+              ${body.include_transactions ?? true},
+              ${body.drive_folder_id ?? null},
+              ${body.notes ?? null})
+      RETURNING id
+    `;
+    return jsonOk({ id: rows[0]!.id });
+  } catch (err) {
+    return jsonError(`create config failed: ${String(err)}`, 500);
+  } finally {
+    await sql.end({ timeout: 5 }).catch(() => {});
+  }
 }
 
-// ── GET /reports/summary ──────────────────────────────────────────────────────
-export async function handleSummary(request: Request, env: Env): Promise<Response> {
-  const userId = getUserId(request);
-  const url = new URL(request.url);
-  const year = url.searchParams.get('year') ?? new Date().getFullYear().toString();
-  const dateFrom = `${year}-01-01`;
-  const dateTo   = `${year}-12-31`;
-
-  const [byEntity, byMonth, reviewStats] = await Promise.all([
-    env.DB.prepare(
-      `SELECT c.entity, SUM(t.amount) AS total, COUNT(*) AS count
-       FROM transactions t
-       JOIN classifications c ON c.transaction_id = t.id
-       WHERE t.user_id = ? AND t.posted_date BETWEEN ? AND ?
-       GROUP BY c.entity`,
-    ).bind(userId, dateFrom, dateTo).all(),
-    env.DB.prepare(
-      `SELECT substr(t.posted_date, 1, 7) AS month, c.entity, SUM(t.amount) AS total
-       FROM transactions t
-       JOIN classifications c ON c.transaction_id = t.id
-       WHERE t.user_id = ? AND t.posted_date BETWEEN ? AND ?
-       GROUP BY month, c.entity
-       ORDER BY month`,
-    ).bind(userId, dateFrom, dateTo).all(),
-    env.DB.prepare(
-      `SELECT rq.status, COUNT(*) AS count
-       FROM review_queue rq
-       JOIN transactions t ON t.id = rq.transaction_id
-       WHERE rq.user_id = ?
-         AND t.posted_date BETWEEN ? AND ?
-       GROUP BY rq.status`,
-    ).bind(userId, dateFrom, dateTo).all(),
-  ]);
-
-  return jsonOk({
-    tax_year: year,
-    by_entity: byEntity.results,
-    by_month: byMonth.results,
-    review_queue: reviewStats.results,
-  });
+export async function handleUpdateReportConfig(req: Request, env: Env, id: string): Promise<Response> {
+  const body = await req.json().catch(() => null) as Partial<ConfigBody> & { is_active?: boolean } | null;
+  if (!body) return jsonError('invalid body', 400);
+  const sql = db(env);
+  try {
+    if ('name' in body) await sql`UPDATE report_configs SET name = ${body.name ?? ''}, updated_at = now() WHERE id = ${id}`;
+    if ('entity_ids' in body) await sql`UPDATE report_configs SET entity_ids = ${body.entity_ids ?? []}, updated_at = now() WHERE id = ${id}`;
+    if ('category_ids' in body) await sql`UPDATE report_configs SET category_ids = ${body.category_ids ?? []}, updated_at = now() WHERE id = ${id}`;
+    if ('category_mode' in body) await sql`UPDATE report_configs SET category_mode = ${body.category_mode ?? 'all'}, updated_at = now() WHERE id = ${id}`;
+    if ('include_transactions' in body) await sql`UPDATE report_configs SET include_transactions = ${body.include_transactions ?? true}, updated_at = now() WHERE id = ${id}`;
+    if ('drive_folder_id' in body) await sql`UPDATE report_configs SET drive_folder_id = ${body.drive_folder_id ?? null}, updated_at = now() WHERE id = ${id}`;
+    if ('notes' in body) await sql`UPDATE report_configs SET notes = ${body.notes ?? null}, updated_at = now() WHERE id = ${id}`;
+    if ('is_active' in body) await sql`UPDATE report_configs SET is_active = ${body.is_active ?? true}, updated_at = now() WHERE id = ${id}`;
+    return jsonOk({ ok: true });
+  } catch (err) {
+    return jsonError(`update config failed: ${String(err)}`, 500);
+  } finally {
+    await sql.end({ timeout: 5 }).catch(() => {});
+  }
 }
 
-// ── GET /reports/export ───────────────────────────────────────────────────────
-// Returns CSV of all classified transactions for the given year.
-export async function handleExport(request: Request, env: Env): Promise<Response> {
-  const userId = getUserId(request);
-  const url = new URL(request.url);
-  const year = url.searchParams.get('year') ?? new Date().getFullYear().toString();
-  const entity = url.searchParams.get('entity');
-  const dateFrom = `${year}-01-01`;
-  const dateTo   = `${year}-12-31`;
-
-  let query = `SELECT t.posted_date, t.merchant_name, t.description, t.amount, t.currency,
-                      a.name AS account_name, a.subtype AS account_subtype,
-                      c.entity, c.category_tax, c.category_budget, c.confidence, c.method,
-                      c.review_required
-               FROM transactions t
-               LEFT JOIN classifications c ON c.transaction_id = t.id
-               LEFT JOIN accounts a ON a.id = t.account_id
-               WHERE t.user_id = ? AND t.posted_date BETWEEN ? AND ?`;
-  const vals: unknown[] = [userId, dateFrom, dateTo];
-
-  if (entity) { query += ' AND c.entity = ?'; vals.push(entity); }
-  query += ' ORDER BY t.posted_date, c.entity';
-
-  const rows = await env.DB.prepare(query).bind(...vals).all<Record<string, unknown>>();
-
-  if (!rows.results.length) return jsonError('No transactions found for the given filters', 404);
-
-  const headers = Object.keys(rows.results[0]);
-  const csvLines = [
-    headers.join(','),
-    ...rows.results.map(row =>
-      headers.map(h => {
-        const v = row[h] ?? '';
-        const s = String(v);
-        return s.includes(',') || s.includes('"') ? `"${s.replace(/"/g, '""')}"` : s;
-      }).join(','),
-    ),
-  ];
-
-  const csv = csvLines.join('\n');
-  const filename = `tax-prep-${year}${entity ? `-${entity}` : ''}.csv`;
-
-  // Store in R2 for retrieval
-  const r2Key = `exports/${userId}/${filename}`;
-  await env.BUCKET.put(r2Key, csv, { httpMetadata: { contentType: 'text/csv' } });
-
-  return new Response(csv, {
-    headers: {
-      'Content-Type': 'text/csv',
-      'Content-Disposition': `attachment; filename="${filename}"`,
-    },
-  });
+export async function handleListReportRuns(_req: Request, env: Env, configId: string): Promise<Response> {
+  const sql = db(env);
+  try {
+    const runs = await sql<Array<{
+      id: string; date_from: string; date_to: string; generated_at: string;
+      drive_link: string | null; file_name: string | null; status: string;
+      error_message: string | null; transaction_count: number | null;
+      unreviewed_warning_count: number | null;
+    }>>`
+      SELECT id, to_char(date_from, 'YYYY-MM-DD') AS date_from, to_char(date_to, 'YYYY-MM-DD') AS date_to,
+             generated_at, drive_link, file_name, status, error_message,
+             transaction_count, unreviewed_warning_count
+      FROM report_runs
+      WHERE config_id = ${configId}
+      ORDER BY generated_at DESC
+      LIMIT 50
+    `;
+    return jsonOk({ runs });
+  } catch (err) {
+    return jsonError(`list runs failed: ${String(err)}`, 500);
+  } finally {
+    await sql.end({ timeout: 5 }).catch(() => {});
+  }
 }
 
-// ── POST /reports/snapshot ────────────────────────────────────────────────────
-// Creates an immutable R2-backed filing snapshot for a given tax year.
-export async function handleSnapshot(request: Request, env: Env): Promise<Response> {
-  const userId = getUserId(request);
+export async function handleGetReportRun(_req: Request, env: Env, id: string): Promise<Response> {
+  const sql = db(env);
+  try {
+    const rows = await sql<Array<Record<string, unknown>>>`
+      SELECT id, config_id, to_char(date_from, 'YYYY-MM-DD') AS date_from,
+             to_char(date_to, 'YYYY-MM-DD') AS date_to,
+             generated_at, drive_link, file_name, status, error_message,
+             transaction_count, unreviewed_warning_count
+      FROM report_runs WHERE id = ${id} LIMIT 1
+    `;
+    if (rows.length === 0) return jsonError('not found', 404);
+    return jsonOk(rows[0]!);
+  } catch (err) {
+    return jsonError(`get run failed: ${String(err)}`, 500);
+  } finally {
+    await sql.end({ timeout: 5 }).catch(() => {});
+  }
+}
 
-  let body: { year?: number; name?: string } = {};
-  try { body = await request.json() as typeof body; }
-  catch { /* optional */ }
+interface GenerateBody {
+  date_from?: string;
+  date_to?: string;
+  period?: 'last_month' | 'last_quarter' | 'last_year' | 'ytd' | 'custom';
+}
 
-  const year = body.year ?? new Date().getFullYear();
-  const name = body.name ?? `Tax Year ${year} Snapshot`;
+function resolvePeriod(period: GenerateBody['period'], customFrom?: string, customTo?: string): { from: string; to: string; label: string } {
+  const today = new Date();
+  const toIso = (d: Date) => d.toISOString().slice(0, 10);
+  switch (period) {
+    case 'last_month': {
+      const start = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 1, 1));
+      const end = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 0));
+      return { from: toIso(start), to: toIso(end), label: `${start.toLocaleString('en-US', { month: 'short' })} ${start.getUTCFullYear()}` };
+    }
+    case 'last_quarter': {
+      const q = Math.floor(today.getUTCMonth() / 3);
+      const start = new Date(Date.UTC(today.getUTCFullYear(), (q - 1) * 3, 1));
+      const end = new Date(Date.UTC(today.getUTCFullYear(), q * 3, 0));
+      return { from: toIso(start), to: toIso(end), label: `Q${q === 0 ? 4 : q} ${q === 0 ? today.getUTCFullYear() - 1 : today.getUTCFullYear()}` };
+    }
+    case 'last_year': {
+      const y = today.getUTCFullYear() - 1;
+      return { from: `${y}-01-01`, to: `${y}-12-31`, label: String(y) };
+    }
+    case 'ytd':
+      return { from: `${today.getUTCFullYear()}-01-01`, to: toIso(today), label: `YTD ${today.getUTCFullYear()}` };
+    case 'custom':
+    default: {
+      const from = customFrom ?? `${today.getUTCFullYear()}-01-01`;
+      const to = customTo ?? toIso(today);
+      return { from, to, label: `${from} to ${to}` };
+    }
+  }
+}
 
-  const dateFrom = `${year}-01-01`;
-  const dateTo   = `${year}-12-31`;
+export async function handleGenerateReport(req: Request, env: Env, configId: string): Promise<Response> {
+  const body = await req.json().catch(() => ({})) as GenerateBody;
+  const { from, to, label } = resolvePeriod(body.period, body.date_from, body.date_to);
 
-  const transactions = await env.DB.prepare(
-    `SELECT t.*, c.entity, c.category_tax, c.category_budget, c.confidence, c.method,
-            c.reason_codes, c.is_locked
-     FROM transactions t
-     LEFT JOIN classifications c ON c.transaction_id = t.id
-     WHERE t.user_id = ? AND t.posted_date BETWEEN ? AND ?
-     ORDER BY t.posted_date`,
-  ).bind(userId, dateFrom, dateTo).all();
+  const config = await getReportConfig(env, configId);
+  if (!config) return jsonError('config not found', 404);
 
-  const snapshot = {
-    created_at: new Date().toISOString(),
-    tax_year: year,
-    name,
-    transactions: transactions.results,
-    total: transactions.results.length,
-  };
+  const sql = db(env);
+  let runId: string | null = null;
+  try {
+    const insertRows = await sql<Array<{ id: string }>>`
+      INSERT INTO report_runs (config_id, date_from, date_to, status)
+      VALUES (${configId}, ${from}, ${to}, 'running')
+      RETURNING id
+    `;
+    runId = insertRows[0]!.id;
 
-  const r2Key = `snapshots/${userId}/${year}-${Date.now()}.json`;
-  await env.BUCKET.put(r2Key, JSON.stringify(snapshot), {
-    httpMetadata: { contentType: 'application/json' },
-  });
+    const report = await generateReport(env, config, from, to);
+    const fileName = `${config.name} — ${label} — Generated ${new Date().toISOString().slice(0, 10)}`;
+    const published = await publishReport(env, report, {
+      fileName,
+      folderId: config.drive_folder_id,
+      includeTransactions: config.include_transactions,
+    });
+    const txCount = report.sections.reduce((s, sec) => s + sec.lines.reduce((n, l) => n + (l.transactions?.length ?? 0), 0), 0);
 
-  await env.DB.prepare(
-    `INSERT INTO filing_snapshots (id, user_id, tax_year, name, r2_key) VALUES (?, ?, ?, ?, ?)`,
-  ).bind(crypto.randomUUID(), userId, year, name, r2Key).run();
+    await sql`
+      UPDATE report_runs
+      SET status = 'complete', drive_link = ${published.spreadsheetUrl},
+          file_name = ${published.fileName},
+          transaction_count = ${txCount},
+          unreviewed_warning_count = ${report.unreviewed_warning_count}
+      WHERE id = ${runId}
+    `;
 
-  // Lock all included classified transactions
-  await env.DB.prepare(
-    `UPDATE classifications SET is_locked=1
-     WHERE transaction_id IN (
-       SELECT id FROM transactions WHERE user_id=? AND posted_date BETWEEN ? AND ?
-     )`,
-  ).bind(userId, dateFrom, dateTo).run();
-
-  return jsonOk({ snapshot: { r2_key: r2Key, tax_year: year, name, total: transactions.results.length } }, 201);
+    return jsonOk({
+      run_id: runId,
+      drive_link: published.spreadsheetUrl,
+      file_name: published.fileName,
+      transaction_count: txCount,
+      unreviewed_warning_count: report.unreviewed_warning_count,
+      report,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (runId) {
+      await sql`UPDATE report_runs SET status = 'failed', error_message = ${message} WHERE id = ${runId}`.catch(() => {});
+    }
+    return jsonError(`generate failed: ${message}`, 500);
+  } finally {
+    await sql.end({ timeout: 5 }).catch(() => {});
+  }
 }

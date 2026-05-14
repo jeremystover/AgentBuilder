@@ -1,38 +1,33 @@
-// Tiny hash-based router. window.location.hash drives a string route id;
-// useRoute subscribes to changes. Avoids react-router as a dep — we have
-// 8 routes total and zero dynamic params.
+// Hash-based router. window.location.hash drives the route id; useRoute
+// subscribes to changes. Avoids react-router as a dep.
 
 import { useEffect, useState } from "react";
 
 export type RouteId =
-  | "chat"
+  | "gather"
   | "review"
-  | "accounts"
   | "transactions"
-  | "reports"
-  | "imports"
-  | "rules"
-  | "budget"
-  | "income"
-  | "config";
+  | "reporting"
+  | "planning"
+  | "spending"
+  | "scenarios"
+  | "settings";
 
 const ROUTE_BY_HASH: Record<string, RouteId> = {
-  "": "chat",
-  "#/": "chat",
-  "#/chat": "chat",
-  "#/review": "review",
-  "#/accounts": "accounts",
+  "":              "gather",
+  "#/":            "gather",
+  "#/gather":      "gather",
+  "#/review":      "review",
   "#/transactions": "transactions",
-  "#/reports": "reports",
-  "#/imports": "imports",
-  "#/rules": "rules",
-  "#/budget": "budget",
-  "#/income": "income",
-  "#/config": "config",
+  "#/reporting":   "reporting",
+  "#/planning":    "planning",
+  "#/spending":    "spending",
+  "#/scenarios":   "scenarios",
+  "#/settings":    "settings",
 };
 
 export function parseRoute(hash: string): RouteId {
-  return ROUTE_BY_HASH[hash] ?? "chat";
+  return ROUTE_BY_HASH[hash] ?? "gather";
 }
 
 export function useRoute(): [RouteId, (next: RouteId) => void] {
@@ -43,7 +38,7 @@ export function useRoute(): [RouteId, (next: RouteId) => void] {
     return () => window.removeEventListener("hashchange", onChange);
   }, []);
   const navigate = (next: RouteId) => {
-    window.location.hash = next === "chat" ? "#/" : `#/${next}`;
+    window.location.hash = `#/${next}`;
   };
   return [route, navigate];
 }

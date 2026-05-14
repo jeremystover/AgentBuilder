@@ -1,15 +1,7 @@
 /**
- * web-chat.ts — POST /api/web/chat handler for the React SPA.
- *
- * Routes the user's message through the kit's runChatStream wired up to
- * a curated 10-tool registry (see web-chat-tools.ts). The model can read
- * the review queue, P&L, budgets, transactions, and Schedule C/E
- * reports, plus run classifications and resolve review items. It can NOT
- * trigger Teller syncs, ingest CSVs, edit rules, or commit bookkeeping
- * decisions — those have UI confirmation flows of their own.
- *
- * Streaming uses the kit's SSE protocol — see ChatStreamEvent in
- * src/web/types.ts for the wire shape.
+ * POST /api/web/chat — SSE-streaming chat handler for the SPA. Uses the
+ * kit's runChatStream wired up to the 10-tool allowlist from
+ * web-chat-tools.ts.
  */
 
 import type { Env } from './types';
@@ -19,34 +11,24 @@ import { buildWebChatTools, TOOL_ALLOWLIST } from './web-chat-tools';
 interface ChatRequestBody {
   message: string;
   history?: Array<{ role: 'user' | 'assistant'; content: unknown }>;
+  pageContext?: Record<string, unknown>;
 }
 
-const SYSTEM_PROMPT = `You are the user's CFO — a financial co-pilot for their household and small businesses (Elyse coaching, Jeremy coaching, Whitford House Airbnb, family/personal).
+const SYSTEM_PROMPT = `You are a financial assistant for Jeremy and Elyse. You help with:
+- Reviewing and categorizing transactions (use review_next / review_resolve / review_bulk_accept)
+- Understanding spending patterns (use transactions_summary / transactions_list)
+- Managing classification rules (use rules_list / rules_create)
+- Generating Schedule C/E and family summary reports (use report_list_configs / report_generate)
 
-You have read access to live ledger data and a small set of write actions. Use tools when the user asks a question that depends on actual numbers. For pure conceptual or tax-rule questions, answer from your own knowledge without calling tools.
+Start any review session by calling review_status first.
 
-Tool guidance:
-- "How are we doing?" / "what's the P&L?" → call pnl_all_entities (preset: this_month by default; ask if they meant a different window)
-- "Are we over budget?" / "how's groceries?" → call budget_status
-- "What needs my attention?" / "what's left to review?" → call list_review_queue, then next_review_item to drill in
-- "What's my Schedule C looking like?" → call schedule_c_report with the active tax year
-- "Can you re-classify these?" / "run the AI on the unsorted ones" → call classify_transactions
-- "Walk me through the books for elyse coaching" → start_bookkeeping_session, then get_bookkeeping_batch
+When the user corrects a categorization and the same merchant will appear again, proactively offer to create a rule.
 
-Numbers etiquette:
-- Always show dollar amounts as $1,234 (no cents on summary numbers; cents OK on individual transactions).
-- When citing a P&L or budget number, say what window it's for ("March", "year-to-date", etc.).
-- If a tool returns an error or empty result, say so plainly — never make up a number.
-- Use the four entity slugs as-is (elyse_coaching, jeremy_coaching, airbnb_activity, family_personal) when calling tools, but humanize them in replies ("Elyse coaching", "Whitford House Airbnb", etc.).
+For report generation, always call report_list_configs first to confirm the config_id before calling report_generate. report_generate returns a Google Drive URL — surface it as a clickable link.
 
-Mutations:
-- resolve_review writes — only call it when the user explicitly tells you to confirm or override a specific review item. Echo back what you're about to do before calling.
-- classify_transactions kicks off a background AI pass. Confirm scope first if it's not obvious from the user's message.
+Amounts are displayed with credit-card sign convention: positive = expense, negative = income/refund.`;
 
-Scope:
-- Anything that needs a Teller sync, a CSV/Tiller/Amazon import, a budget category mutation, a rule edit, or a bookkeeping commit lives in the legacy UI at /legacy. Send the user there for those.`;
-
-export async function handleWebChat(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
+export async function handleWebChat(request: Request, env: Env): Promise<Response> {
   if (!env.ANTHROPIC_API_KEY) {
     return new Response(JSON.stringify({ error: 'ANTHROPIC_API_KEY not configured' }), {
       status: 503,
@@ -56,7 +38,7 @@ export async function handleWebChat(request: Request, env: Env, _ctx: ExecutionC
 
   let body: ChatRequestBody;
   try {
-    body = (await request.json()) as ChatRequestBody;
+    body = await request.json() as ChatRequestBody;
   } catch {
     return new Response(JSON.stringify({ error: 'invalid JSON body' }), {
       status: 400,
@@ -75,20 +57,19 @@ export async function handleWebChat(request: Request, env: Env, _ctx: ExecutionC
   const tools = buildWebChatTools(env);
 
   try {
-    const sseStream = await runChatStream({
+    const stream = await runChatStream({
       ctx: { tools, env: env as unknown as Record<string, unknown> & { ANTHROPIC_API_KEY?: string } },
-      body: { message, history: body.history || [] },
+      body: { message, history: body.history ?? [], pageContext: body.pageContext },
       toolAllowlist: [...TOOL_ALLOWLIST],
       system: SYSTEM_PROMPT,
       tier: 'default',
       maxIterations: 8,
     });
-    return new Response(sseStream, {
+    return new Response(stream, {
       status: 200,
       headers: {
         'content-type': 'text/event-stream; charset=utf-8',
         'cache-control': 'no-cache, no-transform',
-        // Cloudflare proxies will buffer SSE without this hint.
         'x-accel-buffering': 'no',
       },
     });

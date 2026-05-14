@@ -1,4 +1,4 @@
-import { Wallet, MessageSquare, Inbox, Building2, Receipt, FileText, Upload, Filter, PiggyBank, TrendingUp, Settings } from "lucide-react";
+import { BarChart2, Inbox, Receipt, FileText, Calendar, PieChart, Activity, Settings, Database } from "lucide-react";
 import { useRoute, type RouteId } from "../router";
 
 interface Tab {
@@ -8,16 +8,14 @@ interface Tab {
 }
 
 const TABS: Tab[] = [
-  { id: "chat",         label: "Chat",         icon: MessageSquare },
+  { id: "gather",       label: "Gather",       icon: Database },
   { id: "review",       label: "Review",       icon: Inbox },
-  { id: "accounts",     label: "Accounts",     icon: Building2 },
   { id: "transactions", label: "Transactions", icon: Receipt },
-  { id: "reports",      label: "Reports",      icon: FileText },
-  { id: "imports",      label: "Imports",      icon: Upload },
-  { id: "rules",        label: "Rules",        icon: Filter },
-  { id: "budget",       label: "Budget",       icon: PiggyBank },
-  { id: "income",       label: "Income",       icon: TrendingUp },
-  { id: "config",       label: "Config",       icon: Settings },
+  { id: "reporting",    label: "Reporting",    icon: FileText },
+  { id: "planning",     label: "Planning",     icon: Calendar },
+  { id: "spending",     label: "Spending",     icon: PieChart },
+  { id: "scenarios",    label: "Scenarios",    icon: Activity },
+  { id: "settings",     label: "Settings",     icon: Settings },
 ];
 
 export function TopNav() {
@@ -26,8 +24,8 @@ export function TopNav() {
     <header className="flex items-center justify-between border-b border-border bg-bg-surface px-5 py-2 shrink-0">
       <div className="flex items-center gap-1">
         <div className="flex items-center gap-2 pr-3 mr-2 border-r border-border">
-          <Wallet className="w-5 h-5 text-accent-primary" />
-          <span className="font-semibold text-text-primary text-base">CFO</span>
+          <BarChart2 className="w-5 h-5 text-accent-primary" />
+          <span className="font-semibold text-text-primary text-base">Finances</span>
         </div>
         <nav className="flex items-center gap-0.5 overflow-x-auto scrollbar-thin">
           {TABS.map((tab) => {
@@ -51,7 +49,6 @@ export function TopNav() {
         </nav>
       </div>
       <div className="flex items-center gap-3 text-xs text-text-muted">
-        <a href="/legacy" className="hover:text-text-primary">Legacy UI</a>
         <a href="/logout" className="hover:text-text-primary">Sign out</a>
       </div>
     </header>

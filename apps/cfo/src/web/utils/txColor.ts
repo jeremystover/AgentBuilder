@@ -10,9 +10,9 @@
 export function txAmountColor(
   amount: number,
   accountType: string | null,
-  categoryTax: string | null,
+  categorySlug: string | null,
 ): string {
-  if (categoryTax === 'transfer') return '';
+  if (categorySlug === 'transfer') return '';
   const isCredit = accountType === 'credit';
   const isGain = isCredit ? amount < 0 : amount > 0;
   return isGain ? 'text-accent-success' : 'text-accent-danger';

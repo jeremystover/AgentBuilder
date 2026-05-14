@@ -1,472 +1,327 @@
-import { useEffect, useMemo, useState } from "react";
-import { Download, RefreshCw, AlertTriangle } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { RefreshCw, AlertTriangle, ExternalLink, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import {
-  Button, Card, Badge, Select, Drawer, PageHeader, EmptyState, fmtUsd, humanizeSlug,
+  Button, Card, Badge, Select, PageHeader, EmptyState, SummaryStat, fmtUsd,
 } from "../ui";
-import {
-  getScheduleC, getScheduleE, getSummaryReport, reportExportUrl, listTransactions,
-} from "../../api";
-import type {
-  ScheduleReport, ScheduleCEntity, SummaryReport, ScheduleLine,
-  EntitySlug, Transaction,
-} from "../../types";
+import { api } from "../../api";
 
-type Tab =
-  | { kind: "schedule_c"; entity: ScheduleCEntity }
-  | { kind: "schedule_e" }
-  | { kind: "summary" };
+interface ReportConfig {
+  id: string;
+  name: string;
+  entity_ids: string[];
+  category_ids: string[];
+  category_mode: "tax" | "budget" | "all";
+  include_transactions: boolean;
+  drive_folder_id: string | null;
+  notes: string | null;
+  last_run: { generated_at: string; drive_link: string | null; status: string } | null;
+}
 
-const TABS: { id: string; label: string; tab: Tab }[] = [
-  { id: "c-elyse",   label: "Schedule C — Elyse",   tab: { kind: "schedule_c", entity: "elyse_coaching" } },
-  { id: "c-jeremy",  label: "Schedule C — Jeremy",  tab: { kind: "schedule_c", entity: "jeremy_coaching" } },
-  { id: "e",         label: "Schedule E — Whitford", tab: { kind: "schedule_e" } },
-  { id: "summary",   label: "Summary",              tab: { kind: "summary" } },
-];
+interface ReportRun {
+  id: string;
+  date_from: string;
+  date_to: string;
+  generated_at: string;
+  drive_link: string | null;
+  file_name: string | null;
+  status: string;
+  error_message: string | null;
+  transaction_count: number | null;
+  unreviewed_warning_count: number | null;
+}
 
-const CURRENT_YEAR = new Date().getFullYear();
-const YEAR_OPTIONS = [CURRENT_YEAR, CURRENT_YEAR - 1, CURRENT_YEAR - 2, CURRENT_YEAR - 3, CURRENT_YEAR - 4];
+interface ReportLine {
+  line_number: string;
+  label: string;
+  total: number;
+}
+interface ReportSection {
+  section_name: string;
+  lines: ReportLine[];
+  section_total: number;
+}
+interface ReportOutput {
+  title: string;
+  date_range: { from: string; to: string };
+  generated_at: string;
+  entity_names: string[];
+  unreviewed_warning_count: number;
+  sections: ReportSection[];
+  net_total: number;
+}
+
+interface GenerateResponse {
+  run_id: string;
+  drive_link: string;
+  file_name: string;
+  transaction_count: number;
+  unreviewed_warning_count: number;
+  report: ReportOutput;
+}
+
+type Period = "last_month" | "last_quarter" | "last_year" | "ytd" | "custom";
 
 export function ReportsView() {
-  const [year, setYear] = useState<string>(String(CURRENT_YEAR));
-  const [tabId, setTabId] = useState<string>("c-elyse");
-  const tab = TABS.find((t) => t.id === tabId)!.tab;
+  const [configs, setConfigs] = useState<ReportConfig[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [period, setPeriod] = useState<Period>("last_quarter");
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
+  const [runs, setRuns] = useState<ReportRun[]>([]);
+  const [lastReport, setLastReport] = useState<ReportOutput | null>(null);
+  const [lastDriveLink, setLastDriveLink] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [generating, setGenerating] = useState(false);
+
+  const refreshConfigs = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await api.get<{ configs: ReportConfig[] }>("/api/web/reports/configs");
+      setConfigs(res.configs);
+      if (!selectedId && res.configs.length > 0) setSelectedId(res.configs[0]!.id);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [selectedId]);
+
+  useEffect(() => { void refreshConfigs(); }, [refreshConfigs]);
+
+  useEffect(() => {
+    if (!selectedId) { setRuns([]); return; }
+    (async () => {
+      try {
+        const res = await api.get<{ runs: ReportRun[] }>(`/api/web/reports/configs/${selectedId}/runs`);
+        setRuns(res.runs);
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : String(e));
+      }
+    })();
+  }, [selectedId]);
+
+  const selected = configs.find(c => c.id === selectedId) ?? null;
+
+  const generate = async () => {
+    if (!selectedId) return;
+    setGenerating(true);
+    setLastReport(null);
+    setLastDriveLink(null);
+    try {
+      const body: Record<string, unknown> = { period };
+      if (period === "custom") {
+        body.date_from = customFrom;
+        body.date_to = customTo;
+      }
+      const res = await api.post<GenerateResponse>(`/api/web/reports/configs/${selectedId}/generate`, body);
+      setLastReport(res.report);
+      setLastDriveLink(res.drive_link);
+      toast.success("Report generated");
+      // refresh runs
+      const r = await api.get<{ runs: ReportRun[] }>(`/api/web/reports/configs/${selectedId}/runs`);
+      setRuns(r.runs);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setGenerating(false);
+    }
+  };
 
   return (
-    <div className="p-6 max-w-6xl mx-auto">
+    <div className="p-6 max-w-7xl mx-auto">
       <PageHeader
-        title="Reports"
-        subtitle={`Tax year ${year}`}
-        actions={
-          <>
-            <div>
-              <label className="block text-xs text-text-muted mb-1">Year</label>
-              <Select value={year} onChange={(e) => setYear(e.target.value)}>
-                {YEAR_OPTIONS.map((y) => <option key={y} value={String(y)}>{y}</option>)}
-              </Select>
-            </div>
-          </>
-        }
+        title="Reporting"
+        subtitle="Schedule C / E and family summary reports"
+        actions={<Button onClick={() => void refreshConfigs()} disabled={loading}><RefreshCw className={"w-4 h-4 " + (loading ? "animate-spin" : "")} /> Refresh</Button>}
       />
 
-      <div className="flex items-center gap-1.5 mb-4 flex-wrap">
-        {TABS.map((t) => (
-          <Button
-            key={t.id}
-            size="sm"
-            variant={tabId === t.id ? "primary" : "ghost"}
-            onClick={() => setTabId(t.id)}
-          >
-            {t.label}
-          </Button>
-        ))}
-      </div>
+      <div className="grid grid-cols-1 md:grid-cols-[260px_1fr] gap-5">
+        {/* Config list */}
+        <Card className="overflow-hidden h-fit">
+          <div className="px-4 py-3 border-b border-border font-semibold text-text-primary">Configurations</div>
+          {configs.length === 0
+            ? <EmptyState>No configs yet.</EmptyState>
+            : (
+              <ul>
+                {configs.map(c => (
+                  <li key={c.id}>
+                    <button
+                      onClick={() => setSelectedId(c.id)}
+                      className={
+                        "w-full text-left px-4 py-3 border-b border-border hover:bg-bg-elevated/60 transition-colors " +
+                        (c.id === selectedId ? "bg-bg-elevated" : "")
+                      }
+                    >
+                      <div className="font-medium text-sm">{c.name}</div>
+                      <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+                        <Badge tone="info">{c.category_mode}</Badge>
+                        {c.entity_ids.length > 0 && <Badge tone="neutral">{c.entity_ids.length} entity</Badge>}
+                      </div>
+                      {c.last_run && (
+                        <div className="text-xs text-text-muted mt-1">
+                          Last run {c.last_run.generated_at.slice(0, 10)}
+                        </div>
+                      )}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )
+          }
+        </Card>
 
-      {tab.kind === "schedule_c" && <ScheduleView key={`c-${tab.entity}-${year}`} year={year} kind="C" entity={tab.entity} />}
-      {tab.kind === "schedule_e" && <ScheduleView key={`e-${year}`} year={year} kind="E" entity="airbnb_activity" />}
-      {tab.kind === "summary"    && <SummaryView  key={`summary-${year}`} year={year} />}
+        {/* Run panel */}
+        <div>
+          {selected ? (
+            <Card className="p-4 mb-4">
+              <div className="flex items-end gap-3 flex-wrap mb-3">
+                <div>
+                  <label className="block text-xs text-text-muted mb-1">Period</label>
+                  <Select value={period} onChange={e => setPeriod(e.target.value as Period)}>
+                    <option value="last_month">Last month</option>
+                    <option value="last_quarter">Last quarter</option>
+                    <option value="last_year">Last year</option>
+                    <option value="ytd">Year to date</option>
+                    <option value="custom">Custom range</option>
+                  </Select>
+                </div>
+                {period === "custom" && (
+                  <>
+                    <div>
+                      <label className="block text-xs text-text-muted mb-1">From</label>
+                      <input type="date" className="rounded-lg border border-border bg-bg-surface px-3 py-1.5 text-sm" value={customFrom} onChange={e => setCustomFrom(e.target.value)} />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-text-muted mb-1">To</label>
+                      <input type="date" className="rounded-lg border border-border bg-bg-surface px-3 py-1.5 text-sm" value={customTo} onChange={e => setCustomTo(e.target.value)} />
+                    </div>
+                  </>
+                )}
+                <div className="ml-auto">
+                  <Button variant="primary" onClick={() => void generate()} disabled={generating}>
+                    <Sparkles className="w-4 h-4" /> {generating ? "Generating…" : "Generate"}
+                  </Button>
+                </div>
+              </div>
+
+              {lastReport && lastReport.unreviewed_warning_count > 0 && (
+                <div className="flex items-center gap-2 p-3 mb-3 rounded-lg border border-accent-warn/30 bg-accent-warn/5 text-sm text-accent-warn">
+                  <AlertTriangle className="w-4 h-4 flex-none" />
+                  <span>
+                    {lastReport.unreviewed_warning_count} transaction
+                    {lastReport.unreviewed_warning_count !== 1 ? "s" : ""} in this period haven't been reviewed and were excluded.
+                  </span>
+                </div>
+              )}
+
+              {lastDriveLink && (
+                <div className="flex items-center gap-2 p-3 mb-3 rounded-lg border border-accent-success/30 bg-accent-success/5 text-sm">
+                  <ExternalLink className="w-4 h-4 text-accent-success" />
+                  <a href={lastDriveLink} target="_blank" rel="noreferrer" className="text-accent-success font-medium hover:underline">
+                    Open in Google Sheets
+                  </a>
+                </div>
+              )}
+
+              {lastReport && <ReportPreview report={lastReport} />}
+            </Card>
+          ) : (
+            <Card className="p-6"><EmptyState>Select a configuration on the left.</EmptyState></Card>
+          )}
+
+          {/* Run history */}
+          <Card>
+            <div className="px-4 py-3 border-b border-border font-semibold text-text-primary">Run history</div>
+            {runs.length === 0
+              ? <EmptyState>No runs yet for this config.</EmptyState>
+              : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="text-left text-xs uppercase text-text-muted bg-bg-elevated">
+                      <tr>
+                        <th className="px-4 py-2">Generated</th>
+                        <th className="px-4 py-2">Period</th>
+                        <th className="px-4 py-2">Status</th>
+                        <th className="px-4 py-2">Tx count</th>
+                        <th className="px-4 py-2">Drive</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {runs.map(r => (
+                        <tr key={r.id} className="border-t border-border">
+                          <td className="px-4 py-2 text-text-muted whitespace-nowrap">{r.generated_at.slice(0, 19).replace("T", " ")}</td>
+                          <td className="px-4 py-2 text-text-muted">{r.date_from} → {r.date_to}</td>
+                          <td className="px-4 py-2">
+                            {r.status === "complete" && <Badge tone="ok">complete</Badge>}
+                            {r.status === "running" && <Badge tone="info">running</Badge>}
+                            {r.status === "failed" && <Badge tone="danger" >failed</Badge>}
+                            {r.status === "pending" && <Badge tone="neutral">pending</Badge>}
+                          </td>
+                          <td className="px-4 py-2">{r.transaction_count ?? "—"}</td>
+                          <td className="px-4 py-2">
+                            {r.drive_link
+                              ? <a href={r.drive_link} target="_blank" rel="noreferrer" className="text-accent-primary hover:underline inline-flex items-center gap-1"><ExternalLink className="w-3 h-3" /> Open</a>
+                              : <span className="text-text-muted">—</span>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )
+            }
+          </Card>
+        </div>
+      </div>
     </div>
   );
 }
 
-// ── Schedule C / E view ─────────────────────────────────────────────────────
-
-function ScheduleView({
-  year, kind, entity,
-}: {
-  year: string;
-  kind: "C" | "E";
-  entity: EntitySlug;
-}) {
-  const [report, setReport] = useState<ScheduleReport | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const [drillLine, setDrillLine] = useState<ScheduleLine | null>(null);
-
-  const refresh = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const r = kind === "C"
-        ? await getScheduleC(year, entity as ScheduleCEntity)
-        : await getScheduleE(year);
-      setReport(r);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => { void refresh(); }, [year, kind, entity]);
-
-  if (error) {
-    return (
-      <Card className="p-3 mb-4 border-accent-danger/40 bg-accent-danger/5 text-sm text-accent-danger">
-        {error}
-      </Card>
-    );
-  }
-
-  if (!report) return <Card className="p-6"><EmptyState>{loading ? "Loading…" : "No data"}</EmptyState></Card>;
-
-  const netCls =
-    report.net_profit > 0 ? "text-accent-success" :
-    report.net_profit < 0 ? "text-accent-danger" :
-    "text-text-primary";
+function ReportPreview({ report }: { report: ReportOutput }) {
+  const income = report.sections.find(s => s.section_name.toLowerCase().includes("income"));
+  const expense = report.sections.find(s => s.section_name.toLowerCase().includes("expense"));
 
   return (
-    <>
-      {/* Summary header */}
+    <div>
       <div className="grid grid-cols-3 gap-3 mb-4">
-        <SummaryStat label="Total income" value={fmtUsd(report.income.total)} />
-        <SummaryStat label="Total expenses" value={fmtUsd(report.expenses.total)} />
-        <SummaryStat label="Net profit" value={fmtUsd(report.net_profit)} valueCls={netCls} />
+        <SummaryStat label="Income" value={fmtUsd(income?.section_total ?? 0)} />
+        <SummaryStat label="Expenses" value={fmtUsd(expense ? Math.abs(expense.section_total) : 0)} />
+        <SummaryStat
+          label="Net"
+          value={fmtUsd(report.net_total)}
+          tone={report.net_total > 0 ? "success" : report.net_total < 0 ? "danger" : "default"}
+        />
       </div>
 
-      {report.pending_review > 0 && (
-        <Card className="p-3 mb-4 border-accent-warn/40 bg-accent-warn/5 text-sm text-accent-warn flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4" />
-          {report.pending_review} transaction{report.pending_review !== 1 ? "s" : ""} for this entity still need review and are excluded from the totals above.
-        </Card>
-      )}
-
-      <div className="flex items-center justify-between mb-2">
-        <h2 className="text-sm font-semibold text-text-primary">Schedule {kind} — {humanizeSlug(entity)} — {year}</h2>
-        <div className="flex items-center gap-2">
-          <a
-            href={reportExportUrl(year, entity)}
-            download
-            className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm text-text-primary hover:bg-bg-elevated"
-          >
-            <Download className="w-4 h-4" /> Download CSV
-          </a>
-          <Button onClick={() => void refresh()} title="Refresh">
-            <RefreshCw className={"w-4 h-4 " + (loading ? "animate-spin" : "")} />
-          </Button>
-        </div>
-      </div>
-
-      {/* Income */}
-      <Card className="overflow-hidden mb-4">
-        <div className="px-4 py-2 border-b border-border bg-bg-elevated text-xs uppercase text-text-muted">Income</div>
-        <ScheduleLineTable lines={report.income.categories} total={report.income.total} onLineClick={setDrillLine} />
-      </Card>
-
-      {/* Expenses */}
-      <Card className="overflow-hidden">
-        <div className="px-4 py-2 border-b border-border bg-bg-elevated text-xs uppercase text-text-muted">Expenses</div>
-        <ScheduleLineTable lines={report.expenses.categories} total={report.expenses.total} onLineClick={setDrillLine} />
-      </Card>
-
-      <DrillDrawer
-        line={drillLine}
-        year={year}
-        entity={entity}
-        onClose={() => setDrillLine(null)}
-      />
-    </>
-  );
-}
-
-function ScheduleLineTable({
-  lines, total, onLineClick,
-}: {
-  lines: ScheduleLine[];
-  total: number;
-  onLineClick(line: ScheduleLine): void;
-}) {
-  if (lines.length === 0) {
-    return <div className="px-4"><EmptyState>No entries</EmptyState></div>;
-  }
-  return (
-    <table className="w-full text-sm">
-      <thead>
-        <tr className="text-left text-xs text-text-muted uppercase tracking-wide border-b border-border">
-          <th className="pl-4 py-2 w-16">Line</th>
-          <th>Category</th>
-          <th className="text-right">Count</th>
-          <th className="text-right pr-4">Amount</th>
-        </tr>
-      </thead>
-      <tbody>
-        {lines.map((l) => (
-          <tr
-            key={l.category_tax}
-            className="border-b border-border last:border-b-0 hover:bg-bg-elevated/50 cursor-pointer"
-            onClick={() => onLineClick(l)}
-          >
-            <td className="pl-4 py-2.5 text-text-muted text-xs">{l.form_line ?? "—"}</td>
-            <td className="text-text-primary">
-              {l.category_name ?? humanizeSlug(l.category_tax)}
-              {!l.category_name && l.category_tax && (
-                <span className="text-xs text-text-subtle ml-2">({l.category_tax})</span>
-              )}
-            </td>
-            <td className="text-right tabular-nums text-text-muted">{l.transaction_count}</td>
-            <td className="text-right pr-4 tabular-nums text-text-primary">{fmtUsd(l.total_amount)}</td>
-          </tr>
-        ))}
-        <tr className="bg-bg-elevated font-semibold">
-          <td className="pl-4 py-2.5"></td>
-          <td className="text-text-primary">Total</td>
-          <td></td>
-          <td className="text-right pr-4 tabular-nums text-text-primary">{fmtUsd(total)}</td>
-        </tr>
-      </tbody>
-    </table>
-  );
-}
-
-// ── Drill drawer ────────────────────────────────────────────────────────────
-
-function DrillDrawer({
-  line, year, entity, onClose,
-}: {
-  line: ScheduleLine | null;
-  year: string;
-  entity: EntitySlug;
-  onClose(): void;
-}) {
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (!line) {
-      setTransactions([]);
-      setTotal(0);
-      return;
-    }
-    let cancelled = false;
-    setLoading(true);
-    void (async () => {
-      try {
-        const res = await listTransactions({
-          entity,
-          category_tax: line.category_tax,
-          date_from: `${year}-01-01`,
-          date_to: `${year}-12-31`,
-          limit: 200,
-        });
-        if (cancelled) return;
-        setTransactions(res.transactions);
-        setTotal(res.total);
-      } catch (e) {
-        if (!cancelled) toast.error(e instanceof Error ? e.message : String(e));
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [line, year, entity]);
-
-  if (!line) return null;
-
-  return (
-    <Drawer
-      open={!!line}
-      onClose={onClose}
-      title={`${line.category_name ?? humanizeSlug(line.category_tax)} — ${year}`}
-      footer={
-        <div className="flex items-center justify-between gap-2 text-xs text-text-muted">
-          <span>
-            {line.transaction_count} transaction{line.transaction_count !== 1 ? "s" : ""} · {fmtUsd(line.total_amount)}
-          </span>
-          <Button variant="ghost" onClick={onClose}>Close</Button>
-        </div>
-      }
-    >
-      {loading ? (
-        <div className="text-sm text-text-muted">Loading…</div>
-      ) : transactions.length === 0 ? (
-        <EmptyState>No transactions found.</EmptyState>
-      ) : (
-        <>
-          {total > transactions.length && (
-            <div className="text-xs text-text-subtle mb-2">
-              Showing first {transactions.length} of {total}. Use the Transactions page to see them all.
-            </div>
-          )}
+      {report.sections.map(section => (
+        <Card key={section.section_name} className="overflow-hidden mb-3">
+          <div className="px-4 py-2 border-b border-border bg-bg-elevated text-xs uppercase text-text-muted">{section.section_name}</div>
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-xs text-text-muted uppercase tracking-wide border-b border-border">
-                <th className="py-1.5">Date</th>
-                <th>Merchant</th>
-                <th className="text-right">Amount</th>
+                <th className="pl-4 py-2 w-32">Line</th>
+                <th>Category</th>
+                <th className="text-right pr-4">Amount</th>
               </tr>
             </thead>
             <tbody>
-              {transactions.map((t) => (
-                <tr key={t.id} className="border-b border-border last:border-b-0">
-                  <td className="py-1.5 text-text-muted whitespace-nowrap text-xs">{t.posted_date}</td>
-                  <td className="text-text-primary">
-                    <div className="truncate max-w-[18rem]">{t.merchant_name ?? t.description ?? "—"}</div>
-                    {t.account_name && <div className="text-xs text-text-subtle truncate">{t.account_name}</div>}
-                  </td>
-                  <td className="text-right tabular-nums text-text-primary">{fmtUsd(t.amount, { sign: true })}</td>
+              {section.lines.map(line => (
+                <tr key={line.label + line.line_number} className="border-b border-border last:border-b-0">
+                  <td className="pl-4 py-2 text-text-muted text-xs">{line.line_number}</td>
+                  <td className="py-2">{line.label}</td>
+                  <td className="py-2 pr-4 text-right">{fmtUsd(line.total)}</td>
                 </tr>
               ))}
+              <tr className="bg-bg-elevated">
+                <td className="pl-4 py-2"></td>
+                <td className="py-2 font-medium">Section total</td>
+                <td className="py-2 pr-4 text-right font-medium">{fmtUsd(section.section_total)}</td>
+              </tr>
             </tbody>
           </table>
-        </>
-      )}
-    </Drawer>
-  );
-}
-
-// ── Summary view ────────────────────────────────────────────────────────────
-
-const ENTITY_ORDER: EntitySlug[] = ["elyse_coaching", "jeremy_coaching", "airbnb_activity", "family_personal"];
-
-function SummaryView({ year }: { year: string }) {
-  const [report, setReport] = useState<SummaryReport | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const refresh = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      setReport(await getSummaryReport(year));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => { void refresh(); }, [year]);
-
-  const monthGrid = useMemo(() => {
-    if (!report) return null;
-    const months = Array.from(new Set(report.by_month.map((r) => r.month))).sort();
-    const totalsByMonthEntity = new Map<string, number>();
-    for (const r of report.by_month) {
-      if (!r.entity) continue;
-      totalsByMonthEntity.set(`${r.month}|${r.entity}`, r.total);
-    }
-    return { months, totalsByMonthEntity };
-  }, [report]);
-
-  if (error) {
-    return (
-      <Card className="p-3 mb-4 border-accent-danger/40 bg-accent-danger/5 text-sm text-accent-danger">
-        {error}
-      </Card>
-    );
-  }
-
-  if (!report) return <Card className="p-6"><EmptyState>{loading ? "Loading…" : "No data"}</EmptyState></Card>;
-
-  const byEntity = new Map<string, { total: number; count: number }>();
-  for (const r of report.by_entity) {
-    if (!r.entity) continue;
-    byEntity.set(r.entity, { total: r.total, count: r.count });
-  }
-
-  return (
-    <>
-      <div className="flex items-center justify-between mb-2">
-        <h2 className="text-sm font-semibold text-text-primary">Year {year} — by entity</h2>
-        <div className="flex items-center gap-2">
-          <a
-            href={reportExportUrl(year)}
-            download
-            className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm text-text-primary hover:bg-bg-elevated"
-          >
-            <Download className="w-4 h-4" /> Download CSV
-          </a>
-          <Button onClick={() => void refresh()} title="Refresh">
-            <RefreshCw className={"w-4 h-4 " + (loading ? "animate-spin" : "")} />
-          </Button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
-        {ENTITY_ORDER.map((entity) => {
-          const row = byEntity.get(entity);
-          const total = row?.total ?? 0;
-          const count = row?.count ?? 0;
-          const tone =
-            total > 0 ? "text-accent-success" :
-            total < 0 ? "text-accent-danger" :
-            "text-text-primary";
-          return (
-            <Card key={entity} className="p-3">
-              <div className="text-xs text-text-muted">{humanizeSlug(entity)}</div>
-              <div className={`text-2xl tabular-nums font-semibold ${tone}`}>{fmtUsd(total, { sign: true })}</div>
-              <div className="text-xs text-text-subtle">{count} tx</div>
-            </Card>
-          );
-        })}
-      </div>
-
-      {/* Month grid */}
-      <h2 className="text-sm font-semibold text-text-primary mb-2">By month</h2>
-      <Card className="overflow-x-auto mb-4">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-xs text-text-muted uppercase tracking-wide border-b border-border bg-bg-elevated">
-              <th className="pl-4 py-2">Month</th>
-              {ENTITY_ORDER.map((e) => (
-                <th key={e} className="text-right pr-4">{humanizeSlug(e)}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {monthGrid && monthGrid.months.length === 0 ? (
-              <tr><td colSpan={ENTITY_ORDER.length + 1}><EmptyState>No data</EmptyState></td></tr>
-            ) : monthGrid!.months.map((m) => (
-              <tr key={m} className="border-b border-border last:border-b-0">
-                <td className="pl-4 py-2 text-text-muted whitespace-nowrap text-xs">{m}</td>
-                {ENTITY_ORDER.map((e) => {
-                  const v = monthGrid!.totalsByMonthEntity.get(`${m}|${e}`);
-                  const cls =
-                    v == null ? "text-text-subtle" :
-                    v > 0 ? "text-accent-success" :
-                    v < 0 ? "text-text-primary" :
-                    "text-text-muted";
-                  return (
-                    <td key={e} className={`text-right pr-4 tabular-nums ${cls}`}>
-                      {v == null ? "—" : fmtUsd(v, { sign: true })}
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </Card>
-
-      {/* Review queue stats */}
-      {report.review_queue.length > 0 && (
-        <>
-          <h2 className="text-sm font-semibold text-text-primary mb-2">Review queue (within {year})</h2>
-          <Card className="p-3 flex items-center gap-2 flex-wrap">
-            {report.review_queue.map((r) => (
-              <Badge
-                key={r.status}
-                tone={r.status === "pending" ? "warn" : r.status === "resolved" ? "ok" : "neutral"}
-              >
-                {r.status}: {r.count}
-              </Badge>
-            ))}
-          </Card>
-        </>
-      )}
-    </>
-  );
-}
-
-// ── Shared bits ─────────────────────────────────────────────────────────────
-
-function SummaryStat({ label, value, valueCls = "text-text-primary" }: { label: string; value: string; valueCls?: string }) {
-  return (
-    <Card className="p-3">
-      <div className="text-xs text-text-muted">{label}</div>
-      <div className={`text-2xl tabular-nums font-semibold ${valueCls}`}>{value}</div>
-    </Card>
+        </Card>
+      ))}
+    </div>
   );
 }

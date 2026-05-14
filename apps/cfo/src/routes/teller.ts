@@ -1,439 +1,382 @@
 import type { Env } from '../types';
-import { cleanDescription, computeDedupHash } from '../lib/dedup';
+import { jsonOk, jsonError } from '../types';
+import { db, type Sql } from '../lib/db';
 import {
   getTellerConnectConfig,
   listAccounts,
   listTransactions,
+  type TellerAccount,
   type TellerEnrollmentPayload,
   type TellerTransaction,
 } from '../lib/teller';
+import { cleanDescription, computeDedupHash } from '../lib/dedup';
 
-interface TellerSyncSummary {
-  transactions_imported: number;
-  duplicates_skipped: number;
-  by_institution: Array<{ institution: string | null; added: number; dupes: number }>;
-  account_ids_synced: string[];
+const DEFAULT_SYNC_WINDOW_DAYS = 90;
+
+interface ReconnectRequiredError {
+  kind: 'reconnect_required';
+  enrollment_id: string;
+  institution_name: string | null;
   message: string;
 }
 
-
-function isoDate(value: Date): string {
-  return value.toISOString().slice(0, 10);
+interface SyncResult {
+  enrollment_id: string;
+  institution_name: string | null;
+  transactions_found: number;
+  transactions_new: number;
+  reconnect_required?: boolean;
+  error?: string;
 }
 
-function shiftIsoDate(base: string, days: number): string {
-  const date = new Date(`${base}T00:00:00.000Z`);
-  date.setUTCDate(date.getUTCDate() + days);
-  return isoDate(date);
+function isDisconnected(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.includes('enrollment.disconnected');
 }
 
-function todayIsoDate(): string {
-  return isoDate(new Date());
+function shiftIsoDate(date: string, days: number): string {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
 }
 
-async function syncAccountTransactions(
-  env: Env,
-  userId: string,
-  accountId: string,
-  providerAccountId: string,
-  importId: string,
-  transactions: TellerTransaction[],
-): Promise<{ added: number; dupes: number }> {
-  if (transactions.length === 0) return { added: 0, dupes: 0 };
+// ── Enroll ────────────────────────────────────────────────────────────────────
 
-  // Pre-fetch all existing teller tx IDs for this account (1 query instead of N)
-  const existingRows = await env.DB.prepare(
-    `SELECT id, teller_transaction_id FROM transactions
-     WHERE account_id = ? AND teller_transaction_id IS NOT NULL`,
-  ).bind(accountId).all<{ id: string; teller_transaction_id: string }>();
-  const existingMap = new Map(existingRows.results.map(r => [r.teller_transaction_id, r.id]));
+export async function handleTellerEnroll(req: Request, env: Env): Promise<Response> {
+  const body = await req.json().catch(() => null) as Partial<TellerEnrollmentPayload> | null;
+  if (!body?.access_token || !body.enrollment_id) {
+    return jsonError('access_token and enrollment_id are required', 400);
+  }
 
-  // Pre-fetch all pending transactions for this account (1 query instead of N)
-  const pendingRows = await env.DB.prepare(
-    `SELECT id, amount, description_clean, posted_date FROM transactions
-     WHERE account_id = ? AND is_pending = 1 AND teller_transaction_id IS NOT NULL`,
-  ).bind(accountId).all<{ id: string; amount: number; description_clean: string; posted_date: string }>();
-  const pendingList = [...pendingRows.results];
+  const sql = db(env);
+  try {
+    const enrollmentRowId = `enr_${body.enrollment_id}`;
+    await sql`
+      INSERT INTO teller_enrollments (id, enrollment_id, access_token, institution_id, institution_name)
+      VALUES (${enrollmentRowId}, ${body.enrollment_id}, ${body.access_token},
+              ${body.institution_id ?? null}, ${body.institution_name ?? null})
+      ON CONFLICT (enrollment_id) DO UPDATE SET
+        access_token     = EXCLUDED.access_token,
+        institution_id   = EXCLUDED.institution_id,
+        institution_name = EXCLUDED.institution_name
+    `;
 
-  // Compute all dedup hashes in parallel
-  const amounts = transactions.map(tx => {
-    const n = Number(tx.amount);
-    if (Number.isNaN(n)) throw new Error(`Bad amount "${tx.amount}" for ${tx.id}`);
-    return n;
-  });
-  const hashes = await Promise.all(
-    transactions.map((tx, i) => computeDedupHash(providerAccountId, tx.date, amounts[i], tx.description)),
-  );
-
-  const BATCH = 100;
-  const updateStatements: D1PreparedStatement[] = [];
-  const insertStatements: D1PreparedStatement[] = [];
-  const insertMeta: Array<{ txId: string; isPosted: boolean }> = [];
-
-  for (let i = 0; i < transactions.length; i++) {
-    const tx = transactions[i];
-    const amount = amounts[i];
-    const dedupHash = hashes[i];
-    const descClean = cleanDescription(tx.description);
-    const merchant = tx.details?.counterparty?.name ?? null;
-    const category = tx.details?.category ?? null;
-    const isPending = tx.status === 'pending' ? 1 : 0;
-
-    const existingId = existingMap.get(tx.id);
-    if (existingId) {
-      updateStatements.push(env.DB.prepare(
-        `UPDATE transactions
-         SET account_id=?, import_id=?, posted_date=?, amount=?, currency='USD',
-             merchant_name=?, description=?, description_clean=?, category_plaid=?,
-             is_pending=?, dedup_hash=?
-         WHERE id=?`,
-      ).bind(accountId, importId, tx.date, amount, merchant, tx.description, descClean, category, isPending, dedupHash, existingId));
-      continue;
+    // Fetch accounts and upsert into gather_accounts.
+    const accounts = await listAccounts(env, body.access_token);
+    for (const acct of accounts) {
+      await upsertGatherAccount(sql, acct, body.enrollment_id);
     }
 
-    // Pending → posted promotion (match in-memory)
-    if (tx.status === 'posted') {
+    return jsonOk({
+      enrollment_id: body.enrollment_id,
+      accounts: accounts.length,
+      connect_config: getTellerConnectConfig(env),
+    });
+  } catch (err) {
+    return jsonError(`teller enroll failed: ${String(err)}`, 500);
+  } finally {
+    await sql.end({ timeout: 5 }).catch(() => {});
+  }
+}
+
+async function upsertGatherAccount(sql: Sql, acct: TellerAccount, enrollmentId: string): Promise<void> {
+  const id = `acct_${acct.id}`;
+  const type = mapTellerType(acct.type, acct.subtype);
+  await sql`
+    INSERT INTO gather_accounts
+      (id, name, institution, type, source, teller_account_id, teller_enrollment_id, last_synced_at)
+    VALUES
+      (${id}, ${acct.name}, ${acct.institution.name}, ${type}, 'teller',
+       ${acct.id}, ${enrollmentId}, NULL)
+    ON CONFLICT (teller_account_id) DO UPDATE SET
+      name                 = EXCLUDED.name,
+      institution          = EXCLUDED.institution,
+      type                 = EXCLUDED.type,
+      teller_enrollment_id = EXCLUDED.teller_enrollment_id,
+      updated_at           = now()
+  `;
+}
+
+function mapTellerType(type: string, subtype: string | null): string {
+  const t = (type ?? '').toLowerCase();
+  const s = (subtype ?? '').toLowerCase();
+  if (t === 'credit' || s === 'credit_card') return 'credit';
+  if (t === 'depository' && s === 'savings') return 'savings';
+  if (t === 'depository') return 'checking';
+  if (t === 'investment') return 'investment';
+  if (t === 'loan') return 'loan';
+  return 'other';
+}
+
+// ── List accounts ─────────────────────────────────────────────────────────────
+
+export async function handleTellerListAccounts(_req: Request, env: Env): Promise<Response> {
+  const sql = db(env);
+  try {
+    const rows = await sql<Array<{
+      id: string;
+      name: string;
+      institution: string | null;
+      type: string;
+      teller_account_id: string | null;
+      teller_enrollment_id: string | null;
+      last_synced_at: string | null;
+      is_active: boolean;
+    }>>`
+      SELECT id, name, institution, type, teller_account_id, teller_enrollment_id,
+             last_synced_at, is_active
+      FROM gather_accounts
+      WHERE source = 'teller'
+      ORDER BY institution NULLS LAST, name
+    `;
+    return jsonOk({ accounts: rows });
+  } catch (err) {
+    return jsonError(`teller list accounts failed: ${String(err)}`, 500);
+  } finally {
+    await sql.end({ timeout: 5 }).catch(() => {});
+  }
+}
+
+// ── Delete enrollment ─────────────────────────────────────────────────────────
+
+export async function handleTellerDeleteEnrollment(_req: Request, env: Env, enrollmentId: string): Promise<Response> {
+  const sql = db(env);
+  try {
+    await sql`UPDATE gather_accounts SET is_active = false WHERE teller_enrollment_id = ${enrollmentId}`;
+    const deleted = await sql`DELETE FROM teller_enrollments WHERE enrollment_id = ${enrollmentId} RETURNING enrollment_id`;
+    return jsonOk({ deleted: deleted.length });
+  } catch (err) {
+    return jsonError(`teller delete failed: ${String(err)}`, 500);
+  } finally {
+    await sql.end({ timeout: 5 }).catch(() => {});
+  }
+}
+
+// ── Sync ──────────────────────────────────────────────────────────────────────
+
+export async function handleTellerSync(req: Request, env: Env): Promise<Response> {
+  const body = await req.json().catch(() => ({})) as { account_ids?: string[]; days?: number } | undefined;
+  try {
+    const out = await runTellerSync(env, body ?? {});
+    return jsonOk(out);
+  } catch (err) {
+    return jsonError(`teller sync failed: ${String(err)}`, 500);
+  }
+}
+
+export interface RunTellerSyncOpts {
+  account_ids?: string[];
+  days?: number;
+}
+
+export interface RunTellerSyncResult {
+  results: SyncResult[];
+  reconnect_required: ReconnectRequiredError[];
+}
+
+export async function runTellerSync(env: Env, opts: RunTellerSyncOpts = {}): Promise<RunTellerSyncResult> {
+  const accountIdsFilter = new Set(opts.account_ids ?? []);
+  const days = opts.days ?? DEFAULT_SYNC_WINDOW_DAYS;
+  const endDate = new Date().toISOString().slice(0, 10);
+  const startDate = shiftIsoDate(endDate, -days);
+
+  const sql = db(env);
+  const results: SyncResult[] = [];
+  const reconnectRequired: ReconnectRequiredError[] = [];
+
+  try {
+    const enrollments = await sql<Array<{
+      id: string;
+      enrollment_id: string;
+      access_token: string;
+      institution_name: string | null;
+    }>>`SELECT id, enrollment_id, access_token, institution_name FROM teller_enrollments`;
+
+    for (const enr of enrollments) {
+      const accounts = await sql<Array<{ id: string; teller_account_id: string | null }>>`
+        SELECT id, teller_account_id
+        FROM gather_accounts
+        WHERE teller_enrollment_id = ${enr.enrollment_id}
+          AND is_active = true
+          AND teller_account_id IS NOT NULL
+      `;
+
+      for (const acct of accounts) {
+        if (!acct.teller_account_id) continue;
+        if (accountIdsFilter.size > 0 && !accountIdsFilter.has(acct.id)) continue;
+
+        const syncId = await startSyncLog(sql, acct.id);
+        try {
+          const txs = await listTransactions(env, enr.access_token, acct.teller_account_id, {
+            startDate,
+            endDate,
+          });
+          const { found, added } = await ingestTellerTransactions(sql, acct.id, txs);
+          await completeSyncLog(sql, syncId, found, added);
+          await sql`UPDATE gather_accounts SET last_synced_at = now() WHERE id = ${acct.id}`;
+          results.push({
+            enrollment_id: enr.enrollment_id,
+            institution_name: enr.institution_name,
+            transactions_found: found,
+            transactions_new: added,
+          });
+        } catch (err) {
+          await failSyncLog(sql, syncId, String(err));
+          if (isDisconnected(err)) {
+            reconnectRequired.push({
+              kind: 'reconnect_required',
+              enrollment_id: enr.enrollment_id,
+              institution_name: enr.institution_name,
+              message: 'Bank re-enrollment required: MFA was requested by the institution.',
+            });
+            results.push({
+              enrollment_id: enr.enrollment_id,
+              institution_name: enr.institution_name,
+              transactions_found: 0,
+              transactions_new: 0,
+              reconnect_required: true,
+              error: String(err),
+            });
+            break; // Skip remaining accounts in this enrollment
+          }
+          results.push({
+            enrollment_id: enr.enrollment_id,
+            institution_name: enr.institution_name,
+            transactions_found: 0,
+            transactions_new: 0,
+            error: String(err),
+          });
+        }
+      }
+
+      await sql`UPDATE teller_enrollments SET last_synced_at = now() WHERE enrollment_id = ${enr.enrollment_id}`;
+    }
+
+    return { results, reconnect_required: reconnectRequired };
+  } finally {
+    await sql.end({ timeout: 5 }).catch(() => {});
+  }
+}
+
+async function startSyncLog(sql: Sql, accountId: string): Promise<string> {
+  const rows = await sql<Array<{ id: string }>>`
+    INSERT INTO sync_log (source, account_id, status)
+    VALUES ('teller', ${accountId}, 'running')
+    RETURNING id
+  `;
+  return rows[0]!.id;
+}
+
+async function completeSyncLog(sql: Sql, id: string, found: number, added: number): Promise<void> {
+  await sql`
+    UPDATE sync_log
+    SET status = 'completed',
+        completed_at = now(),
+        transactions_found = ${found},
+        transactions_new = ${added}
+    WHERE id = ${id}
+  `;
+}
+
+async function failSyncLog(sql: Sql, id: string, message: string): Promise<void> {
+  await sql`
+    UPDATE sync_log
+    SET status = 'failed',
+        completed_at = now(),
+        error_message = ${message}
+    WHERE id = ${id}
+  `;
+}
+
+/**
+ * Stage Teller transactions into raw_transactions. Returns counts.
+ *
+ * Two algorithms preserved from the old CFO:
+ *
+ * 1. Pending → posted reconciliation. When a new posted transaction
+ *    arrives, look for a pending row on the same account within ±10 days
+ *    with matching amount and cleaned description. If found, promote it
+ *    in place rather than inserting a duplicate.
+ *
+ * 2. Duplicate skip via UNIQUE (source, external_id) and dedup_hash.
+ */
+async function ingestTellerTransactions(
+  sql: Sql,
+  accountId: string,
+  txs: TellerTransaction[],
+): Promise<{ found: number; added: number }> {
+  if (txs.length === 0) return { found: 0, added: 0 };
+
+  // Load existing pending raw rows for this account once for in-memory matching.
+  const pending = await sql<Array<{
+    id: string;
+    external_id: string | null;
+    amount: string;
+    description: string;
+    date: string;
+  }>>`
+    SELECT id, external_id, amount::text, description, to_char(date, 'YYYY-MM-DD') AS date
+    FROM raw_transactions
+    WHERE account_id = ${accountId}
+      AND source = 'teller'
+      AND status = 'waiting'
+  `;
+  const pendingList = pending.map(p => ({
+    id: p.id,
+    external_id: p.external_id,
+    amount: Number(p.amount),
+    description_clean: cleanDescription(p.description),
+    date: p.date,
+  }));
+
+  let added = 0;
+  for (const tx of txs) {
+    const amount = Number(tx.amount);
+    const descClean = cleanDescription(tx.description);
+    const merchant = tx.details?.counterparty?.name ?? null;
+    const dedupHash = await computeDedupHash(accountId, tx.date, amount, tx.description);
+    const isPosted = tx.status === 'posted';
+
+    if (isPosted) {
+      // Algorithm 1: pending → posted reconciliation
       const lo = shiftIsoDate(tx.date, -10);
       const hi = shiftIsoDate(tx.date, 10);
       const matchIdx = pendingList.findIndex(
-        p => p.amount === amount && p.description_clean === descClean && p.posted_date >= lo && p.posted_date <= hi,
+        p => p.amount === amount && p.description_clean === descClean && p.date >= lo && p.date <= hi,
       );
       if (matchIdx !== -1) {
-        const match = pendingList[matchIdx];
+        const match = pendingList[matchIdx]!;
         pendingList.splice(matchIdx, 1);
-        updateStatements.push(env.DB.prepare(
-          `UPDATE transactions
-           SET import_id=?, teller_transaction_id=?, posted_date=?, amount=?, currency='USD',
-               merchant_name=?, description=?, description_clean=?, category_plaid=?,
-               is_pending=0, dedup_hash=?
-           WHERE id=?`,
-        ).bind(importId, tx.id, tx.date, amount, merchant, tx.description, descClean, category, dedupHash, match.id));
+        await sql`
+          UPDATE raw_transactions
+          SET external_id = ${tx.id},
+              date        = ${tx.date},
+              amount      = ${amount},
+              description = ${tx.description},
+              merchant    = ${merchant},
+              raw_payload = ${JSON.stringify(tx)}::jsonb,
+              dedup_hash  = ${dedupHash},
+              status      = 'staged'
+          WHERE id = ${match.id}
+        `;
         continue;
       }
     }
 
-    // New transaction
-    const txId = crypto.randomUUID();
-    insertStatements.push(env.DB.prepare(
-      `INSERT OR IGNORE INTO transactions
-         (id, user_id, account_id, import_id, teller_transaction_id,
-          posted_date, amount, currency, merchant_name, description,
-          description_clean, category_plaid, is_pending, dedup_hash)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?, ?, ?, ?)`,
-    ).bind(txId, userId, accountId, importId, tx.id, tx.date, amount, merchant, tx.description, descClean, category, isPending, dedupHash));
-    insertMeta.push({ txId, isPosted: tx.status === 'posted' });
+    // New row — insert, skipping conflicts on (source, external_id) or dedup_hash.
+    const rows = await sql<Array<{ id: string }>>`
+      INSERT INTO raw_transactions
+        (account_id, source, external_id, date, amount, description, merchant,
+         raw_payload, dedup_hash, status)
+      VALUES
+        (${accountId}, 'teller', ${tx.id}, ${tx.date}, ${amount}, ${tx.description},
+         ${merchant}, ${JSON.stringify(tx)}::jsonb, ${dedupHash},
+         ${isPosted ? 'staged' : 'waiting'})
+      ON CONFLICT DO NOTHING
+      RETURNING id
+    `;
+    if (rows.length > 0) added++;
   }
 
-  // Batch updates (fire-and-forget result)
-  for (let i = 0; i < updateStatements.length; i += BATCH) {
-    await env.DB.batch(updateStatements.slice(i, i + BATCH));
-  }
-
-  // Batch inserts — check results to build review queue entries only for rows that landed
-  let added = 0;
-  let dupes = 0;
-  const reviewStatements: D1PreparedStatement[] = [];
-  for (let i = 0; i < insertStatements.length; i += BATCH) {
-    const results = await env.DB.batch(insertStatements.slice(i, i + BATCH));
-    for (let j = 0; j < results.length; j++) {
-      const meta = insertMeta[i + j];
-      if (results[j].meta.changes > 0) {
-        if (meta.isPosted) {
-          added++;
-          reviewStatements.push(env.DB.prepare(
-            `INSERT OR IGNORE INTO review_queue
-               (id, transaction_id, user_id, reason, confidence, details, needs_input)
-             VALUES (?, ?, ?, 'unclassified', NULL,
-               'No rule match or saved classification exists for this transaction yet.',
-               'A clearer merchant name, notes, or a manual classification for a similar transaction would help future matches.')`,
-          ).bind(crypto.randomUUID(), meta.txId, userId));
-        }
-      } else {
-        dupes++;
-      }
-    }
-  }
-
-  // Batch review queue inserts
-  for (let i = 0; i < reviewStatements.length; i += BATCH) {
-    await env.DB.batch(reviewStatements.slice(i, i + BATCH));
-  }
-
-  return { added, dupes };
-}
-
-async function removeMissingPendingTransactions(
-  env: Env,
-  accountId: string,
-  startDate: string | null,
-  endDate: string,
-  seenTransactionIds: Set<string>,
-): Promise<void> {
-  const existingPending = startDate
-    ? await env.DB.prepare(
-        `SELECT id, teller_transaction_id
-         FROM transactions
-         WHERE account_id = ?
-           AND teller_transaction_id IS NOT NULL
-           AND is_pending = 1
-           AND posted_date BETWEEN ? AND ?`,
-      ).bind(accountId, startDate, endDate).all<{ id: string; teller_transaction_id: string | null }>()
-    : await env.DB.prepare(
-        `SELECT id, teller_transaction_id
-         FROM transactions
-         WHERE account_id = ?
-           AND teller_transaction_id IS NOT NULL
-           AND is_pending = 1`,
-      ).bind(accountId).all<{ id: string; teller_transaction_id: string | null }>();
-
-  const toDelete = existingPending.results.filter(
-    r => r.teller_transaction_id && !seenTransactionIds.has(r.teller_transaction_id),
-  );
-  if (toDelete.length === 0) return;
-
-  const BATCH = 100;
-  for (let i = 0; i < toDelete.length; i += BATCH) {
-    await env.DB.batch(
-      toDelete.slice(i, i + BATCH).map(r => env.DB.prepare('DELETE FROM transactions WHERE id = ?').bind(r.id)),
-    );
-  }
-}
-
-export function getTellerBankConfig(env: Env): {
-  provider: 'teller';
-  application_id: string;
-  environment: string;
-  products: string[];
-  select_account: 'multiple';
-} {
-  const config = getTellerConnectConfig(env);
-  return {
-    provider: 'teller',
-    ...config,
-  };
-}
-
-export async function connectTellerEnrollmentForUser(
-  env: Env,
-  userId: string,
-  payload: TellerEnrollmentPayload,
-): Promise<{ enrollment_id: string; institution: string | null; accounts_linked: number; message: string }> {
-  const accounts = await listAccounts(env, payload.access_token);
-  const supportedAccounts = accounts.filter((account) => account.status === 'open' && Boolean(account.links.transactions));
-  if (!supportedAccounts.length) {
-    throw new Error('Teller enrollment completed, but no transaction-capable accounts were returned.');
-  }
-
-  const tellerEnrollmentId = crypto.randomUUID();
-  await env.DB.prepare(
-    `INSERT INTO teller_enrollments (id, user_id, enrollment_id, access_token, institution_id, institution_name)
-     VALUES (?, ?, ?, ?, ?, ?)
-     ON CONFLICT(enrollment_id) DO UPDATE SET
-       access_token=excluded.access_token,
-       institution_id=COALESCE(excluded.institution_id, teller_enrollments.institution_id),
-       institution_name=COALESCE(excluded.institution_name, teller_enrollments.institution_name)`,
-  ).bind(
-    tellerEnrollmentId,
-    userId,
-    payload.enrollment_id,
-    payload.access_token,
-    payload.institution_id ?? null,
-    payload.institution_name ?? null,
-  ).run();
-
-  const enrollment = await env.DB.prepare(
-    'SELECT id FROM teller_enrollments WHERE enrollment_id = ?',
-  ).bind(payload.enrollment_id).first<{ id: string }>();
-  if (!enrollment) throw new Error('Failed to save Teller enrollment');
-
-  const institutionName = payload.institution_name
-    ?? supportedAccounts[0]?.institution.name
-    ?? null;
-  const institutionId = payload.institution_id
-    ?? supportedAccounts[0]?.institution.id
-    ?? null;
-
-  await env.DB.prepare(
-    `UPDATE teller_enrollments
-     SET institution_id = COALESCE(?, institution_id),
-         institution_name = COALESCE(?, institution_name)
-     WHERE id = ?`,
-  ).bind(institutionId, institutionName, enrollment.id).run();
-
-  for (const account of supportedAccounts) {
-    const existingAccount = await env.DB.prepare(
-      'SELECT id FROM accounts WHERE teller_account_id = ?',
-    ).bind(account.id).first<{ id: string }>()
-    ?? await env.DB.prepare(
-      `SELECT id FROM accounts
-       WHERE user_id = ? AND name = ? AND mask = ? AND type = ? AND subtype = ?
-       LIMIT 1`,
-    ).bind(userId, account.name, account.last_four ?? null, account.type, account.subtype ?? null)
-     .first<{ id: string }>();
-
-    if (existingAccount) {
-      await env.DB.prepare(
-        `UPDATE accounts
-         SET teller_account_id=?,
-             teller_enrollment_id=?,
-             name=?,
-             mask=?,
-             type=?,
-             subtype=?,
-             is_active=1
-         WHERE id=?`,
-      ).bind(
-        account.id,
-        enrollment.id,
-        account.name,
-        account.last_four ?? null,
-        account.type,
-        account.subtype ?? null,
-        existingAccount.id,
-      ).run();
-      continue;
-    }
-
-    const accountId = crypto.randomUUID();
-    await env.DB.prepare(
-      `INSERT INTO accounts
-         (id, teller_enrollment_id, user_id, teller_account_id, name, mask, type, subtype)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(
-      accountId,
-      enrollment.id,
-      userId,
-      account.id,
-      account.name,
-      account.last_four ?? null,
-      account.type,
-      account.subtype ?? null,
-    ).run();
-  }
-
-  return {
-    enrollment_id: payload.enrollment_id,
-    institution: institutionName,
-    accounts_linked: supportedAccounts.length,
-    message: 'Accounts connected. Call POST /bank/sync to import transactions.',
-  };
-}
-
-export async function syncTellerTransactionsForUser(
-  env: Env,
-  userId: string,
-  dateFrom: string | null,
-  dateTo: string | null,
-  accountIds?: string[],
-): Promise<TellerSyncSummary> {
-  const enrollments = await env.DB.prepare(
-    `SELECT id, access_token, institution_name, last_synced_at
-     FROM teller_enrollments
-     WHERE user_id = ?`,
-  ).bind(userId).all<{ id: string; access_token: string; institution_name: string | null; last_synced_at: string | null }>();
-
-  if (!enrollments.results.length) {
-    throw new Error('No linked Teller accounts found. Connect an account first.');
-  }
-
-  const syncEnd = dateTo ?? todayIsoDate();
-  let totalAdded = 0;
-  let totalDupes = 0;
-  const syncedAccountIds = new Set<string>();
-  const byInstitution: Array<{ institution: string | null; added: number; dupes: number }> = [];
-  const requestedAccountIds = new Set(accountIds ?? []);
-  let matchedRequestedAccounts = 0;
-  const reconnectRequired: string[] = [];
-
-  for (const enrollment of enrollments.results) {
-    const syncStart = dateFrom;
-    const importId = crypto.randomUUID();
-    await env.DB.prepare(
-      `INSERT INTO imports (id, user_id, source, status, date_from, date_to, tax_year)
-       VALUES (?, ?, 'teller', 'running', ?, ?, ?)`,
-    ).bind(importId, userId, syncStart ?? null, syncEnd, syncStart ? parseInt(syncStart.slice(0, 4), 10) : null).run();
-
-    let added = 0;
-    let dupes = 0;
-    let found = 0;
-
-    try {
-      const accounts = await env.DB.prepare(
-        `SELECT id, teller_account_id
-         FROM accounts
-         WHERE user_id = ?
-           AND teller_enrollment_id = ?
-           AND is_active = 1
-           AND teller_account_id IS NOT NULL`,
-      ).bind(userId, enrollment.id).all<{ id: string; teller_account_id: string }>();
-
-      for (const account of accounts.results) {
-        if (requestedAccountIds.size > 0 && !requestedAccountIds.has(account.id)) continue;
-        matchedRequestedAccounts++;
-        syncedAccountIds.add(account.id);
-        const transactions = await listTransactions(
-          env,
-          enrollment.access_token,
-          account.teller_account_id,
-          { startDate: syncStart ?? undefined, endDate: syncEnd },
-        );
-        found += transactions.length;
-
-        const seenTransactionIds = new Set(transactions.map(t => t.id));
-        const result = await syncAccountTransactions(env, userId, account.id, account.teller_account_id, importId, transactions);
-        added += result.added;
-        dupes += result.dupes;
-
-        await removeMissingPendingTransactions(
-          env,
-          account.id,
-          syncStart,
-          syncEnd,
-          seenTransactionIds,
-        );
-      }
-
-      await env.DB.prepare(
-        `UPDATE teller_enrollments SET last_synced_at=datetime('now') WHERE id = ?`,
-      ).bind(enrollment.id).run();
-
-      await env.DB.prepare(
-        `UPDATE imports
-         SET status='completed', transactions_found=?, transactions_imported=?, completed_at=datetime('now')
-         WHERE id=?`,
-      ).bind(found, added, importId).run();
-    } catch (err) {
-      const errMsg = String(err);
-      await env.DB.prepare(
-        `UPDATE imports SET status='failed', error_message=?, completed_at=datetime('now') WHERE id=?`,
-      ).bind(errMsg, importId).run();
-      if (errMsg.includes('enrollment.disconnected')) {
-        reconnectRequired.push(enrollment.institution_name ?? 'Unknown institution');
-      }
-    }
-
-    totalAdded += added;
-    totalDupes += dupes;
-    byInstitution.push({ institution: enrollment.institution_name, added, dupes });
-  }
-
-  if (requestedAccountIds.size > 0 && matchedRequestedAccounts === 0) {
-    throw new Error('No linked Teller accounts matched the requested sync scope.');
-  }
-
-  if (reconnectRequired.length > 0) {
-    const names = reconnectRequired.join(', ');
-    throw new Error(
-      `Bank re-enrollment required for: ${names}. MFA was requested by the institution but the ` +
-      `enrollment is no longer active. Re-link via the bank connection flow to restore sync.`,
-    );
-  }
-
-  return {
-    transactions_imported: totalAdded,
-    duplicates_skipped: totalDupes,
-    by_institution: byInstitution,
-    account_ids_synced: [...syncedAccountIds],
-    message: 'Sync complete. New transactions are queued for review.',
-  };
+  return { found: txs.length, added };
 }

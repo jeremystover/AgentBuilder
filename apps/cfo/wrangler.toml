@@ -1,34 +1,26 @@
 name = "cfo"
 main = "src/index.ts"
-compatibility_date = "2025-04-01"
+compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
 
-[limits]
-cpu_ms = 300000
-
-# Cron triggers fan out via scheduled() in src/index.ts:
-#   "0 9 * * *"     → nightly Teller sync (~05:00 ET)
-#   "*/30 * * * *"  → SMS dispatcher; the handler self-checks Pacific
-#                     local time + per-person preferred slots so 47 of
-#                     the 48 daily fires are no-ops. DST-safe.
-[triggers]
-crons = ["0 9 * * *", "*/30 * * * *"]
-
 [assets]
-# Vite-built SPA bundle (index.html + hashed /assets/*). Vite copies
-# public/legacy.html through verbatim so the legacy tax-prep SPA stays
-# reachable at /legacy. Build with `pnpm web:build`.
 directory = "./dist"
 binding = "ASSETS"
 
-# Snapshot-and-import D1 during migration. Create with:
-#   wrangler d1 create cfo-db
-# then `wrangler d1 export tax-prep-db --output=tax-prep-snapshot.sql`
-# and `wrangler d1 execute cfo-db --file=tax-prep-snapshot.sql`.
-[[d1_databases]]
-binding = "DB"
-database_name = "cfo-db"
-database_id = "7a8081f3-8ae5-4344-8902-5cbd7992670f"
+# Neon Postgres via Hyperdrive. Create the Hyperdrive config in the
+# Cloudflare dashboard pointing at the Neon connection string, then paste
+# the generated id below. See docs/setup-neon.md.
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id = "e142673e253a4e12a60cc3f42d78e26c"
+
+[[r2_buckets]]
+binding = "STORAGE"
+bucket_name = "cfo-storage"
+
+[[queues.producers]]
+binding = "SCENARIO_QUEUE"
+queue = "cfo-scenarios"
 
 # Shared fleet-wide D1 — observability tables (cron_runs, cron_errors).
 # Read by the AgentBuilder dashboard.
@@ -37,53 +29,36 @@ binding = "AGENTBUILDER_CORE_DB"
 database_name = "agentbuilder-core"
 database_id = "51a422d2-e9ea-46e8-b6c8-233229434eca"
 
-# Snapshot-and-copy R2 during migration. Create with:
-#   wrangler r2 bucket create cfo-files
-# then copy objects from tax-prep-files via the R2 API / rclone.
-[[r2_buckets]]
-binding = "BUCKET"
-bucket_name = "cfo-files"
+# Per-agent D1 for the Google OAuth token vault. Created with:
+#   wrangler d1 create cfo-tokens
+# then apply schema/d1/google-tokens.sql via:
+#   wrangler d1 execute cfo-tokens --remote --file=schema/d1/google-tokens.sql
+[[d1_databases]]
+binding = "TOKENS"
+database_name = "cfo-tokens"
+database_id = "a5f97d39-80c5-4a5d-b4e9-10c445b7c7f5"
 
-[vars]
-DEFAULT_BANK_PROVIDER = "teller"
-TELLER_ENV = "development"
-PLAID_ENV = "sandbox"
-
-# Secrets — re-enter via `wrangler secret put`:
-#   TELLER_APPLICATION_ID
-#   PLAID_CLIENT_ID          (Plaid API client ID — from dashboard.plaid.com)
-#   PLAID_SECRET             (Plaid API secret — use sandbox secret for dev)
-#   ANTHROPIC_API_KEY
-#   MCP_HTTP_KEY           (for /mcp auth from Claude custom tool)
-#   WEB_UI_PASSWORD        (login password for the React SPA at /)
-#   EXTERNAL_API_KEY       (optional — bearer token for /api/web/* without cookie)
-#   WEB_UI_USER_ID         (optional — pins the SPA to a specific user_id;
-#                           defaults to "default" matching legacy header auth)
-#   TWILIO_ACCOUNT_SID     (Twilio account SID for SMS outbound)
-#   TWILIO_AUTH_TOKEN      (Twilio auth token; also verifies inbound HMAC)
-#   TWILIO_FROM            (E.164 sender number, e.g. +14155551234)
-#   GOOGLE_OAUTH_CLIENT_ID     (fleet-wide Google OAuth client — same as chief-of-staff)
-#   GOOGLE_OAUTH_CLIENT_SECRET (fleet-wide Google OAuth secret — same as chief-of-staff)
-#   GOOGLE_OAUTH_REFRESH_TOKEN (personal account refresh token — same as chief-of-staff;
-#                               must include gmail.readonly scope)
-#
-# Twilio inbound webhook: configure your number's "A MESSAGE COMES IN"
-# webhook to POST https://cfo.<account>.workers.dev/sms/inbound
-# (or your custom domain). Signature is verified against TWILIO_AUTH_TOKEN.
-
-# mTLS binding reuses the existing Teller cert from the tax-prep worker —
-# same cert_id, bound to the new worker. Teller production access requires
-# this binding even after the rename.
+# mTLS binding for Teller development/production environments. The
+# sandbox environment does not require it. Reuses the existing cert.
 [[mtls_certificates]]
 binding = "TELLER_MTLS"
 certificate_id = "1c40bf07-6ba7-4e8c-b95f-27df8e7adfda"
 
-# Fleet-shared secrets (ANTHROPIC_API_KEY) are managed via Cloudflare
-# Secrets Store after running `pnpm fleet:setup-secrets`.
-# Per-agent secrets (TELLER_APPLICATION_ID, MCP_HTTP_KEY) stay as
-# plain worker secrets via `wrangler secret put`.
+[vars]
+ENVIRONMENT = "production"
+TELLER_ENV = "development"
 
+# Cron triggers — handled in src/index.ts scheduled():
+#   "0 9 * * *"  → nightly Teller sync (~05:00 ET)
+[triggers]
+crons = ["0 9 * * *"]
 
-[[hyperdrive]]
-binding = "HYPERDRIVE"
-id = "e142673e253a4e12a60cc3f42d78e26c"
+# Secrets — set via `wrangler secret put`:
+#   WEB_UI_PASSWORD            login password for the React SPA
+#   EXTERNAL_API_KEY           bearer token for /api/v1/* without cookie
+#   MCP_HTTP_KEY               bearer token for /mcp
+#   ANTHROPIC_API_KEY          via fleet secrets store
+#   TELLER_APPLICATION_ID      Teller Connect application id
+#   GOOGLE_OAUTH_CLIENT_ID     fleet-wide Google OAuth client id
+#   GOOGLE_OAUTH_CLIENT_SECRET fleet-wide Google OAuth client secret
+#   GOOGLE_TOKEN_VAULT_KEK     base64-encoded AES-256 key for the D1 token vault

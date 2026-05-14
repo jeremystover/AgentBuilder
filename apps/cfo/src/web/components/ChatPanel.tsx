@@ -1,6 +1,23 @@
+// Copied verbatim from apps/cfo/src/web/components/ChatPanel.tsx (legacy CFO).
+// Wiring (useChat hook + /api/web/chat endpoint) is Phase 1d. The component
+// itself is unused in Phase 1c — no route consumes it yet.
+
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Send, Square, Trash2, Wallet } from "lucide-react";
-import type { RenderTurn } from "../hooks/useChat";
+import { Send, Square, Trash2, BarChart2 } from "lucide-react";
+
+export interface RenderTurnPill {
+  id: string;
+  name: string;
+  status: "running" | "done" | "error";
+}
+
+export interface RenderTurn {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  streaming?: boolean;
+  pills: RenderTurnPill[];
+}
 
 interface Props {
   turns: RenderTurn[];
@@ -54,7 +71,7 @@ export function ChatPanel({ turns, loading, onSend, onCancel, onClear }: Props) 
                 submit(e as unknown as FormEvent);
               }
             }}
-            placeholder="Ask the CFO…"
+            placeholder="Ask Finances…"
             rows={2}
             className="flex-1 resize-none rounded-lg border border-border bg-bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-subtle focus:outline-none focus:ring-2 focus:ring-accent-primary"
           />
@@ -133,11 +150,10 @@ function Empty() {
   return (
     <div className="h-full flex items-center justify-center">
       <div className="max-w-md text-center">
-        <Wallet className="w-10 h-10 mx-auto text-accent-primary mb-3" />
-        <h2 className="text-lg font-semibold text-text-primary">CFO</h2>
+        <BarChart2 className="w-10 h-10 mx-auto text-accent-primary mb-3" />
+        <h2 className="text-lg font-semibold text-text-primary">Finances</h2>
         <p className="text-sm text-text-muted mt-2">
           Ask about your books — P&amp;L, budgets, transactions, the review queue.
-          Try <em>"how did we do last month?"</em> or <em>"what's left to classify?"</em>
         </p>
       </div>
     </div>
