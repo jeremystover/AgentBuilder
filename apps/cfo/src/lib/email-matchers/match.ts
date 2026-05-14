@@ -1,14 +1,6 @@
-/**
- * Transaction matchers for email enrichment.
- *
- * Weights follow Phase 1b spec, carried over from the legacy CFO matcher
- * implementations. Re-validate against fresh samples in docs/email-samples.md.
- *
- * Notes on amounts: raw_transactions.amount is stored as Teller reports it.
- * For credit-card spend Teller posts positive numbers; for bank-account
- * debits Teller posts negative numbers. Vendor-specific sign handling
- * lives in the per-vendor match functions below.
- */
+// Amount sign convention: Teller posts credit-card spend as positive,
+// bank-account debits as negative. Matchers compare on |amount| so the
+// per-vendor weights below don't need to think about sign.
 
 export type VendorHint = 'amazon' | 'venmo' | 'apple' | 'etsy';
 export type MatchType = 'exact' | 'probable' | 'possible' | null;

@@ -1,7 +1,3 @@
-/**
- * Venmo email parser. Adapted from the legacy CFO venmo-email.ts.
- */
-
 import type { GmailMessage } from '../gmail';
 import { getMessageBody, getHeader } from '../gmail';
 

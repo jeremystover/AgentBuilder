@@ -1,9 +1,5 @@
-/**
- * Etsy receipt email parser. Adapted from the legacy CFO etsy-email.ts.
- * Handles both direct and forwarded receipts — when forwarded, the email
- * `internalDate` is the forward time so we prefer dates extracted from
- * the body when available.
- */
+// Forwarded receipts have `internalDate` set to the forward time, so we
+// prefer dates extracted from the email body when available.
 
 import type { GmailMessage } from '../gmail';
 import { getMessageBody, getHeader } from '../gmail';

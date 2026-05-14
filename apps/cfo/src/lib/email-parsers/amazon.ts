@@ -1,8 +1,5 @@
-/**
- * Amazon email parser. Adapted from the legacy CFO amazon-email.ts —
- * vendor regexes preserved as a calibration baseline. Re-validate against
- * fresh samples in docs/email-samples.md before relying on these in prod.
- */
+// Vendor regexes are a calibration baseline — re-validate against fresh
+// samples in docs/email-samples.md before relying on these in prod.
 
 import type { GmailMessage } from '../gmail';
 import { getMessageBody, getHeader } from '../gmail';

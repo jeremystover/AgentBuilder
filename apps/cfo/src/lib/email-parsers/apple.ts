@@ -1,7 +1,3 @@
-/**
- * Apple receipt email parser. Adapted from the legacy CFO apple-email.ts.
- */
-
 import type { GmailMessage } from '../gmail';
 import { getMessageBody, getHeader } from '../gmail';
 
