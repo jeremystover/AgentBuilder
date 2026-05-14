@@ -41,7 +41,7 @@ database_id = "51a422d2-e9ea-46e8-b6c8-233229434eca"
 [[d1_databases]]
 binding = "TOKENS"
 database_name = "cfo-tokens"
-database_id = ""
+database_id = "a5f97d39-80c5-4a5d-b4e9-10c445b7c7f5"
 
 # mTLS binding for Teller development/production environments. The
 # sandbox environment does not require it. Reuses the existing cert.
