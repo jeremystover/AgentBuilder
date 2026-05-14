@@ -1,6 +1,7 @@
--- Working-state columns on raw_transactions. Edits live on the raw row
--- until approval, when the row is INSERT-ed into the transactions ledger
--- with these fields carried forward and the raw row marked 'processed'.
+-- Review-state columns on raw_transactions. Phase 1c reviews and edits
+-- transactions in raw_transactions; on approval the row is INSERT-ed into
+-- the transactions ledger (carrying these fields forward) and the raw row
+-- is marked 'processed' with raw_payload nulled.
 
 ALTER TABLE raw_transactions
   ADD COLUMN entity_id              TEXT REFERENCES entities(id),
