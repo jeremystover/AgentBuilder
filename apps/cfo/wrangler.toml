@@ -57,9 +57,10 @@ ENVIRONMENT = "production"
 TELLER_ENV = "development"
 
 # Cron triggers — handled in src/index.ts scheduled():
-#   "0 9 * * *"  → nightly Teller sync (~05:00 ET)
+#   "0 9 * * *"     → nightly Teller sync (~05:00 ET)
+#   "*/4 * * * *"   → keep-alive ping to prevent Neon auto-suspend
 [triggers]
-crons = ["0 9 * * *"]
+crons = ["0 9 * * *", "*/4 * * * *"]
 
 # Secrets — set via `wrangler secret put`:
 #   WEB_UI_PASSWORD            login password for the React SPA
