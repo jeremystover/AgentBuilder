@@ -16,6 +16,7 @@
 
 import type { Sql } from './db';
 import { generatePeriods, prorateAmount, type PeriodType } from './prorate';
+import { resolvePlan } from './plan-resolver';
 
 export interface PlanMeta {
   id: string;
@@ -117,43 +118,31 @@ export async function buildSpendingReport(sql: Sql, params: BuildParams): Promis
   // ── Load plan rows (used in both header + per-row math). ────────────────
   const plans = params.planIds.length === 0
     ? []
-    : await sql<Array<{ id: string; name: string; status: string }>>`
-        SELECT id, name, status FROM plans WHERE id = ANY(${params.planIds})
+    : await sql<Array<{ id: string; name: string; status: string; is_active: boolean }>>`
+        SELECT id, name, status, is_active FROM plans WHERE id = ANY(${params.planIds})
       `;
-  const activeRow = await sql<Array<{ active_plan_id: string | null }>>`
-    SELECT active_plan_id FROM plan_settings WHERE id = 'singleton'
-  `;
-  const activeId = activeRow[0]?.active_plan_id ?? null;
   const planMeta: PlanMeta[] = params.planIds.map(id => {
     const found = plans.find(p => p.id === id);
     return {
       id,
       name: found?.name ?? 'Unknown plan',
       status: found?.status ?? 'unknown',
-      is_active: id === activeId,
+      is_active: found?.is_active ?? false,
     };
   });
 
-  // Load plan amounts for every (plan, category) we'll need.
-  const planAmounts = params.planIds.length === 0 || allCategoryIds.size === 0
-    ? []
-    : await sql<Array<{
-        plan_id: string; category_id: string;
-        amount: string; period_type: PeriodType;
-      }>>`
-        SELECT plan_id, category_id, amount::text AS amount, period_type
-        FROM plan_category_amounts
-        WHERE plan_id = ANY(${params.planIds})
-          AND category_id = ANY(${[...allCategoryIds]})
-      `;
-  // Index plan amounts: planAmountByPlanCat[planId][categoryId] = { amount, period_type }
+  // Resolve each plan's effective amounts as of the report's start date.
+  // Mid-range adjustments are intentionally not re-resolved per bucket —
+  // for sharper resolution use a shorter range.
   const planAmountByPlanCat = new Map<string, Map<string, { amount: number; periodType: PeriodType }>>();
-  for (const p of params.planIds) planAmountByPlanCat.set(p, new Map());
-  for (const row of planAmounts) {
-    planAmountByPlanCat.get(row.plan_id)!.set(row.category_id, {
-      amount: Number(row.amount),
-      periodType: row.period_type,
-    });
+  for (const planId of params.planIds) {
+    const resolved = await resolvePlan(sql, planId, params.dateFrom);
+    const inner = new Map<string, { amount: number; periodType: PeriodType }>();
+    for (const [catId, row] of resolved.entries()) {
+      if (!allCategoryIds.has(catId)) continue;
+      inner.set(catId, { amount: row.amount, periodType: row.period_type });
+    }
+    planAmountByPlanCat.set(planId, inner);
   }
 
   // ── Pull actuals: GROUP BY (category, period bucket). ───────────────────

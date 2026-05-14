@@ -89,8 +89,15 @@ import {
 import {
   handleSpendingReport, handleListViews, handleCreateView, handleUpdateView, handleDeleteView,
   handleListGroups, handleCreateGroup, handleUpdateGroup, handleDeleteGroup,
-  handleListPlans, handleGetActivePlan, handleSetActivePlan,
+  handleListPlans as handleListPlansForSpending, handleGetActivePlan, handleSetActivePlan,
 } from './routes/spending';
+import {
+  handleListPlans, handleCreatePlan, handleGetPlan, handleUpdatePlan, handleArchivePlan,
+  handleDuplicatePlan, handleExtendPlan, handleSetActivePlanV2,
+  handleResolvePlan, handleForecastPlan,
+  handleListPlanCategories, handleUpsertPlanCategory, handleSuggestPlanCategory,
+  handleListOneTimeItems, handleCreateOneTimeItem, handleUpdateOneTimeItem, handleDeleteOneTimeItem,
+} from './routes/planning';
 import { handleMcp, type JsonRpcMessage } from './mcp-tools';
 import { handleWebChat } from './web-chat';
 import { runClassify } from './lib/classify';
@@ -155,9 +162,28 @@ const ROUTES: Route[] = [
   { method: 'POST',   pattern: /^\/api\/web\/spending\/groups$/,             auth: 'api', handler: (req, env) => handleCreateGroup(req, env) },
   { method: 'PUT',    pattern: /^\/api\/web\/spending\/groups\/([^/]+)$/,    auth: 'api', handler: (req, env, id) => handleUpdateGroup(req, env, id!) },
   { method: 'DELETE', pattern: /^\/api\/web\/spending\/groups\/([^/]+)$/,    auth: 'api', handler: (req, env, id) => handleDeleteGroup(req, env, id!) },
-  { method: 'GET',    pattern: /^\/api\/web\/spending\/plans$/,              auth: 'api', handler: (req, env) => handleListPlans(req, env) },
+  { method: 'GET',    pattern: /^\/api\/web\/spending\/plans$/,              auth: 'api', handler: (req, env) => handleListPlansForSpending(req, env) },
   { method: 'GET',    pattern: /^\/api\/web\/plans\/active$/,                auth: 'api', handler: (req, env) => handleGetActivePlan(req, env) },
   { method: 'PUT',    pattern: /^\/api\/web\/plans\/active$/,                auth: 'api', handler: (req, env) => handleSetActivePlan(req, env) },
+
+  // Planning (Module 3)
+  { method: 'GET',    pattern: /^\/api\/web\/plans$/,                                              auth: 'api', handler: (req, env) => handleListPlans(req, env) },
+  { method: 'POST',   pattern: /^\/api\/web\/plans$/,                                              auth: 'api', handler: (req, env) => handleCreatePlan(req, env) },
+  { method: 'GET',    pattern: /^\/api\/web\/plans\/([^/]+)$/,                                     auth: 'api', handler: (req, env, id) => handleGetPlan(req, env, id!) },
+  { method: 'PUT',    pattern: /^\/api\/web\/plans\/([^/]+)$/,                                     auth: 'api', handler: (req, env, id) => handleUpdatePlan(req, env, id!) },
+  { method: 'DELETE', pattern: /^\/api\/web\/plans\/([^/]+)$/,                                     auth: 'api', handler: (req, env, id) => handleArchivePlan(req, env, id!) },
+  { method: 'POST',   pattern: /^\/api\/web\/plans\/([^/]+)\/duplicate$/,                          auth: 'api', handler: (req, env, id) => handleDuplicatePlan(req, env, id!) },
+  { method: 'POST',   pattern: /^\/api\/web\/plans\/([^/]+)\/extend$/,                             auth: 'api', handler: (req, env, id) => handleExtendPlan(req, env, id!) },
+  { method: 'PUT',    pattern: /^\/api\/web\/plans\/([^/]+)\/set-active$/,                         auth: 'api', handler: (req, env, id) => handleSetActivePlanV2(req, env, id!) },
+  { method: 'GET',    pattern: /^\/api\/web\/plans\/([^/]+)\/resolve$/,                            auth: 'api', handler: (req, env, id) => handleResolvePlan(req, env, id!) },
+  { method: 'GET',    pattern: /^\/api\/web\/plans\/([^/]+)\/forecast$/,                           auth: 'api', handler: (req, env, id) => handleForecastPlan(req, env, id!) },
+  { method: 'GET',    pattern: /^\/api\/web\/plans\/([^/]+)\/categories$/,                         auth: 'api', handler: (req, env, id) => handleListPlanCategories(req, env, id!) },
+  { method: 'PUT',    pattern: /^\/api\/web\/plans\/([^/]+)\/categories\/([^/]+)$/,                auth: 'api', handler: (req, env, id, cid) => handleUpsertPlanCategory(req, env, id!, cid!) },
+  { method: 'GET',    pattern: /^\/api\/web\/plans\/([^/]+)\/categories\/([^/]+)\/suggest$/,       auth: 'api', handler: (req, env, id, cid) => handleSuggestPlanCategory(req, env, id!, cid!) },
+  { method: 'GET',    pattern: /^\/api\/web\/plans\/([^/]+)\/one-time-items$/,                     auth: 'api', handler: (req, env, id) => handleListOneTimeItems(req, env, id!) },
+  { method: 'POST',   pattern: /^\/api\/web\/plans\/([^/]+)\/one-time-items$/,                     auth: 'api', handler: (req, env, id) => handleCreateOneTimeItem(req, env, id!) },
+  { method: 'PUT',    pattern: /^\/api\/web\/plans\/([^/]+)\/one-time-items\/([^/]+)$/,            auth: 'api', handler: (req, env, id, iid) => handleUpdateOneTimeItem(req, env, id!, iid!) },
+  { method: 'DELETE', pattern: /^\/api\/web\/plans\/([^/]+)\/one-time-items\/([^/]+)$/,            auth: 'api', handler: (req, env, id, iid) => handleDeleteOneTimeItem(req, env, id!, iid!) },
 ];
 
 function requireMcpAuth(request: Request, env: Env): { ok: true } | { ok: false; response: Response } {

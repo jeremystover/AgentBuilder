@@ -242,14 +242,12 @@ export async function handleListPlans(_req: Request, env: Env): Promise<Response
   const sql = db(env);
   try {
     const rows = await sql<Array<Record<string, unknown>>>`
-      SELECT p.id, p.name, p.type, p.parent_plan_id, p.status,
-             to_char(p.start_date, 'YYYY-MM-DD') AS start_date,
-             to_char(p.end_date,   'YYYY-MM-DD') AS end_date,
-             (ps.active_plan_id = p.id) AS is_active
-      FROM plans p
-      LEFT JOIN plan_settings ps ON ps.id = 'singleton'
-      WHERE p.status IN ('draft', 'active')
-      ORDER BY p.name
+      SELECT id, name, type, parent_plan_id, status, is_active,
+             to_char(start_date, 'YYYY-MM-DD') AS start_date,
+             to_char(end_date,   'YYYY-MM-DD') AS end_date
+      FROM plans
+      WHERE status IN ('draft', 'active')
+      ORDER BY name
     `;
     return jsonOk({ plans: rows });
   } catch (err) {
@@ -262,10 +260,10 @@ export async function handleListPlans(_req: Request, env: Env): Promise<Response
 export async function handleGetActivePlan(_req: Request, env: Env): Promise<Response> {
   const sql = db(env);
   try {
-    const rows = await sql<Array<{ active_plan_id: string | null }>>`
-      SELECT active_plan_id FROM plan_settings WHERE id = 'singleton'
+    const rows = await sql<Array<{ id: string }>>`
+      SELECT id FROM plans WHERE is_active = true LIMIT 1
     `;
-    return jsonOk({ active_plan_id: rows[0]?.active_plan_id ?? null });
+    return jsonOk({ active_plan_id: rows[0]?.id ?? null });
   } catch (err) {
     return jsonError(`get active plan failed: ${String(err)}`, 500);
   } finally {
@@ -278,11 +276,16 @@ export async function handleSetActivePlan(req: Request, env: Env): Promise<Respo
   if (!body || !('plan_id' in body)) return jsonError('plan_id required', 400);
   const sql = db(env);
   try {
-    await sql`
-      UPDATE plan_settings
-      SET active_plan_id = ${body.plan_id ?? null}, updated_at = now()
-      WHERE id = 'singleton'
-    `;
+    if (body.plan_id == null) {
+      await sql`UPDATE plans SET is_active = false WHERE is_active = true`;
+    } else {
+      await sql`
+        WITH cleared AS (
+          UPDATE plans SET is_active = false WHERE is_active = true AND id <> ${body.plan_id}
+        )
+        UPDATE plans SET is_active = true, status = 'active', updated_at = now() WHERE id = ${body.plan_id}
+      `;
+    }
     return jsonOk({ ok: true });
   } catch (err) {
     return jsonError(`set active plan failed: ${String(err)}`, 500);

@@ -16,6 +16,7 @@ import {
 } from './routes/web-review';
 import { handleListTransactions } from './routes/web-transactions';
 import { handleSpendingReport } from './routes/spending';
+import { handleListPlans, handleForecastPlan } from './routes/planning';
 import { handleListAccounts } from './routes/web-lookups';
 import { handleListRules, handleCreateRule } from './routes/web-rules';
 import { handleGatherSync } from './routes/web-gather';
@@ -179,6 +180,25 @@ export const MCP_TOOLS = [
     inputSchema: { type: 'object' as const, properties: {}, additionalProperties: false },
   },
   {
+    name: 'plan_list',
+    description:
+      'List all financial plans with their type (foundation/modification), status, and whether they are the active plan used for budget comparison.',
+    inputSchema: { type: 'object' as const, properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'plan_forecast',
+    description:
+      "Show the cash flow forecast from the active plan: expected income, expenses, and net for each month or year going forward. Good for 'what does our budget look like for the rest of the year' questions.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        months_ahead: { type: 'number' as const, default: 12, description: 'How many months to forecast.' },
+        period_type:  { type: 'string' as const, enum: ['monthly', 'annual'], default: 'monthly' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'report_generate',
     description:
       'Generate a financial report for a config and date range. Returns a Google Drive link to the spreadsheet. Use for Schedule C, Schedule E, or spending summaries. Call report_list_configs first to get config IDs.',
@@ -283,6 +303,12 @@ export async function dispatchTool(name: string, args: Record<string, unknown>, 
 
     case 'sync_run':
       return syncRun(args, env);
+
+    case 'plan_list':
+      return respondText(await handleListPlans(getReq('https://cfo.invalid/api/web/plans'), env));
+
+    case 'plan_forecast':
+      return planForecast(args, env);
 
     case 'report_list_configs':
       return respondText(await handleListReportConfigs(getReq('https://cfo.invalid/api/web/reports/configs'), env));
@@ -402,10 +428,10 @@ async function spendingSummary(args: Record<string, unknown>, env: Env): Promise
   const sql = db(env);
   let activePlanId: string | null = null;
   try {
-    const rows = await sql<Array<{ active_plan_id: string | null }>>`
-      SELECT active_plan_id FROM plan_settings WHERE id = 'singleton'
+    const rows = await sql<Array<{ id: string }>>`
+      SELECT id FROM plans WHERE is_active = true LIMIT 1
     `;
-    activePlanId = rows[0]?.active_plan_id ?? null;
+    activePlanId = rows[0]?.id ?? null;
   } finally { await sql.end({ timeout: 5 }).catch(() => {}); }
 
   const params: Record<string, unknown> = {
@@ -448,6 +474,22 @@ function resolveSpendingPeriod(
     default:
       return { from: iso(new Date(Date.UTC(yr, mo, 1))), to: iso(today) };
   }
+}
+
+async function planForecast(args: Record<string, unknown>, env: Env): Promise<string> {
+  const sql = db(env);
+  let activeId: string | null = null;
+  try {
+    const rows = await sql<Array<{ id: string }>>`SELECT id FROM plans WHERE is_active = true LIMIT 1`;
+    activeId = rows[0]?.id ?? null;
+  } finally { await sql.end({ timeout: 5 }).catch(() => {}); }
+  if (!activeId) return JSON.stringify({ error: 'No active plan set. Create a plan and mark it active first.' });
+  const monthsAhead = typeof args.months_ahead === 'number' ? args.months_ahead : 12;
+  const periodType  = args.period_type === 'annual' ? 'annual' : 'monthly';
+  const url = withQuery(`https://cfo.invalid/api/web/plans/${activeId}/forecast`, {
+    horizon_months: monthsAhead, period_type: periodType,
+  });
+  return respondText(await handleForecastPlan(getReq(url), env, activeId));
 }
 
 async function syncRun(args: Record<string, unknown>, env: Env): Promise<string> {

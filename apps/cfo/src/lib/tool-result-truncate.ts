@@ -86,6 +86,8 @@ export const TOOL_DRILL_IN_HINTS: Record<string, string> = {
   review_status:        '/#/review',
   transactions_list:    '/#/transactions',
   spending_summary:     '/#/spending',
+  plan_forecast:        '/#/planning',
+  plan_list:            '/#/planning',
   rules_list:           '/#/review',
   rules_create:         '/#/review',
   accounts_list:        '/#/gather',
