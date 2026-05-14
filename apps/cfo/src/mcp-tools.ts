@@ -18,6 +18,7 @@ import { handleListTransactions, handleTransactionsSummary } from './routes/web-
 import { handleListAccounts } from './routes/web-lookups';
 import { handleListRules, handleCreateRule } from './routes/web-rules';
 import { handleGatherSync } from './routes/web-gather';
+import { handleListReportConfigs, handleGenerateReport } from './routes/reports';
 import { db } from './lib/db';
 
 export interface JsonRpcMessage {
@@ -169,6 +170,28 @@ export const MCP_TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'report_list_configs',
+    description:
+      'List available report configurations (Schedule C, Schedule E, family summary, etc.) with their IDs and last run dates.',
+    inputSchema: { type: 'object' as const, properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'report_generate',
+    description:
+      'Generate a financial report for a config and date range. Returns a Google Drive link to the spreadsheet. Use for Schedule C, Schedule E, or spending summaries. Call report_list_configs first to get config IDs.',
+    inputSchema: {
+      type: 'object' as const,
+      required: ['config_id', 'period'],
+      properties: {
+        config_id: { type: 'string' as const },
+        period:    { type: 'string' as const, enum: ['last_month', 'last_quarter', 'last_year', 'ytd', 'custom'] },
+        date_from: { type: 'string' as const, description: 'Required if period=custom.' },
+        date_to:   { type: 'string' as const, description: 'Required if period=custom.' },
+      },
+      additionalProperties: false,
+    },
+  },
 ] as const;
 
 // ── Dispatch ─────────────────────────────────────────────────────────────────
@@ -266,6 +289,19 @@ export async function dispatchTool(name: string, args: Record<string, unknown>, 
 
     case 'sync_run':
       return syncRun(args, env);
+
+    case 'report_list_configs':
+      return respondText(await handleListReportConfigs(getReq('https://cfo.invalid/api/web/reports/configs'), env));
+
+    case 'report_generate': {
+      const configId = String(args.config_id ?? '');
+      if (!configId) throw new Error('config_id is required');
+      const body: Record<string, unknown> = { period: args.period };
+      if (typeof args.date_from === 'string') body.date_from = args.date_from;
+      if (typeof args.date_to === 'string') body.date_to = args.date_to;
+      const req = postReq(`https://cfo.invalid/api/web/reports/configs/${configId}/generate`, body);
+      return respondText(await handleGenerateReport(req, env, configId));
+    }
 
     default:
       throw new Error(`Unknown tool: ${name}`);

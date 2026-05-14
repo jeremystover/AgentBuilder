@@ -27,6 +27,13 @@
  *   - GET    /api/web/review/next                interview-mode next row
  *   - GET    /api/web/transactions/summary       entity/category rollup
  *   - POST   /api/web/chat                       SSE streaming chat (10 tools)
+ *   - GET    /api/web/reports/configs            list saved report configs
+ *   - POST   /api/web/reports/configs            create config
+ *   - PUT    /api/web/reports/configs/:id        update config
+ *   - GET    /api/web/reports/configs/:id/runs   run history for config
+ *   - POST   /api/web/reports/configs/:id/generate
+ *                                               generate report → Drive link
+ *   - GET    /api/web/reports/runs/:id           single run detail
  *   - POST   /mcp                                JSON-RPC 2.0 (Bearer MCP_HTTP_KEY)
  *   - POST   /teller/enroll, GET /teller/accounts, POST /teller/sync,
  *     DELETE /teller/enrollments/:id            external Teller surface
@@ -63,6 +70,10 @@ import {
 import { handleListTransactions, handleUpdateTransaction, handleTransactionsSummary } from './routes/web-transactions';
 import { handleListRules, handleCreateRule } from './routes/web-rules';
 import { handleGatherStatus, handleGatherSync } from './routes/web-gather';
+import {
+  handleListReportConfigs, handleCreateReportConfig, handleUpdateReportConfig,
+  handleListReportRuns, handleGetReportRun, handleGenerateReport,
+} from './routes/reports';
 import { handleMcp, type JsonRpcMessage } from './mcp-tools';
 import { handleWebChat } from './web-chat';
 import { runClassify } from './lib/classify';
@@ -104,6 +115,14 @@ const ROUTES: Route[] = [
   { method: 'GET',    pattern: /^\/api\/web\/transactions\/summary$/,   auth: 'api',    handler: (req, env) => handleTransactionsSummary(req, env) },
   { method: 'PUT',    pattern: /^\/api\/web\/transactions\/([^/]+)$/,   auth: 'api',    handler: (req, env, id) => handleUpdateTransaction(req, env, id!) },
   { method: 'POST',   pattern: /^\/api\/web\/chat$/,                    auth: 'api',    handler: (req, env) => handleWebChat(req, env) },
+
+  // Reporting
+  { method: 'GET',    pattern: /^\/api\/web\/reports\/configs$/,                       auth: 'api', handler: (req, env) => handleListReportConfigs(req, env) },
+  { method: 'POST',   pattern: /^\/api\/web\/reports\/configs$/,                       auth: 'api', handler: (req, env) => handleCreateReportConfig(req, env) },
+  { method: 'PUT',    pattern: /^\/api\/web\/reports\/configs\/([^/]+)$/,              auth: 'api', handler: (req, env, id) => handleUpdateReportConfig(req, env, id!) },
+  { method: 'GET',    pattern: /^\/api\/web\/reports\/configs\/([^/]+)\/runs$/,        auth: 'api', handler: (req, env, id) => handleListReportRuns(req, env, id!) },
+  { method: 'POST',   pattern: /^\/api\/web\/reports\/configs\/([^/]+)\/generate$/,    auth: 'api', handler: (req, env, id) => handleGenerateReport(req, env, id!) },
+  { method: 'GET',    pattern: /^\/api\/web\/reports\/runs\/([^/]+)$/,                 auth: 'api', handler: (req, env, id) => handleGetReportRun(req, env, id!) },
   { method: 'GET',    pattern: /^\/api\/web\/rules$/,                   auth: 'api',    handler: (req, env) => handleListRules(req, env) },
   { method: 'POST',   pattern: /^\/api\/web\/rules$/,                   auth: 'api',    handler: (req, env) => handleCreateRule(req, env) },
   { method: 'GET',    pattern: /^\/api\/web\/gather\/status$/,          auth: 'api',    handler: (req, env) => handleGatherStatus(req, env) },

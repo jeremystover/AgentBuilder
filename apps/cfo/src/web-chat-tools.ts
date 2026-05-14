@@ -9,7 +9,24 @@ import type { Env } from './types';
 import { dispatchTool, MCP_TOOLS } from './mcp-tools';
 import { truncateForChat, drillInFor } from './lib/tool-result-truncate';
 
-export const TOOL_ALLOWLIST = MCP_TOOLS.map(t => t.name);
+/**
+ * Curated chat allowlist (AGENTS.md rule 2: ≤10 tools). The two ops tools
+ * (accounts_list, sync_run) are dropped from chat — they're still reachable
+ * via direct MCP, but they don't help the model answer questions and slow
+ * tool selection.
+ */
+export const TOOL_ALLOWLIST: string[] = [
+  'review_status',
+  'review_next',
+  'review_resolve',
+  'review_bulk_accept',
+  'transactions_summary',
+  'transactions_list',
+  'rules_list',
+  'rules_create',
+  'report_generate',
+  'report_list_configs',
+];
 
 interface KitTool {
   description: string;
@@ -25,7 +42,7 @@ export function buildWebChatTools(env: Env): Record<string, KitTool> {
   const byName = new Map(MCP_TOOLS.map(t => [t.name, t] as const));
   const reg: Record<string, KitTool> = {};
   for (const name of TOOL_ALLOWLIST) {
-    const def = byName.get(name);
+    const def = byName.get(name as (typeof MCP_TOOLS)[number]['name']);
     if (!def) throw new Error(`web-chat-tools: TOOL_ALLOWLIST references unknown tool "${name}"`);
     reg[name] = {
       description: def.description,

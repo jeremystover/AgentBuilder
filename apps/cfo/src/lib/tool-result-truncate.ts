@@ -90,6 +90,8 @@ export const TOOL_DRILL_IN_HINTS: Record<string, string> = {
   rules_create:         '/#/review',
   accounts_list:        '/#/gather',
   sync_run:             '/#/gather',
+  report_list_configs:  '/#/reporting',
+  report_generate:      '/#/reporting',
 };
 
 export function drillInFor(toolName: string): string | undefined {

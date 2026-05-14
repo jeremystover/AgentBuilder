@@ -229,7 +229,9 @@
         "rules_list",
         "rules_create",
         "accounts_list",
-        "sync_run"
+        "sync_run",
+        "report_list_configs",
+        "report_generate"
       ],
       "toolDescriptions": {
         "review_status": "Queue counts: pending, waiting, recently approved.",
@@ -241,7 +243,9 @@
         "rules_list": "Active classification rules with match counts.",
         "rules_create": "Add a rule for description/merchant/amount patterns.",
         "accounts_list": "All Teller-connected accounts with sync status.",
-        "sync_run": "Trigger Teller and/or per-vendor email sync on demand."
+        "sync_run": "Trigger Teller and/or per-vendor email sync on demand.",
+        "report_list_configs": "List saved report configurations (Schedule C/E, family summary) with last-run dates.",
+        "report_generate": "Generate a Schedule C/E or summary report; returns a Google Drive link."
       },
       "mcpServers": [],
       "sharedPackages": [

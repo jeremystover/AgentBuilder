@@ -3,6 +3,7 @@ import { PlaceholderView } from "./components/PlaceholderView";
 import { GatherView } from "./components/drilldowns/GatherView";
 import { ReviewQueueView } from "./components/drilldowns/ReviewQueueView";
 import { TransactionsView } from "./components/drilldowns/TransactionsView";
+import { ReportsView } from "./components/drilldowns/ReportsView";
 import { useRoute } from "./router";
 
 export function App() {
@@ -14,7 +15,7 @@ export function App() {
         {route === "gather"       && <GatherView />}
         {route === "review"       && <ReviewQueueView />}
         {route === "transactions" && <TransactionsView />}
-        {route === "reporting"    && <PlaceholderView name="Reporting (Phase 2)" />}
+        {route === "reporting"    && <ReportsView />}
         {route === "planning"     && <PlaceholderView name="Planning" />}
         {route === "spending"     && <PlaceholderView name="Spending" />}
         {route === "scenarios"    && <PlaceholderView name="Scenarios" />}

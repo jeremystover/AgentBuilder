@@ -57,8 +57,28 @@ wrangler secret put WEB_UI_PASSWORD
 wrangler secret put EXTERNAL_API_KEY
 wrangler secret put MCP_HTTP_KEY
 wrangler secret put TELLER_APPLICATION_ID
+wrangler secret put GOOGLE_OAUTH_CLIENT_ID
+wrangler secret put GOOGLE_OAUTH_CLIENT_SECRET
+openssl rand -base64 32 | wrangler secret put GOOGLE_TOKEN_VAULT_KEK
 # ANTHROPIC_API_KEY is managed via the fleet secrets store.
 ```
+
+## 5a. Google OAuth scopes (Gmail + Sheets + Drive)
+
+The same `(cfo, default)` row in the `cfo-tokens` D1 backs Gmail
+enrichment (Phase 1b) and Google Sheets reporting (Phase 2). Bootstrap
+the token with **all three** scopes so re-auth isn't required when you
+flip from email sync to reporting:
+
+```
+https://www.googleapis.com/auth/gmail.readonly
+https://www.googleapis.com/auth/spreadsheets
+https://www.googleapis.com/auth/drive.file
+```
+
+Token seeding currently rides on the chief-of-staff OAuth flow with
+`agent_id` rewritten to `cfo`. A dedicated `/auth/google/*` route inside
+this worker is a future task.
 
 ## 6. Verify
 
