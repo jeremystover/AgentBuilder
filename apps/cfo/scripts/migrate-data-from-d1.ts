@@ -52,6 +52,7 @@ const NEW_TAX_CATS = [
   { id: 'cat_sc_utilities',      slug: 'sc_utilities',      name: 'Utilities',                set: 'schedule_c', line: 'II-25' },
   { id: 'cat_sc_wages',          slug: 'sc_wages',          name: 'Wages',                    set: 'schedule_c', line: 'II-26' },
   { id: 'cat_sc_other',          slug: 'sc_other',          name: 'Other expenses',           set: 'schedule_c', line: 'II-27a' },
+  { id: 'cat_sc_development',    slug: 'sc_development',    name: 'Professional development', set: 'schedule_c', line: 'II-27a' },
   { id: 'cat_sc_home_office',    slug: 'sc_home_office',    name: 'Home office',              set: 'schedule_c', line: 'II-30' },
   { id: 'cat_se_rents',          slug: 'se_rents',          name: 'Rents received',           set: 'schedule_e', line: 'I-3a' },
   { id: 'cat_se_royalties',      slug: 'se_royalties',      name: 'Royalties received',      set: 'schedule_e', line: 'I-4'  },
@@ -70,6 +71,9 @@ const NEW_TAX_CATS = [
   { id: 'cat_se_utilities',      slug: 'se_utilities',      name: 'Utilities',               set: 'schedule_e', line: 'I-17' },
   { id: 'cat_se_depreciation',   slug: 'se_depreciation',   name: 'Depreciation',            set: 'schedule_e', line: 'I-18' },
   { id: 'cat_se_other',          slug: 'se_other',          name: 'Other expenses',          set: 'schedule_e', line: 'I-19' },
+  // Custom tracking-only categories (deducted via depreciation at tax time; no IRS line).
+  { id: 'cat_se_furnishings',    slug: 'se_furnishings',    name: 'Furnishings',             set: 'schedule_e', line: ''     },
+  { id: 'cat_se_capimprovements',slug: 'se_capimprovements',name: 'Capital improvements',    set: 'schedule_e', line: ''     },
 ] as const;
 
 const NEW_BUDGET_CATS = [
@@ -88,6 +92,9 @@ const NEW_BUDGET_CATS = [
   { id: 'cat_b_gifts',         slug: 'b_gifts',         name: 'Gifts and donations' },
   { id: 'cat_b_savings',       slug: 'b_savings',       name: 'Savings and investments' },
   { id: 'cat_b_misc',          slug: 'b_misc',          name: 'Miscellaneous' },
+  { id: 'cat_b_insurance',     slug: 'b_insurance',     name: 'Insurance (personal)' },
+  { id: 'cat_b_repairs',       slug: 'b_repairs',       name: 'Home repairs' },
+  { id: 'cat_b_capgains',      slug: 'b_capgains',      name: 'Capital gains' },
 ] as const;
 
 const TRANSFER_CAT_ID = 'cat_transfer';
@@ -295,7 +302,9 @@ function buildTaxMap(oldCats: OldTaxCatRow[]): CategoryMapFile['tax'] {
   const out: CategoryMapFile['tax'] = {};
   // Build line → new for each set
   const newByLine = new Map<string, string>();
-  for (const c of NEW_TAX_CATS) newByLine.set(`${c.set}|${c.line}`, c.slug);
+  for (const c of NEW_TAX_CATS) {
+    if (c.line) newByLine.set(`${c.set}|${c.line}`, c.slug);
+  }
   // Also a name lookup for fallback
   const newByNameSet = new Map<string, string>();
   for (const c of NEW_TAX_CATS) newByNameSet.set(`${c.set}|${normalizeName(c.name)}`, c.slug);
@@ -341,6 +350,11 @@ function buildBudgetMap(oldCats: OldBudgetCatRow[]): CategoryMapFile['budget'] {
   byNorm.set(normalizeName('subscriptions'), 'b_entertainment');
   byNorm.set(normalizeName('charity'), 'b_gifts');
   byNorm.set(normalizeName('donations'), 'b_gifts');
+  byNorm.set(normalizeName('insurance'), 'b_insurance');
+  byNorm.set(normalizeName('repairs'), 'b_repairs');
+  byNorm.set(normalizeName('home repairs'), 'b_repairs');
+  byNorm.set(normalizeName('capital gains'), 'b_capgains');
+  byNorm.set(normalizeName('capgains'), 'b_capgains');
 
   for (const r of oldCats) {
     const guess = byNorm.get(normalizeName(r.name))
