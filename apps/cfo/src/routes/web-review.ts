@@ -317,3 +317,98 @@ export async function handleAdvanceWaiting(_req: Request, env: Env, id: string):
     await sql.end({ timeout: 5 }).catch(() => {});
   }
 }
+
+/**
+ * Interview-style endpoint: return the single oldest pending row + a few
+ * similar past approved transactions for context. Used by the review_next
+ * MCP tool.
+ */
+export async function handleReviewNext(req: Request, env: Env): Promise<Response> {
+  const url = new URL(req.url);
+  const entitySlug = url.searchParams.get('entity_slug') ?? undefined;
+  const minConfidence = url.searchParams.get('min_confidence');
+  const minConf = minConfidence ? Number(minConfidence) : null;
+
+  const sql = db(env);
+  try {
+    const rows = await sql<Array<Record<string, unknown>>>`
+      SELECT
+        r.id, to_char(r.date, 'YYYY-MM-DD') AS date, r.amount::text AS amount, r.description, r.merchant,
+        r.account_id, a.name AS account_name, a.type AS account_type,
+        r.entity_id, en.slug AS entity_slug, en.name AS entity_name,
+        r.category_id, c.slug AS category_slug, c.name AS category_name,
+        r.classification_method, r.ai_confidence::text AS ai_confidence, r.ai_notes,
+        r.human_notes, r.is_transfer, r.is_reimbursable,
+        r.supplement_json
+      FROM raw_transactions r
+      LEFT JOIN gather_accounts a ON a.id = r.account_id
+      LEFT JOIN entities en ON en.id = r.entity_id
+      LEFT JOIN categories c ON c.id = r.category_id
+      WHERE r.source = 'teller'
+        AND r.status = 'staged'
+        ${entitySlug ? sql`AND en.slug = ${entitySlug}` : sql``}
+        ${minConf !== null && Number.isFinite(minConf) ? sql`AND (r.ai_confidence IS NULL OR r.ai_confidence < ${minConf})` : sql``}
+      ORDER BY r.date ASC, r.id ASC
+      LIMIT 1
+    `;
+    if (rows.length === 0) return jsonOk({ row: null, similar: [] });
+    const row = rows[0]!;
+    const amount = Number(row.amount);
+
+    // Similar past transactions: same merchant or near-amount in transactions.
+    const merchant = (row.merchant ?? row.description) as string | null;
+    const similar = await sql<Array<Record<string, unknown>>>`
+      SELECT to_char(t.date, 'YYYY-MM-DD') AS date, t.amount::text AS amount, t.description, t.merchant,
+             en.name AS entity_name, c.name AS category_name, c.slug AS category_slug
+      FROM transactions t
+      LEFT JOIN entities en ON en.id = t.entity_id
+      LEFT JOIN categories c ON c.id = t.category_id
+      WHERE t.status = 'approved'
+        AND (
+          (${merchant} IS NOT NULL AND t.merchant ILIKE ${merchant})
+          OR ABS(t.amount - ${amount}) < 0.01
+        )
+      ORDER BY t.approved_at DESC
+      LIMIT 5
+    `;
+
+    return jsonOk({
+      row: {
+        ...row,
+        amount,
+        ai_confidence: row.ai_confidence === null ? null : Number(row.ai_confidence),
+      },
+      similar: similar.map(s => ({ ...s, amount: Number(s.amount) })),
+    });
+  } catch (err) {
+    return jsonError(`review next failed: ${String(err)}`, 500);
+  } finally {
+    await sql.end({ timeout: 5 }).catch(() => {});
+  }
+}
+
+export async function handleReviewStatus(_req: Request, env: Env): Promise<Response> {
+  const sql = db(env);
+  try {
+    const rows = await sql<Array<{
+      pending_review: string; waiting: string; approved_30d: string; approved_today: string;
+    }>>`
+      SELECT
+        (SELECT COUNT(*) FROM raw_transactions WHERE status = 'staged')::text AS pending_review,
+        (SELECT COUNT(*) FROM raw_transactions WHERE status = 'waiting')::text AS waiting,
+        (SELECT COUNT(*) FROM transactions WHERE status = 'approved' AND approved_at >= now() - interval '30 days')::text AS approved_30d,
+        (SELECT COUNT(*) FROM transactions WHERE status = 'approved' AND approved_at >= now() - interval '1 day')::text AS approved_today
+    `;
+    const c = rows[0]!;
+    return jsonOk({
+      pending_review: Number(c.pending_review),
+      waiting: Number(c.waiting),
+      approved_30d: Number(c.approved_30d),
+      approved_today: Number(c.approved_today),
+    });
+  } catch (err) {
+    return jsonError(`review status failed: ${String(err)}`, 500);
+  } finally {
+    await sql.end({ timeout: 5 }).catch(() => {});
+  }
+}

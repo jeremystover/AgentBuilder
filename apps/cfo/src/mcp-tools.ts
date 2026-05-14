@@ -1,0 +1,430 @@
+/**
+ * MCP JSON-RPC 2.0 surface for the cfo worker.
+ *
+ * Thin wrapper over the /api/web/* REST surface: each tool call builds a
+ * synthetic Request and forwards to the existing route handler. Same
+ * behavior as the SPA — no parallel business logic.
+ *
+ * 10 tools total (AGENTS.md rule 2). The same names go in the in-app
+ * chat allowlist (web-chat-tools.ts).
+ */
+
+import type { Env } from './types';
+import {
+  handleListReview, handleUpdateReview, handleApproveReview, handleBulkReview,
+  handleReviewNext, handleReviewStatus,
+} from './routes/web-review';
+import { handleListTransactions, handleTransactionsSummary } from './routes/web-transactions';
+import { handleListAccounts } from './routes/web-lookups';
+import { handleListRules, handleCreateRule } from './routes/web-rules';
+import { handleGatherSync } from './routes/web-gather';
+import { db } from './lib/db';
+
+export interface JsonRpcMessage {
+  jsonrpc?: string;
+  id?: string | number | null;
+  method?: string;
+  params?: Record<string, unknown>;
+}
+
+export const MCP_TOOLS = [
+  {
+    name: 'review_status',
+    description:
+      'Quick overview of the review queue: how many transactions are pending, held, or recently approved. Use at the start of a bookkeeping session to understand what needs attention.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'review_next',
+    description:
+      'Get the next transaction pending human review, with AI reasoning, matched rules, and similar past transactions for context. Returns one transaction at a time for interview-mode review. Use repeatedly to work through the queue.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        entity_slug: { type: 'string' as const, description: 'Filter to a specific entity slug.' },
+        min_confidence: { type: 'number' as const, description: 'Only return rows with AI confidence below this threshold (e.g. 0.7 to focus on uncertain ones).' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'review_resolve',
+    description:
+      "Accept or reclassify a pending transaction. Use 'accept' to approve the AI's suggestion as-is, or provide entity_slug and category_slug to reclassify before approving. 'skip' leaves the row pending. 'mark_transfer' / 'mark_reimbursable' toggle those flags without approving.",
+    inputSchema: {
+      type: 'object' as const,
+      required: ['transaction_id', 'action'],
+      properties: {
+        transaction_id: { type: 'string' as const },
+        action: { type: 'string' as const, enum: ['accept', 'reclassify', 'skip', 'mark_transfer', 'mark_reimbursable'] },
+        entity_slug: { type: 'string' as const },
+        category_slug: { type: 'string' as const },
+        note: { type: 'string' as const, description: 'Optional note saved to human_notes.' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'review_bulk_accept',
+    description:
+      'Approve all pending transactions matching a filter in one operation. Use for high-confidence batches (e.g. all rule-matched transactions, or all transactions from a specific date range).',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        method:         { type: 'string' as const, enum: ['rule', 'ai'], description: 'Accept only rule-matched or AI-classified transactions.' },
+        min_confidence: { type: 'number' as const, description: 'Accept only transactions at or above this AI confidence (0–1).' },
+        entity_slug:    { type: 'string' as const },
+        date_from:      { type: 'string' as const },
+        date_to:        { type: 'string' as const },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'transactions_list',
+    description:
+      "Search and filter approved transactions. Use for questions like 'show me all Costco charges this year' or 'what did we spend on dining in Q1'.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        q:             { type: 'string' as const, description: 'Search term for description or merchant.' },
+        entity_slug:   { type: 'string' as const },
+        category_slug: { type: 'string' as const },
+        date_from:     { type: 'string' as const },
+        date_to:       { type: 'string' as const },
+        limit:         { type: 'number' as const, default: 25 },
+        offset:        { type: 'number' as const, default: 0 },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'transactions_summary',
+    description:
+      "Summarize approved transactions by entity and category for a time period. Returns totals per category with transaction counts. Good for 'how much did we spend on X this month' questions.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        period:      { type: 'string' as const, enum: ['this_month', 'last_month', 'this_quarter', 'last_quarter', 'ytd', 'trailing_30d', 'trailing_90d', 'custom'] },
+        date_from:   { type: 'string' as const },
+        date_to:     { type: 'string' as const },
+        entity_slug: { type: 'string' as const },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'rules_list',
+    description:
+      'List active classification rules. Shows what patterns are being auto-classified and how many transactions each rule has matched.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        entity_slug: { type: 'string' as const },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'rules_create',
+    description:
+      'Create a new classification rule. Applied to all FUTURE transactions matching the criteria. Use after the user corrects a misclassification that is likely to recur.',
+    inputSchema: {
+      type: 'object' as const,
+      required: ['name', 'entity_slug', 'category_slug'],
+      properties: {
+        name:                    { type: 'string' as const },
+        description_contains:    { type: 'string' as const },
+        description_starts_with: { type: 'string' as const },
+        amount_min:              { type: 'number' as const },
+        amount_max:              { type: 'number' as const },
+        entity_slug:             { type: 'string' as const },
+        category_slug:           { type: 'string' as const },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'accounts_list',
+    description: 'List all configured accounts with their current sync status, last sync time, and entity assignment.',
+    inputSchema: { type: 'object' as const, properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'sync_run',
+    description:
+      "Trigger a manual sync for Teller accounts and/or email sources. Use when the user wants current data before a review session.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        sources: {
+          type: 'array' as const,
+          items: { type: 'string' as const, enum: ['teller', 'email_amazon', 'email_venmo', 'email_apple', 'email_etsy', 'all'] },
+          description: "Which sources to sync. Omit or use ['all'] to sync everything.",
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+] as const;
+
+// ── Dispatch ─────────────────────────────────────────────────────────────────
+
+export async function handleMcp(message: JsonRpcMessage, env: Env): Promise<unknown> {
+  const { id, method, params } = message;
+
+  if (!method) {
+    return { jsonrpc: '2.0', id: id ?? null, error: { code: -32600, message: 'Invalid Request' } };
+  }
+  if (method === 'initialize') {
+    return {
+      jsonrpc: '2.0',
+      id,
+      result: {
+        protocolVersion: '2024-11-05',
+        capabilities: { tools: {} },
+        serverInfo: { name: 'cfo', version: '0.1.0' },
+        instructions:
+          'Family finance agent: transaction review, spending analysis, and sync management. ' +
+          'Four entities: Elyse Coaching (Schedule C), Jeremy Coaching (Schedule C), Whitford House (Schedule E), Personal/Family. ' +
+          'Data from Teller bank sync + Gmail email enrichment (Amazon, Venmo, Apple, Etsy). ' +
+          'Start a session with review_status to see what needs attention.',
+      },
+    };
+  }
+  if (method === 'tools/list') {
+    return { jsonrpc: '2.0', id, result: { tools: MCP_TOOLS } };
+  }
+  if (method === 'tools/call') {
+    const name = String(params?.name ?? '');
+    const args = (params?.arguments ?? {}) as Record<string, unknown>;
+    try {
+      const text = await dispatchTool(name, args, env);
+      return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }] } };
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      return { jsonrpc: '2.0', id, error: { code: -32000, message: errorMessage } };
+    }
+  }
+  if (method === 'notifications/initialized') return null;
+  return { jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } };
+}
+
+// ── Per-tool dispatch ────────────────────────────────────────────────────────
+
+export async function dispatchTool(name: string, args: Record<string, unknown>, env: Env): Promise<string> {
+  switch (name) {
+    case 'review_status':
+      return respondText(await handleReviewStatus(getReq('https://cfo.invalid/api/web/review/status'), env));
+
+    case 'review_next': {
+      const url = withQuery('https://cfo.invalid/api/web/review/next', args);
+      return respondText(await handleReviewNext(getReq(url), env));
+    }
+
+    case 'review_resolve':
+      return resolveReview(args, env);
+
+    case 'review_bulk_accept':
+      return bulkAccept(args, env);
+
+    case 'transactions_list': {
+      const url = withQuery('https://cfo.invalid/api/web/transactions', await translateEntityAndCategorySlugs(env, {
+        q: args.q,
+        entity_id: await slugToEntityId(env, args.entity_slug),
+        category_id: await slugToCategoryId(env, args.category_slug),
+        date_from: args.date_from,
+        date_to: args.date_to,
+        limit: args.limit,
+        offset: args.offset,
+      }));
+      return respondText(await handleListTransactions(getReq(url), env));
+    }
+
+    case 'transactions_summary': {
+      const params = {
+        period: args.period,
+        date_from: args.date_from,
+        date_to: args.date_to,
+        entity_id: await slugToEntityId(env, args.entity_slug),
+      };
+      const url = withQuery('https://cfo.invalid/api/web/transactions/summary', params);
+      return respondText(await handleTransactionsSummary(getReq(url), env));
+    }
+
+    case 'rules_list':
+      return respondText(await handleListRules(getReq('https://cfo.invalid/api/web/rules'), env));
+
+    case 'rules_create':
+      return createRule(args, env);
+
+    case 'accounts_list':
+      return respondText(await handleListAccounts(getReq('https://cfo.invalid/api/web/accounts'), env));
+
+    case 'sync_run':
+      return syncRun(args, env);
+
+    default:
+      throw new Error(`Unknown tool: ${name}`);
+  }
+}
+
+// ── Tool-specific helpers ────────────────────────────────────────────────────
+
+async function resolveReview(args: Record<string, unknown>, env: Env): Promise<string> {
+  const transactionId = String(args.transaction_id ?? '');
+  const action = String(args.action ?? '');
+  if (!transactionId || !action) throw new Error('transaction_id and action are required');
+
+  const entityId = await slugToEntityId(env, args.entity_slug);
+  const categoryId = await slugToCategoryId(env, args.category_slug);
+  const note = typeof args.note === 'string' ? args.note : undefined;
+
+  // First persist any edits from the call.
+  const updateBody: Record<string, unknown> = {};
+  if (entityId) updateBody.entity_id = entityId;
+  if (categoryId) updateBody.category_id = categoryId;
+  if (note) updateBody.human_notes = note;
+  if (action === 'mark_transfer') updateBody.is_transfer = true;
+  if (action === 'mark_reimbursable') updateBody.is_reimbursable = true;
+
+  if (Object.keys(updateBody).length > 0) {
+    const req = postReq(`https://cfo.invalid/api/web/review/${transactionId}`, updateBody, 'PUT');
+    const resp = await handleUpdateReview(req, env, transactionId);
+    if (!resp.ok) return respondText(resp);
+  }
+
+  if (action === 'skip') return JSON.stringify({ skipped: transactionId });
+  if (action === 'mark_transfer' || action === 'mark_reimbursable') {
+    return JSON.stringify({ flagged: transactionId, action });
+  }
+
+  // 'accept' and 'reclassify' both approve the row (any edits already persisted).
+  const approveResp = await handleApproveReview(getReq(`https://cfo.invalid/api/web/review/${transactionId}/approve`), env, transactionId);
+  return respondText(approveResp);
+}
+
+async function bulkAccept(args: Record<string, unknown>, env: Env): Promise<string> {
+  // Build filters that handleBulkReview understands. We post action=approve
+  // with apply_to_filtered=true and a filters dict that mirrors the GET
+  // /api/web/review query-string.
+  const filters: Record<string, string | string[]> = { status: 'staged' };
+  if (typeof args.date_from === 'string') filters.date_from = args.date_from;
+  if (typeof args.date_to === 'string') filters.date_to = args.date_to;
+  if (typeof args.entity_slug === 'string') {
+    const eid = await slugToEntityId(env, args.entity_slug);
+    if (eid) filters.entity_id = eid;
+  }
+  if (args.method === 'rule') filters.confidence = 'rule';
+  if (typeof args.min_confidence === 'number' && args.min_confidence >= 0.9) filters.confidence = 'high';
+  else if (typeof args.min_confidence === 'number' && args.min_confidence >= 0.7) filters.confidence = 'medium';
+
+  const body = {
+    action: 'approve' as const,
+    apply_to_filtered: true,
+    filters,
+  };
+  const req = postReq('https://cfo.invalid/api/web/review/bulk', body);
+  return respondText(await handleBulkReview(req, env));
+}
+
+async function createRule(args: Record<string, unknown>, env: Env): Promise<string> {
+  const entityId = await slugToEntityId(env, args.entity_slug);
+  const categoryId = await slugToCategoryId(env, args.category_slug);
+  if (!entityId) throw new Error(`Unknown entity_slug: ${args.entity_slug}`);
+  if (!categoryId) throw new Error(`Unknown category_slug: ${args.category_slug}`);
+  const match_json: Record<string, unknown> = {};
+  if (typeof args.description_contains === 'string') match_json.description_contains = args.description_contains;
+  if (typeof args.description_starts_with === 'string') match_json.description_starts_with = args.description_starts_with;
+  if (typeof args.amount_min === 'number') match_json.amount_min = args.amount_min;
+  if (typeof args.amount_max === 'number') match_json.amount_max = args.amount_max;
+  if (Object.keys(match_json).length === 0) throw new Error('At least one match field is required');
+
+  const body = {
+    name: String(args.name ?? ''),
+    match_json,
+    entity_id: entityId,
+    category_id: categoryId,
+    created_by: 'user' as const,
+  };
+  return respondText(await handleCreateRule(postReq('https://cfo.invalid/api/web/rules', body), env));
+}
+
+async function syncRun(args: Record<string, unknown>, env: Env): Promise<string> {
+  const sources = Array.isArray(args.sources) ? args.sources : ['all'];
+  const targets = sources.includes('all')
+    ? ['teller', 'email_amazon', 'email_venmo', 'email_apple', 'email_etsy']
+    : sources;
+  const results: Array<{ source: string; result: unknown }> = [];
+  for (const s of targets) {
+    const source = typeof s === 'string' ? s : '';
+    if (!source) continue;
+    const mapped =
+      source === 'teller' ? 'teller'
+      : source.startsWith('email_') ? `email:${source.slice('email_'.length)}`
+      : source;
+    const resp = await handleGatherSync(getReq(`https://cfo.invalid/api/web/gather/sync/${mapped}`), env, mapped);
+    try { results.push({ source, result: await resp.clone().json() }); }
+    catch { results.push({ source, result: await resp.clone().text() }); }
+  }
+  return JSON.stringify({ syncs: results });
+}
+
+// ── Slug → id lookups (small, cached per dispatch) ──────────────────────────
+
+async function slugToEntityId(env: Env, slug: unknown): Promise<string | undefined> {
+  if (typeof slug !== 'string' || !slug) return undefined;
+  const sql = db(env);
+  try {
+    const rows = await sql<Array<{ id: string }>>`SELECT id FROM entities WHERE slug = ${slug} LIMIT 1`;
+    return rows[0]?.id;
+  } finally { await sql.end({ timeout: 5 }).catch(() => {}); }
+}
+
+async function slugToCategoryId(env: Env, slug: unknown): Promise<string | undefined> {
+  if (typeof slug !== 'string' || !slug) return undefined;
+  const sql = db(env);
+  try {
+    const rows = await sql<Array<{ id: string }>>`SELECT id FROM categories WHERE slug = ${slug} LIMIT 1`;
+    return rows[0]?.id;
+  } finally { await sql.end({ timeout: 5 }).catch(() => {}); }
+}
+
+async function translateEntityAndCategorySlugs(_env: Env, params: Record<string, unknown>): Promise<Record<string, unknown>> {
+  // Already resolved in callers; pass through. Wrapper kept for clarity.
+  return params;
+}
+
+// ── HTTP helpers (mirrors old CFO pattern) ───────────────────────────────────
+
+function getReq(url: string): Request {
+  return new Request(url, { method: 'GET', headers: { 'content-type': 'application/json' } });
+}
+
+function postReq(url: string, body: unknown, method: 'POST' | 'PUT' = 'POST'): Request {
+  return new Request(url, {
+    method,
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+function withQuery(base: string, args: Record<string, unknown>): string {
+  const url = new URL(base);
+  for (const [key, value] of Object.entries(args)) {
+    if (value === undefined || value === null) continue;
+    if (Array.isArray(value)) {
+      for (const v of value) url.searchParams.append(key, String(v));
+    } else {
+      url.searchParams.set(key, String(value));
+    }
+  }
+  return url.toString();
+}
+
+async function respondText(res: Response): Promise<string> {
+  return res.text();
+}

@@ -23,6 +23,11 @@
  *   - POST   /api/web/rules                     create rule
  *   - GET    /api/web/gather/status             sync health for Gather page
  *   - POST   /api/web/gather/sync/:source       manual sync trigger
+ *   - GET    /api/web/review/status              queue counts (also a tool)
+ *   - GET    /api/web/review/next                interview-mode next row
+ *   - GET    /api/web/transactions/summary       entity/category rollup
+ *   - POST   /api/web/chat                       SSE streaming chat (10 tools)
+ *   - POST   /mcp                                JSON-RPC 2.0 (Bearer MCP_HTTP_KEY)
  *   - POST   /teller/enroll, GET /teller/accounts, POST /teller/sync,
  *     DELETE /teller/enrollments/:id            external Teller surface
  *   - GET    /gmail/status, POST /gmail/sync, POST /gmail/sync/:vendor
@@ -30,7 +35,8 @@
  *   - GET   any unmatched (cookie-gated)        SPA shell from ASSETS
  *
  * Scheduled:
- *   - "0 9 * * *"  → nightly Teller sync + email enrichment (~05:00 ET)
+ *   - "0 9 * * *"  → nightly Teller sync + email enrichment + auto-classify
+ *                    (runs at ~05:00 ET).
  */
 
 import { runCron } from '@agentbuilder/observability';
@@ -52,10 +58,14 @@ import {
 import {
   handleListReview, handleGetReview, handleUpdateReview,
   handleApproveReview, handleBulkReview, handleAdvanceWaiting,
+  handleReviewNext, handleReviewStatus,
 } from './routes/web-review';
-import { handleListTransactions, handleUpdateTransaction } from './routes/web-transactions';
+import { handleListTransactions, handleUpdateTransaction, handleTransactionsSummary } from './routes/web-transactions';
 import { handleListRules, handleCreateRule } from './routes/web-rules';
 import { handleGatherStatus, handleGatherSync } from './routes/web-gather';
+import { handleMcp, type JsonRpcMessage } from './mcp-tools';
+import { handleWebChat } from './web-chat';
+import { runClassify } from './lib/classify';
 
 import {
   createSession, destroySession, requireWebSession, requireApiAuth,
@@ -83,22 +93,38 @@ const ROUTES: Route[] = [
   { method: 'GET',    pattern: /^\/api\/web\/accounts$/,                auth: 'api',    handler: (req, env) => handleListAccounts(req, env) },
   { method: 'PUT',    pattern: /^\/api\/web\/accounts\/([^/]+)$/,       auth: 'api',    handler: (req, env, id) => handleUpdateAccount(req, env, id!) },
   { method: 'GET',    pattern: /^\/api\/web\/review$/,                  auth: 'api',    handler: (req, env) => handleListReview(req, env) },
+  { method: 'GET',    pattern: /^\/api\/web\/review\/status$/,          auth: 'api',    handler: (req, env) => handleReviewStatus(req, env) },
+  { method: 'GET',    pattern: /^\/api\/web\/review\/next$/,            auth: 'api',    handler: (req, env) => handleReviewNext(req, env) },
   { method: 'POST',   pattern: /^\/api\/web\/review\/bulk$/,            auth: 'api',    handler: (req, env) => handleBulkReview(req, env) },
   { method: 'GET',    pattern: /^\/api\/web\/review\/([^/]+)$/,         auth: 'api',    handler: (req, env, id) => handleGetReview(req, env, id!) },
   { method: 'PUT',    pattern: /^\/api\/web\/review\/([^/]+)$/,         auth: 'api',    handler: (req, env, id) => handleUpdateReview(req, env, id!) },
   { method: 'POST',   pattern: /^\/api\/web\/review\/([^/]+)\/approve$/,auth: 'api',    handler: (req, env, id) => handleApproveReview(req, env, id!) },
   { method: 'POST',   pattern: /^\/api\/web\/review\/([^/]+)\/advance$/,auth: 'api',    handler: (req, env, id) => handleAdvanceWaiting(req, env, id!) },
   { method: 'GET',    pattern: /^\/api\/web\/transactions$/,            auth: 'api',    handler: (req, env) => handleListTransactions(req, env) },
+  { method: 'GET',    pattern: /^\/api\/web\/transactions\/summary$/,   auth: 'api',    handler: (req, env) => handleTransactionsSummary(req, env) },
   { method: 'PUT',    pattern: /^\/api\/web\/transactions\/([^/]+)$/,   auth: 'api',    handler: (req, env, id) => handleUpdateTransaction(req, env, id!) },
+  { method: 'POST',   pattern: /^\/api\/web\/chat$/,                    auth: 'api',    handler: (req, env) => handleWebChat(req, env) },
   { method: 'GET',    pattern: /^\/api\/web\/rules$/,                   auth: 'api',    handler: (req, env) => handleListRules(req, env) },
   { method: 'POST',   pattern: /^\/api\/web\/rules$/,                   auth: 'api',    handler: (req, env) => handleCreateRule(req, env) },
   { method: 'GET',    pattern: /^\/api\/web\/gather\/status$/,          auth: 'api',    handler: (req, env) => handleGatherStatus(req, env) },
   { method: 'POST',   pattern: /^\/api\/web\/gather\/sync\/(.+)$/,      auth: 'api',    handler: (req, env, source) => handleGatherSync(req, env, source!) },
 ];
 
+function requireMcpAuth(request: Request, env: Env): { ok: true } | { ok: false; response: Response } {
+  const expected = env.MCP_HTTP_KEY ?? '';
+  if (!expected) return { ok: true }; // dev only
+  const header = request.headers.get('authorization') ?? '';
+  const match = header.match(/^Bearer\s+(.+)$/i);
+  const token = match?.[1]?.trim() ?? new URL(request.url).searchParams.get('key') ?? '';
+  if (token && token === expected) return { ok: true };
+  return { ok: false, response: new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'content-type': 'application/json' } }) };
+}
+
 async function handleNightlySync(env: Env): Promise<void> {
   await runTellerSync(env);
   await runEmailSync(env);
+  // Auto-categorize anything newly staged before the user wakes up.
+  await runClassify(env).catch(err => console.warn('[cron] classify failed', err));
 }
 
 export default {
@@ -158,6 +184,28 @@ export default {
           'set-cookie': clearSessionCookieHeader({ secure }),
         },
       });
+    }
+
+    // ── MCP JSON-RPC ─────────────────────────────────────────────────────
+    if (path === '/mcp' && method === 'POST') {
+      const auth = requireMcpAuth(request, env);
+      if (!auth.ok) return auth.response;
+      let msg: JsonRpcMessage;
+      try {
+        msg = await request.json() as JsonRpcMessage;
+      } catch {
+        return new Response(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }), {
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      try {
+        const out = await handleMcp(msg, env);
+        if (out === null) return new Response(null, { status: 204 });
+        return Response.json(out);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return Response.json({ jsonrpc: '2.0', id: msg.id ?? null, error: { code: -32000, message } });
+      }
     }
 
     // ── Match registered routes ───────────────────────────────────────────

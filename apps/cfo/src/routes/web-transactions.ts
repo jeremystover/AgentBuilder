@@ -92,6 +92,86 @@ interface EditTransactionBody {
   status?: 'pending_review' | 'approved' | 'excluded';
 }
 
+interface PeriodWindow { from: string; to: string }
+
+function resolvePeriod(period: string, customFrom?: string, customTo?: string): PeriodWindow {
+  const today = new Date();
+  const toIso = (d: Date) => d.toISOString().slice(0, 10);
+  const startOfMonth = (offset: number) => {
+    const d = new Date(today.getUTCFullYear(), today.getUTCMonth() + offset, 1);
+    return new Date(Date.UTC(d.getFullYear(), d.getMonth(), 1));
+  };
+  const endOfMonth = (offset: number) => {
+    const d = new Date(today.getUTCFullYear(), today.getUTCMonth() + offset + 1, 0);
+    return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  };
+  const startOfQuarter = (offset: number) => {
+    const baseMonth = Math.floor(today.getUTCMonth() / 3) * 3 + offset * 3;
+    return new Date(Date.UTC(today.getUTCFullYear(), baseMonth, 1));
+  };
+  const endOfQuarter = (offset: number) => {
+    const baseMonth = Math.floor(today.getUTCMonth() / 3) * 3 + offset * 3 + 3;
+    return new Date(Date.UTC(today.getUTCFullYear(), baseMonth, 0));
+  };
+  const trailing = (days: number) => {
+    const d = new Date(today);
+    d.setUTCDate(d.getUTCDate() - days);
+    return d;
+  };
+  switch (period) {
+    case 'this_month':    return { from: toIso(startOfMonth(0)),   to: toIso(today) };
+    case 'last_month':    return { from: toIso(startOfMonth(-1)),  to: toIso(endOfMonth(-1)) };
+    case 'this_quarter':  return { from: toIso(startOfQuarter(0)), to: toIso(today) };
+    case 'last_quarter':  return { from: toIso(startOfQuarter(-1)),to: toIso(endOfQuarter(-1)) };
+    case 'ytd':           return { from: `${today.getUTCFullYear()}-01-01`, to: toIso(today) };
+    case 'trailing_30d':  return { from: toIso(trailing(30)), to: toIso(today) };
+    case 'trailing_90d':  return { from: toIso(trailing(90)), to: toIso(today) };
+    case 'custom':        return { from: customFrom ?? '1970-01-01', to: customTo ?? toIso(today) };
+    default:              return { from: toIso(trailing(30)), to: toIso(today) };
+  }
+}
+
+export async function handleTransactionsSummary(req: Request, env: Env): Promise<Response> {
+  const url = new URL(req.url);
+  const period = url.searchParams.get('period') ?? 'trailing_30d';
+  const { from, to } = resolvePeriod(period, url.searchParams.get('date_from') ?? undefined, url.searchParams.get('date_to') ?? undefined);
+  const entityId = url.searchParams.get('entity_id');
+
+  const sql = db(env);
+  try {
+    const rows = await sql<Array<{
+      entity_id: string | null; entity_name: string | null; entity_type: string | null;
+      category_id: string | null; category_name: string | null; category_slug: string | null;
+      total: string; tx_count: string;
+    }>>`
+      SELECT t.entity_id, en.name AS entity_name, en.type AS entity_type,
+             t.category_id, c.name AS category_name, c.slug AS category_slug,
+             SUM(t.amount)::text AS total, COUNT(*)::text AS tx_count
+      FROM transactions t
+      LEFT JOIN entities en ON en.id = t.entity_id
+      LEFT JOIN categories c ON c.id = t.category_id
+      WHERE t.status = 'approved'
+        AND t.date BETWEEN ${from} AND ${to}
+        ${entityId ? sql`AND t.entity_id = ${entityId}` : sql``}
+      GROUP BY t.entity_id, en.name, en.type, t.category_id, c.name, c.slug
+      ORDER BY en.name NULLS LAST, c.name NULLS LAST
+    `;
+
+    return jsonOk({
+      period: { from, to },
+      rows: rows.map(r => ({
+        ...r,
+        total: Number(r.total),
+        tx_count: Number(r.tx_count),
+      })),
+    });
+  } catch (err) {
+    return jsonError(`transactions summary failed: ${String(err)}`, 500);
+  } finally {
+    await sql.end({ timeout: 5 }).catch(() => {});
+  }
+}
+
 export async function handleUpdateTransaction(req: Request, env: Env, id: string): Promise<Response> {
   const body = await req.json().catch(() => null) as EditTransactionBody | null;
   if (!body) return jsonError('invalid body', 400);
