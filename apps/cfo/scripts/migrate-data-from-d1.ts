@@ -464,15 +464,20 @@ function modeMigrate(args: Args): void {
     let categoryId: string | null = null;
     let isTransfer = false;
     if (classified) {
-      const taxSlug = t.category_tax ? taxMap.get(t.category_tax) : null;
-      const budgetSlug = t.category_budget ? budgetMap.get(t.category_budget) : null;
-      const chosen = taxSlug ?? budgetSlug ?? null;
+      // Old D1 stored category info in EITHER category_tax or category_budget,
+      // sometimes a budget slug ended up in category_tax. Try the matching map
+      // first, then fall back to the other map.
+      const lookup = (slug: string | null): string | null => {
+        if (!slug) return null;
+        return taxMap.get(slug) ?? budgetMap.get(slug) ?? null;
+      };
+      const chosen = lookup(t.category_tax) ?? lookup(t.category_budget) ?? null;
       if (chosen) {
         categoryId = slugToCategoryId(chosen);
         if (chosen === 'transfer') isTransfer = true;
       } else {
-        if (t.category_tax) stats.unmappedTaxSlugs.add(t.category_tax);
-        if (t.category_budget && !t.category_tax) stats.unmappedBudgetSlugs.add(t.category_budget);
+        if (t.category_tax)    stats.unmappedTaxSlugs.add(t.category_tax);
+        if (t.category_budget) stats.unmappedBudgetSlugs.add(t.category_budget);
       }
     }
 
@@ -553,15 +558,16 @@ function modeMigrate(args: Args): void {
     if (!matchJson) continue;
     const entityId = OWNER_TAG_TO_ENTITY_ID[r.entity];
     let categoryId: string | null = null;
-    if (r.category_tax) {
-      const newSlug = taxMap.get(r.category_tax);
-      if (newSlug) categoryId = slugToCategoryId(newSlug);
-      else stats.unmappedTaxSlugs.add(r.category_tax);
-    }
-    if (!categoryId && r.category_budget) {
-      const newSlug = budgetMap.get(r.category_budget);
-      if (newSlug) categoryId = slugToCategoryId(newSlug);
-      else stats.unmappedBudgetSlugs.add(r.category_budget);
+    const lookup = (slug: string | null): string | null => {
+      if (!slug) return null;
+      return taxMap.get(slug) ?? budgetMap.get(slug) ?? null;
+    };
+    const chosen = lookup(r.category_tax) ?? lookup(r.category_budget) ?? null;
+    if (chosen) {
+      categoryId = slugToCategoryId(chosen);
+    } else {
+      if (r.category_tax)    stats.unmappedTaxSlugs.add(r.category_tax);
+      if (r.category_budget) stats.unmappedBudgetSlugs.add(r.category_budget);
     }
     ruleValues.push(`(${[
       pgText(r.id),
@@ -583,7 +589,7 @@ function modeMigrate(args: Args): void {
     const entityId = OWNER_TAG_TO_ENTITY_ID[s.entity];
     let categoryId: string | null = null;
     if (s.category_tax) {
-      const newSlug = taxMap.get(s.category_tax);
+      const newSlug = taxMap.get(s.category_tax) ?? budgetMap.get(s.category_tax);
       if (newSlug) categoryId = slugToCategoryId(newSlug);
       else stats.unmappedTaxSlugs.add(s.category_tax);
     }
