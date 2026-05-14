@@ -81,6 +81,10 @@ interface BuildParams {
 }
 
 const iso = (d: Date) => d.toISOString().slice(0, 10);
+// postgres-js with fetch_types:false falls back to .toString() on arrays,
+// producing "a,b,c" instead of the required PostgreSQL literal "{a,b,c}".
+// Pre-format arrays to avoid the cast failing.
+const pgArr = (arr: string[]) => `{${arr.join(',')}}`;
 
 export async function buildSpendingReport(sql: Sql, params: BuildParams): Promise<SpendingReport> {
   const today = params.today ?? new Date();
@@ -93,7 +97,7 @@ export async function buildSpendingReport(sql: Sql, params: BuildParams): Promis
         SELECT g.id, g.name, m.category_id AS member_id
         FROM category_groups g
         LEFT JOIN category_group_members m ON m.group_id = g.id
-        WHERE g.id = ANY(${params.groupIds}::text[])
+        WHERE g.id = ANY(${pgArr(params.groupIds)}::text[])
         ORDER BY g.name, m.category_id
       `;
   const groupNameById = new Map<string, string>();
@@ -107,7 +111,7 @@ export async function buildSpendingReport(sql: Sql, params: BuildParams): Promis
   const catRows = params.categoryIds.length === 0
     ? []
     : await sql<Array<{ id: string; name: string }>>`
-        SELECT id, name FROM categories WHERE id = ANY(${params.categoryIds}::text[]) ORDER BY name
+        SELECT id, name FROM categories WHERE id = ANY(${pgArr(params.categoryIds)}::text[]) ORDER BY name
       `;
 
   // Track every category id referenced (for filtering transaction queries).
@@ -119,7 +123,7 @@ export async function buildSpendingReport(sql: Sql, params: BuildParams): Promis
   const plans = params.planIds.length === 0
     ? []
     : await sql<Array<{ id: string; name: string; status: string; is_active: boolean }>>`
-        SELECT id, name, status, is_active FROM plans WHERE id = ANY(${params.planIds}::text[])
+        SELECT id, name, status, is_active FROM plans WHERE id = ANY(${pgArr(params.planIds)}::text[])
       `;
   const planMeta: PlanMeta[] = params.planIds.map(id => {
     const found = plans.find(p => p.id === id);
@@ -160,8 +164,8 @@ export async function buildSpendingReport(sql: Sql, params: BuildParams): Promis
         FROM transactions t
         WHERE t.status = 'approved'
           AND t.date BETWEEN ${iso(params.dateFrom)} AND ${iso(params.dateTo)}
-          AND t.category_id = ANY(${[...allCategoryIds]}::text[])
-          ${params.entityIds.length > 0 ? sql`AND t.entity_id = ANY(${params.entityIds}::text[])` : sql``}
+          AND t.category_id = ANY(${pgArr([...allCategoryIds])}::text[])
+          ${params.entityIds.length > 0 ? sql`AND t.entity_id = ANY(${pgArr(params.entityIds)}::text[])` : sql``}
         GROUP BY t.category_id, period_start
       `;
   // actualByCatBucket[categoryId][bucketStartISO] = number
