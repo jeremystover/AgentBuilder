@@ -161,6 +161,31 @@ If a Makefile target is missing for a repeated task, add it and commit it.
 
 ---
 
+## 8. Bug Monitoring (autonomous)
+
+Errors from every agent are captured into the shared `agentbuilder-core` D1:
+
+- `fleet_errors` — one row per occurrence (request / cron / queue / frontend).
+- `bug_tickets` — deduped by fingerprint, with triage + fix state.
+- `bug_fixes` — append-only audit of what got fixed or flagged.
+
+Capture is wired through `@agentbuilder/observability`: `withObservability`
+wraps each `fetch` handler, `runCron` covers crons, and `handleClientError`
+(mounted at `POST /api/v1/client-error`) takes browser errors. See `AGENTS.md`
+rules 11–12.
+
+The **`/fleet-doctor`** slash command (`.claude/commands/fleet-doctor.md`) is
+the autonomous triage loop: it reads open `bug_tickets`, fixes what it's
+confident about (PR → merge → confirm via `deployments`), and opens a
+`needs-human` GitHub issue for the rest. It is **anti-spin**: at most 2 fix
+attempts per fingerprint, then it flags and stops.
+
+Run it on a recurring **scheduled trigger** (Claude Code on the web →
+environment settings; recommend hourly). To review what it has done, query
+`bug_tickets` / `bug_fixes`.
+
+---
+
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
 
 **Origin:** distilled from Andrej Karpathy's January 2026 observations on LLM coding pitfalls, via the [`andrej-karpathy-skills`](https://github.com/forrestchang/andrej-karpathy-skills) CLAUDE.md.

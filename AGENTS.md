@@ -40,6 +40,14 @@ tools/                Repo-wide CLI tooling (run with `tsx`).
 
     The `chief-of-staff` and `cfo` agents are reference implementations. New agents pick this up automatically via the scaffold template.
 
+12. **Every `fetch()` handler is wrapped with `@agentbuilder/observability`'s `withObservability`.** This is the request-side analogue of rule 11: uncaught throws are recorded to `fleet_errors` + `bug_tickets` in `agentbuilder-core` D1, where the `/fleet-doctor` scheduled session triages them. Concretely, every agent with a `fetch()` handler MUST:
+
+    - Export `fetch` wrapped: `export default { ...worker, fetch: withObservability(agentId, worker.fetch) }`.
+    - Mount `POST /api/v1/client-error` → `handleClientError(req, env, agentId)` (public) so the SPA can report browser errors. Web SPAs add the `sendBeacon` snippet to their entry point.
+    - Routes that catch their own errors and return a 5xx SHOULD call `logRequestError(env, agentId, 'request', err, ctx)` so the real stack is preserved.
+
+    `cfo` is the reference implementation.
+
 ## Creating a new agent
 
 ```bash

@@ -58,7 +58,7 @@
  *                    (runs at ~05:00 ET).
  */
 
-import { runCron } from '@agentbuilder/observability';
+import { runCron, withObservability, handleClientError, logRequestError } from '@agentbuilder/observability';
 import type { Env } from './types';
 import { jsonError } from './types';
 
@@ -137,6 +137,7 @@ interface Route { method: string; pattern: RegExp; handler: Handler; auth: 'publ
 const ROUTES: Route[] = [
   // Public ops surfaces (Teller webhook-style + health).
   { method: 'GET',    pattern: /^\/health$/,                            auth: 'public', handler: (req, env) => handleHealth(req, env) },
+  { method: 'POST',   pattern: /^\/api\/v1\/client-error$/,             auth: 'public', handler: (req, env) => handleClientError(req, env, 'cfo') },
   { method: 'POST',   pattern: /^\/teller\/enroll$/,                    auth: 'public', handler: (req, env) => handleTellerEnroll(req, env) },
   { method: 'GET',    pattern: /^\/teller\/accounts$/,                  auth: 'public', handler: (req, env) => handleTellerListAccounts(req, env) },
   { method: 'POST',   pattern: /^\/teller\/sync$/,                      auth: 'public', handler: (req, env) => handleTellerSync(req, env) },
@@ -315,7 +316,7 @@ async function handleNightlySync(env: Env): Promise<void> {
   await runClassify(env).catch(err => console.warn('[cron] classify failed', err));
 }
 
-export default {
+const cfoWorker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     if (request.method === 'OPTIONS') {
       return new Response(null, {
@@ -423,6 +424,7 @@ export default {
         return response;
       } catch (err) {
         console.error(`Error in ${method} ${path}:`, err);
+        ctx.waitUntil(logRequestError(env, 'cfo', 'request', err, { method, path }));
         return jsonError(`Internal server error: ${String(err)}`, 500);
       }
     }
@@ -497,4 +499,11 @@ export default {
     console.warn('[queue] unknown queue', batch.queue);
     for (const message of batch.messages) message.ack();
   },
+} satisfies ExportedHandler<Env, ScenarioJobMessage>;
+
+// Wrap fetch so any uncaught throw is recorded to fleet_errors in
+// agentbuilder-core D1. scheduled/queue keep their own error handling.
+export default {
+  ...cfoWorker,
+  fetch: withObservability('cfo', cfoWorker.fetch),
 } satisfies ExportedHandler<Env, ScenarioJobMessage>;

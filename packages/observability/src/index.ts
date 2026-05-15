@@ -162,9 +162,179 @@ export async function logError(
     } catch (writeErr) {
       console.error(`[error] failed to insert cron_errors: ${errToString(writeErr)}`);
     }
+    // Also surface cron errors in the fleet-wide bug-triage tables.
+    try {
+      await writeFleetError(db, {
+        errorId,
+        agentId,
+        source: 'cron',
+        fingerprint: fingerprintOf(message, stack),
+        message,
+        stack,
+        context: contextJson,
+        createdAt,
+      });
+    } catch (writeErr) {
+      console.error(`[error] failed to write fleet_errors: ${errToString(writeErr)}`);
+    }
   }
 
   return errorId;
+}
+
+// ── Fleet-wide error capture + bug triage ─────────────────────────────────
+
+export type ErrorSource = 'request' | 'cron' | 'queue' | 'frontend';
+
+/** FNV-1a 32-bit hash — stable, synchronous, good enough for grouping. */
+function fnv1a(input: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
+
+/** Group like errors: strip ids/numbers from message + top stack frame. */
+function fingerprintOf(message: string, stack: string): string {
+  const topFrame =
+    stack.split('\n').map((l) => l.trim()).find((l) => l.startsWith('at ')) ?? '';
+  const norm = (s: string) => s.replace(/0x[0-9a-f]+/gi, '0xN').replace(/\d+/g, 'N');
+  return fnv1a(norm(message) + '|' + norm(topFrame));
+}
+
+async function writeFleetError(
+  db: D1Database,
+  row: {
+    errorId: string;
+    agentId: string;
+    source: ErrorSource;
+    fingerprint: string;
+    message: string;
+    stack: string;
+    context: string;
+    createdAt: string;
+  },
+): Promise<void> {
+  await db.batch([
+    db
+      .prepare(
+        `INSERT INTO fleet_errors
+           (error_id, agent_id, source, fingerprint, message, stack, context, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        row.errorId, row.agentId, row.source, row.fingerprint,
+        row.message, row.stack, row.context, row.createdAt,
+      ),
+    db
+      .prepare(
+        `INSERT INTO bug_tickets
+           (fingerprint, agent_id, source, status, sample_message, occurrences, first_seen, last_seen)
+         VALUES (?, ?, ?, 'open', ?, 1, ?, ?)
+         ON CONFLICT(fingerprint) DO UPDATE SET
+           occurrences = occurrences + 1,
+           last_seen   = excluded.last_seen,
+           status      = CASE WHEN bug_tickets.status IN ('fixed', 'wontfix')
+                              THEN 'open' ELSE bug_tickets.status END`,
+      )
+      .bind(
+        row.fingerprint, row.agentId, row.source,
+        row.message.slice(0, 300), row.createdAt, row.createdAt,
+      ),
+  ]);
+}
+
+/**
+ * Record a non-cron error (HTTP request / queue / frontend). Inserts a
+ * `fleet_errors` occurrence and upserts the `bug_tickets` row. Never throws;
+ * returns the fingerprint. The /fleet-doctor session triages from these rows.
+ */
+export async function logRequestError(
+  env: ObservabilityEnv,
+  agentId: string,
+  source: ErrorSource,
+  err: unknown,
+  context?: Record<string, unknown>,
+): Promise<string> {
+  const errorId = generateId('ferr');
+  const message = errToString(err);
+  const stack =
+    err && err instanceof Error && err.stack ? String(err.stack).slice(0, 2000) : '';
+  const createdAt = nowIso();
+  const fingerprint = fingerprintOf(message, stack);
+
+  console.error(
+    `[error] ${safeStringify({ errorId, agentId, source, fingerprint, message, createdAt })}`,
+  );
+
+  const db = getDb(env);
+  if (db) {
+    try {
+      await writeFleetError(db, {
+        errorId, agentId, source, fingerprint,
+        message, stack, context: safeStringify(context ?? {}), createdAt,
+      });
+    } catch (writeErr) {
+      console.error(`[error] failed to write fleet_errors: ${errToString(writeErr)}`);
+    }
+  }
+  return fingerprint;
+}
+
+/**
+ * Wrap a Worker `fetch` handler. Uncaught throws are recorded to
+ * `fleet_errors` and converted to a 500. Routes that already catch their own
+ * errors and return a 5xx should call `logRequestError` directly so the real
+ * stack is preserved.
+ */
+export function withObservability<E extends ObservabilityEnv>(
+  agentId: string,
+  handler: (req: Request, env: E, ctx: ExecutionContext) => Promise<Response>,
+): (req: Request, env: E, ctx: ExecutionContext) => Promise<Response> {
+  return async (req, env, ctx) => {
+    try {
+      return await handler(req, env, ctx);
+    } catch (err) {
+      ctx.waitUntil(
+        logRequestError(env, agentId, 'request', err, {
+          method: req.method,
+          url: req.url,
+        }),
+      );
+      return new Response(JSON.stringify({ error: 'Internal server error' }), {
+        status: 500,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+  };
+}
+
+/**
+ * Intake handler for browser-reported errors. Mount at
+ * `POST /api/v1/client-error` (public). The frontend posts
+ * `{ message, stack?, url? }` via `navigator.sendBeacon`.
+ */
+export async function handleClientError(
+  req: Request,
+  env: ObservabilityEnv,
+  agentId: string,
+): Promise<Response> {
+  let body: Record<string, unknown> = {};
+  try {
+    body = (await req.json()) as Record<string, unknown>;
+  } catch {
+    // ignore malformed payloads
+  }
+  const message = typeof body.message === 'string' ? body.message : 'unknown client error';
+  const err = new Error(message);
+  if (typeof body.stack === 'string') err.stack = body.stack;
+  await logRequestError(env, agentId, 'frontend', err, {
+    url: typeof body.url === 'string' ? body.url : '',
+    userAgent: req.headers.get('user-agent') ?? '',
+  });
+  return new Response(null, { status: 204 });
 }
 
 /**
