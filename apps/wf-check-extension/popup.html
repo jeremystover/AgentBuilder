@@ -2,205 +2,242 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>WF Check Extractor</title>
+  <title>Bank Check Extractor</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      font-size: 13px;
-      width: 340px;
-      background: #fff;
-      color: #1a1a1a;
+      font-size: 13px; width: 360px; background: #fff; color: #0f172a;
     }
     .header {
-      background: #c8102e;
-      color: white;
-      padding: 12px 14px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
+      background: #4f46e5; color: white; padding: 12px 14px;
     }
-    .header h1 { font-size: 14px; font-weight: 700; letter-spacing: 0.01em; }
-    .header .subtitle { font-size: 11px; opacity: 0.85; margin-top: 1px; }
+    .header h1 { font-size: 14px; font-weight: 700; }
+    .header .subtitle { font-size: 11px; opacity: 0.85; margin-top: 2px; }
     .body { padding: 12px 14px; }
-    .wrong-page {
-      padding: 20px 14px;
-      color: #666;
-      line-height: 1.5;
-      font-size: 12px;
-    }
 
-    .count-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      margin-bottom: 12px;
-      padding: 8px 10px;
-      background: #f5f5f5;
-      border-radius: 6px;
-    }
-    .count-badge {
-      background: #c8102e;
-      color: white;
-      font-size: 15px;
-      font-weight: 700;
-      width: 32px;
-      height: 32px;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-    }
-    .count-label { font-size: 12px; color: #444; }
+    h2 { font-size: 12px; font-weight: 700; text-transform: uppercase; color: #64748b; margin: 10px 0 6px; letter-spacing: 0.04em; }
+    p, li { line-height: 1.45; }
+    .muted { color: #64748b; font-size: 11px; }
 
-    details { margin-bottom: 12px; }
-    summary {
-      cursor: pointer;
-      font-size: 12px;
-      color: #666;
-      user-select: none;
-      padding: 4px 0;
+    label { font-size: 11px; color: #64748b; display: block; margin-bottom: 3px; }
+    input, select {
+      width: 100%; padding: 7px 9px; border: 1px solid #cbd5e1; border-radius: 6px;
+      font-size: 12px; outline: none; background: #fff;
     }
-    summary:hover { color: #333; }
-    .settings { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
-    label { font-size: 11px; color: #666; display: block; margin-bottom: 2px; }
-    input {
-      width: 100%;
-      padding: 6px 8px;
-      border: 1px solid #ddd;
-      border-radius: 5px;
-      font-size: 12px;
-      outline: none;
-    }
-    input:focus { border-color: #c8102e; }
+    input:focus, select:focus { border-color: #4f46e5; }
+    .field + .field { margin-top: 8px; }
 
     .btn {
-      width: 100%;
-      padding: 9px 0;
-      background: #c8102e;
-      color: white;
-      border: none;
-      border-radius: 6px;
-      font-size: 13px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: background 0.15s;
+      width: 100%; padding: 9px 0; background: #4f46e5; color: white;
+      border: none; border-radius: 6px; font-size: 13px; font-weight: 600;
+      cursor: pointer; margin-top: 10px;
     }
-    .btn:hover:not(:disabled) { background: #a30d25; }
-    .btn:disabled { background: #bbb; cursor: not-allowed; }
+    .btn:hover:not(:disabled) { background: #4338ca; }
+    .btn:disabled { background: #cbd5e1; cursor: not-allowed; }
+    .btn-secondary { background: #fff; color: #4f46e5; border: 1px solid #4f46e5; }
+    .btn-secondary:hover:not(:disabled) { background: #eef2ff; }
+    .btn-row { display: flex; gap: 8px; margin-top: 10px; }
+    .btn-row .btn { margin-top: 0; }
 
-    .progress-wrap {
-      margin-top: 10px;
-      display: none;
+    .status-pill {
+      display: inline-block; padding: 2px 8px; border-radius: 999px;
+      font-size: 10px; font-weight: 600; text-transform: uppercase;
     }
+    .pill-ok { background: #ecfdf5; color: #065f46; }
+    .pill-warn { background: #fef3c7; color: #92400e; }
+    .pill-err { background: #fee2e2; color: #991b1b; }
+
+    .status-card {
+      background: #f8fafc; border: 1px solid #e2e8f0;
+      border-radius: 8px; padding: 10px 12px; font-size: 12px;
+    }
+    .status-card + .status-card { margin-top: 8px; }
+    .row { display: flex; justify-content: space-between; align-items: center; }
+
+    details { margin-top: 10px; }
+    summary { cursor: pointer; font-size: 11px; color: #64748b; padding: 4px 0; }
+    summary:hover { color: #0f172a; }
+
+    .alert {
+      padding: 8px 10px; border-radius: 6px; font-size: 11px;
+      line-height: 1.4; margin-top: 8px;
+    }
+    .alert-err { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+    .alert-info { background: #eff6ff; color: #1e3a8a; border: 1px solid #bfdbfe; }
+
     .progress-bar-track {
-      height: 5px;
-      background: #eee;
-      border-radius: 3px;
-      overflow: hidden;
-      margin-bottom: 8px;
+      height: 5px; background: #e2e8f0; border-radius: 3px; overflow: hidden; margin: 8px 0 6px;
     }
     .progress-bar-fill {
-      height: 100%;
-      background: #c8102e;
-      border-radius: 3px;
-      width: 0%;
-      transition: width 0.3s;
+      height: 100%; background: #4f46e5; border-radius: 3px; width: 0%; transition: width 0.25s;
     }
-    .status-text { font-size: 11px; color: #555; margin-bottom: 6px; }
 
     .log {
-      max-height: 140px;
-      overflow-y: auto;
-      font-size: 11px;
-      line-height: 1.6;
-      border: 1px solid #eee;
-      border-radius: 4px;
-      padding: 6px 8px;
-      background: #fafafa;
+      max-height: 140px; overflow-y: auto; font-size: 11px; line-height: 1.5;
+      border: 1px solid #e2e8f0; border-radius: 6px; padding: 6px 8px;
+      background: #f8fafc; margin-top: 6px;
     }
-    .log-item { padding: 1px 0; }
-    .log-ok { color: #166534; }
-    .log-err { color: #991b1b; }
-    .log-info { color: #555; }
+    .log-ok { color: #047857; }
+    .log-err { color: #b91c1c; }
+    .log-info { color: #475569; }
 
-    .results-section {
-      margin-top: 10px;
-      display: none;
-      border-top: 1px solid #eee;
-      padding-top: 10px;
+    .step-num {
+      display: inline-block; width: 22px; height: 22px; border-radius: 50%;
+      background: #4f46e5; color: white; font-weight: 700; font-size: 12px;
+      text-align: center; line-height: 22px; margin-right: 8px;
     }
-    .results-heading { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
-    .result-item {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      padding: 4px 0;
-      border-bottom: 1px solid #f0f0f0;
-      font-size: 11px;
-    }
-    .result-check { color: #444; }
-    .result-payee { color: #166534; font-weight: 600; text-align: right; max-width: 160px; }
-    .result-unknown { color: #888; }
+    .step-body { margin-left: 30px; margin-top: 4px; }
+
+    .hidden { display: none !important; }
   </style>
 </head>
 <body>
   <div class="header">
-    <div>
-      <div class="h1-wrap">
-        <h1>WF Check Extractor</h1>
-      </div>
-      <div class="subtitle">Extract &amp; identify payees via CFO agent</div>
-    </div>
+    <h1>Bank Check Extractor</h1>
+    <div class="subtitle">Train once, replay forever — uploads to your CFO agent</div>
   </div>
 
-  <div id="wrong-page" class="wrong-page" style="display:none">
-    Navigate to a Wells Fargo account detail page to use this extension.
-    <br/><br/>
-    URL should match:<br/>
-    <code style="font-size:10px">connect.secure.wellsfargo.com/accounts/start?…#/accounts/home/accountdetails</code>
-  </div>
+  <div class="body">
+    <!-- ── SETUP REQUIRED VIEW ───────────────────────────────────────── -->
+    <div id="view-setup" class="hidden">
+      <h2>Connect to your CFO</h2>
+      <div class="field">
+        <label for="cfo-url">CFO Worker URL</label>
+        <input id="cfo-url" type="url" placeholder="https://cfo.example.workers.dev" autocomplete="off" />
+      </div>
+      <div class="field">
+        <label for="api-key">API Key</label>
+        <input id="api-key" type="password" placeholder="EXTERNAL_API_KEY bearer token" autocomplete="off" />
+      </div>
+      <button class="btn" id="setup-save">Save &amp; load accounts</button>
+      <div id="setup-error" class="alert alert-err hidden"></div>
+    </div>
 
-  <div id="main" class="body" style="display:none">
-    <div class="count-row">
-      <div class="count-badge" id="count-badge">0</div>
-      <div class="count-label">
-        <strong id="count-label-num">0</strong> check transactions found on this page
+    <!-- ── ACCOUNT PICK VIEW ────────────────────────────────────────── -->
+    <div id="view-account" class="hidden">
+      <h2>Pick the account these checks belong to</h2>
+      <div class="field">
+        <select id="account-select"></select>
+      </div>
+      <button class="btn" id="account-save">Continue</button>
+    </div>
+
+    <!-- ── MAIN VIEW ────────────────────────────────────────────────── -->
+    <div id="view-main" class="hidden">
+      <div class="status-card">
+        <div class="row">
+          <div><strong>Account</strong> <span id="account-name" class="muted">—</span></div>
+          <button class="status-pill pill-warn" id="change-account" style="border:none;cursor:pointer;">Change</button>
+        </div>
+      </div>
+
+      <div class="status-card" id="recipe-status-card">
+        <div class="row">
+          <div>
+            <strong>This site</strong> <span id="recipe-domain" class="muted">—</span>
+            <div class="muted" style="margin-top:2px;" id="recipe-summary">checking…</div>
+          </div>
+          <span class="status-pill" id="recipe-pill">…</span>
+        </div>
+      </div>
+
+      <div id="extract-area" class="hidden">
+        <button class="btn" id="extract-btn">Extract check images on this page</button>
+        <div class="btn-row">
+          <button class="btn btn-secondary" id="retrain-btn">Retrain</button>
+          <button class="btn btn-secondary" id="settings-btn">Settings</button>
+        </div>
+      </div>
+
+      <div id="needs-train-area" class="hidden">
+        <div class="alert alert-info">
+          Looks like this site hasn't been trained yet (or the bank's page changed). Let's teach the extension where to find checks.
+        </div>
+        <button class="btn" id="start-train-btn">Train this page</button>
+        <div class="btn-row">
+          <button class="btn btn-secondary" id="settings-btn-2">Settings</button>
+        </div>
+      </div>
+
+      <!-- Extract progress -->
+      <div id="extract-progress" class="hidden">
+        <h2>Extracting</h2>
+        <div class="progress-bar-track"><div class="progress-bar-fill" id="progress-fill"></div></div>
+        <div class="muted" id="progress-text">…</div>
+        <div class="log" id="extract-log"></div>
       </div>
     </div>
 
-    <details id="settings-details">
-      <summary>⚙ CFO Agent settings</summary>
-      <div class="settings">
-        <div>
-          <label for="cfo-url">CFO Worker URL</label>
-          <input id="cfo-url" type="url" placeholder="https://cfo.example.workers.dev" autocomplete="off" />
-        </div>
-        <div>
-          <label for="api-key">API Key (EXTERNAL_API_KEY)</label>
-          <input id="api-key" type="password" placeholder="Bearer token — leave blank if open" autocomplete="off" />
-        </div>
-        <div>
-          <label for="account-id">Teller Account ID (optional)</label>
-          <input id="account-id" type="text" placeholder="Helps match transactions in CFO" autocomplete="off" />
-        </div>
-      </div>
-    </details>
+    <!-- ── TRAIN WIZARD VIEW ────────────────────────────────────────── -->
+    <div id="view-train" class="hidden">
+      <h2 id="train-step-title">Training</h2>
 
-    <button class="btn" id="extract-btn" disabled>Extract Check Images</button>
-
-    <div class="progress-wrap" id="progress-wrap">
-      <div class="progress-bar-track">
-        <div class="progress-bar-fill" id="progress-fill"></div>
+      <!-- Step 1: page captured? -->
+      <div id="train-step-1" class="hidden">
+        <p><span class="step-num">1</span>Open your bank and navigate to the page that lists check transactions. Make sure several checks are visible.</p>
+        <div class="step-body muted">When you're on the right page, click below — the extension will analyze the layout.</div>
+        <button class="btn" id="train-capture-page">I'm on the page — capture it</button>
+        <div id="train-step-1-error" class="alert alert-err hidden"></div>
       </div>
-      <div class="status-text" id="status-text">Starting…</div>
-      <div class="log" id="log"></div>
+
+      <!-- Step 2: confirm selectors -->
+      <div id="train-step-2" class="hidden">
+        <p><span class="step-num">2</span>The extension found these:</p>
+        <div class="step-body">
+          <ul id="train-selector-summary" class="muted" style="margin-left:14px;"></ul>
+          <div class="muted" style="margin-top:6px;">Red outlines on the page should be around the check rows.</div>
+        </div>
+        <div class="btn-row">
+          <button class="btn" id="train-confirm-rows">Looks right — continue</button>
+          <button class="btn btn-secondary" id="train-recapture">Recapture</button>
+        </div>
+        <div id="train-step-2-error" class="alert alert-err hidden"></div>
+      </div>
+
+      <!-- Step 3: arm modal capture -->
+      <div id="train-step-3" class="hidden">
+        <p><span class="step-num">3</span>Now click <strong>View Check</strong> on any one row in the bank page.</p>
+        <div class="step-body muted">The extension will capture the modal that opens. Don't close it — the capture is automatic.</div>
+        <div id="train-step-3-status" class="muted" style="margin-top:8px;">Waiting for you to click View Check…</div>
+        <div id="train-step-3-error" class="alert alert-err hidden"></div>
+        <button class="btn btn-secondary" id="train-cancel-modal" style="margin-top:10px;">Cancel</button>
+      </div>
+
+      <!-- Step 4: confirm modal selectors -->
+      <div id="train-step-4" class="hidden">
+        <p><span class="step-num">4</span>Modal captured. Found:</p>
+        <div class="step-body">
+          <ul id="train-modal-summary" class="muted" style="margin-left:14px;"></ul>
+        </div>
+        <div class="btn-row">
+          <button class="btn" id="train-finish">Save recipe</button>
+          <button class="btn btn-secondary" id="train-redo-modal">Retry modal</button>
+        </div>
+        <div id="train-step-4-error" class="alert alert-err hidden"></div>
+      </div>
     </div>
 
-    <div class="results-section" id="results-section">
-      <div class="results-heading">Payees identified</div>
-      <div id="results-list"></div>
+    <!-- ── SETTINGS VIEW ────────────────────────────────────────────── -->
+    <div id="view-settings" class="hidden">
+      <h2>Settings</h2>
+      <div class="field">
+        <label for="settings-cfo-url">CFO Worker URL</label>
+        <input id="settings-cfo-url" type="url" autocomplete="off" />
+      </div>
+      <div class="field">
+        <label for="settings-api-key">API Key</label>
+        <input id="settings-api-key" type="password" autocomplete="off" />
+      </div>
+      <div class="btn-row">
+        <button class="btn" id="settings-save">Save</button>
+        <button class="btn btn-secondary" id="settings-back">Back</button>
+      </div>
+      <details>
+        <summary>Wipe recipes for this site</summary>
+        <div class="muted" style="margin-top:6px;">Clears the learned selectors for the current site. Useful if extract has been failing.</div>
+        <button class="btn btn-secondary" id="wipe-recipe" style="margin-top:8px;">Forget recipe for this site</button>
+      </details>
     </div>
   </div>
 

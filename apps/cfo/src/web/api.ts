@@ -81,6 +81,16 @@ export interface ReviewRow {
   supplement_json: Record<string, unknown> | null;
 }
 
+export interface CheckImageSummary {
+  id: string;
+  check_number: string | null;
+  extracted_payee: string | null;
+  extracted_amount: string | null;
+  extraction_confidence: string | null;
+  status: 'pending' | 'processing' | 'analyzed' | 'attached' | 'match_failed' | 'error';
+  has_back: boolean;
+}
+
 export interface ReviewListResponse {
   rows: ReviewRow[];
   total: number;

@@ -118,6 +118,11 @@ import {
   runAndSaveProjection, type ScenarioJobMessage,
 } from './routes/scenarios';
 import { handleMcp, type JsonRpcMessage } from './mcp-tools';
+import {
+  handleExtensionListAccounts, handleExtensionAnalyzePage,
+  handleUploadCheckImage, handleListCheckImages, handleGetCheckImage, handleGetCheckImageContent,
+} from './routes/extension-checks';
+import { processCheckImage, type CheckQueueMessage } from './lib/check-vision';
 import { handleWebChat } from './web-chat';
 import { runClassify } from './lib/classify';
 
@@ -171,7 +176,7 @@ const ROUTES: Route[] = [
   { method: 'GET',    pattern: /^\/api\/web\/rules$/,                   auth: 'api',    handler: (req, env) => handleListRules(req, env) },
   { method: 'POST',   pattern: /^\/api\/web\/rules$/,                   auth: 'api',    handler: (req, env) => handleCreateRule(req, env) },
   { method: 'GET',    pattern: /^\/api\/web\/gather\/status$/,          auth: 'api',    handler: (req, env) => handleGatherStatus(req, env) },
-  { method: 'GET',    pattern: /^\/api\/web\/gather\/sync-stream\/(.+)$/, auth: 'api',  handler: (req, env, source) => handleGatherSyncStream(req, env, source!) },
+  { method: 'GET',    pattern: /^\/api\/web\/gather\/sync-stream\/(.+)$/, auth: 'api',  handler: async (req, env, source) => handleGatherSyncStream(req, env, source!) },
   // NOTE: gather sync POST is handled separately in fetch() below to get ctx for waitUntil
 
   // Spending (Module 4)
@@ -243,7 +248,55 @@ const ROUTES: Route[] = [
   { method: 'POST',   pattern: /^\/api\/web\/tax-brackets$/,                                               auth: 'api', handler: (req, env) => handleUpsertTaxBracket(req, env) },
   { method: 'GET',    pattern: /^\/api\/web\/deductions$/,                                                 auth: 'api', handler: (req, env) => handleListDeductions(req, env) },
   { method: 'PUT',    pattern: /^\/api\/web\/deductions$/,                                                 auth: 'api', handler: (req, env) => handlePutDeductions(req, env) },
+
+  // Chrome extension surface (cookie or bearer)
+  { method: 'GET',    pattern: /^\/api\/extension\/v1\/accounts$/,                                         auth: 'api', handler: (req, env) => handleExtensionListAccounts(req, env) },
+  { method: 'POST',   pattern: /^\/api\/extension\/v1\/analyze-page$/,                                     auth: 'api', handler: (req, env) => handleExtensionAnalyzePage(req, env) },
+  { method: 'POST',   pattern: /^\/api\/extension\/v1\/check-images$/,                                     auth: 'api', handler: (req, env) => handleUploadCheckImage(req, env) },
+  { method: 'GET',    pattern: /^\/api\/extension\/v1\/check-images$/,                                     auth: 'api', handler: (req, env) => handleListCheckImages(req, env) },
+  { method: 'GET',    pattern: /^\/api\/extension\/v1\/check-images\/([^/]+)$/,                            auth: 'api', handler: (req, env, id) => handleGetCheckImage(req, env, id!) },
+  { method: 'GET',    pattern: /^\/api\/extension\/v1\/check-images\/([^/]+)\/image\/([^/]+)$/,            auth: 'api', handler: (req, env, id, side) => handleGetCheckImageContent(req, env, id!, side!) },
+
+  // SPA-facing read of check images attached to a transaction (review drawer + transactions row)
+  { method: 'GET',    pattern: /^\/api\/web\/transactions\/([^/]+)\/check-images$/,                        auth: 'api', handler: (req, env, id) => handleCheckImagesForTransaction(req, env, id!) },
+  { method: 'GET',    pattern: /^\/api\/web\/review\/([^/]+)\/check-images$/,                              auth: 'api', handler: (req, env, id) => handleCheckImagesForRaw(req, env, id!) },
 ];
+
+async function handleCheckImagesForTransaction(_req: Request, env: Env, transactionId: string): Promise<Response> {
+  const sql = (await import('./lib/db')).db(env);
+  try {
+    const rows = await sql<Array<{
+      id: string; check_number: string | null; extracted_payee: string | null;
+      extracted_amount: string | null; extraction_confidence: string | null;
+      status: string; has_back: boolean;
+    }>>`
+      SELECT id, check_number, extracted_payee, extracted_amount, extraction_confidence, status,
+             (back_image_key IS NOT NULL) AS has_back
+      FROM check_images WHERE matched_transaction_id = ${transactionId}
+    `;
+    return new Response(JSON.stringify({ check_images: rows }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  } finally {
+    await sql.end({ timeout: 5 }).catch(() => {});
+  }
+}
+
+async function handleCheckImagesForRaw(_req: Request, env: Env, rawId: string): Promise<Response> {
+  const sql = (await import('./lib/db')).db(env);
+  try {
+    const rows = await sql<Array<{
+      id: string; check_number: string | null; extracted_payee: string | null;
+      extracted_amount: string | null; extraction_confidence: string | null;
+      status: string; has_back: boolean;
+    }>>`
+      SELECT id, check_number, extracted_payee, extracted_amount, extraction_confidence, status,
+             (back_image_key IS NOT NULL) AS has_back
+      FROM check_images WHERE matched_raw_id = ${rawId}
+    `;
+    return new Response(JSON.stringify({ check_images: rows }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  } finally {
+    await sql.end({ timeout: 5 }).catch(() => {});
+  }
+}
 
 function requireMcpAuth(request: Request, env: Env): { ok: true } | { ok: false; response: Response } {
   const expected = env.MCP_HTTP_KEY ?? '';
@@ -412,19 +465,36 @@ export default {
     console.warn('[scheduled] unknown cron expression', event.cron);
   },
 
-  // Cloudflare Queue consumer — runs the scenario projection
-  // off the request path. One message per scenario run.
-  async queue(batch: MessageBatch<ScenarioJobMessage>, env: Env): Promise<void> {
-    for (const message of batch.messages) {
-      try {
-        await runAndSaveProjection(env, message.body);
-        message.ack();
-      } catch (err) {
-        console.error('[queue] scenario job failed', err);
-        // ack to prevent infinite retry — `runAndSaveProjection` has
-        // already marked the job + scenario failed in the DB.
-        message.ack();
+  // Cloudflare Queue consumer — dispatches by queue name. One queue per
+  // job type, one binding per producer. SCENARIO_QUEUE -> scenario
+  // projections; CHECK_QUEUE -> check-image vision/match.
+  async queue(batch: MessageBatch<unknown>, env: Env): Promise<void> {
+    if (batch.queue === 'cfo-scenarios') {
+      for (const message of batch.messages as Message<ScenarioJobMessage>[]) {
+        try {
+          await runAndSaveProjection(env, message.body);
+          message.ack();
+        } catch (err) {
+          console.error('[queue] scenario job failed', err);
+          message.ack();
+        }
       }
+      return;
     }
+    if (batch.queue === 'cfo-check-images') {
+      for (const message of batch.messages as Message<CheckQueueMessage>[]) {
+        try {
+          await processCheckImage(env, message.body);
+          message.ack();
+        } catch (err) {
+          console.error('[queue] check-image job failed', err);
+          // processCheckImage swallows its own errors; this catch is belt-and-suspenders.
+          message.retry();
+        }
+      }
+      return;
+    }
+    console.warn('[queue] unknown queue', batch.queue);
+    for (const message of batch.messages) message.ack();
   },
 } satisfies ExportedHandler<Env, ScenarioJobMessage>;
