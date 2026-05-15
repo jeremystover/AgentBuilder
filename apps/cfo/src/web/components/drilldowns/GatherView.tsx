@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { RefreshCw, AlertCircle, CheckCircle } from "lucide-react";
+import { RefreshCw, AlertCircle, CheckCircle, XCircle, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { api, type GatherStatus, type AccountRow, type Entity } from "../../api";
 import { Card, Button, Badge, Select, PageHeader, EmptyState } from "../ui";
@@ -17,12 +17,47 @@ function formatTime(iso: string | null): string {
   return new Date(ms).toLocaleString();
 }
 
+// ── SSE event types ──────────────────────────────────────────────────────────
+
+type SseEvent =
+  | { type: "start"; source: string; total: number }
+  | { type: "account_start"; source: string; index: number; total: number; institution: string | null; name: string }
+  | { type: "account_ok"; source: string; index: number; total: number; institution: string | null; name: string; found: number; added: number }
+  | { type: "account_err"; source: string; index: number; total: number; institution: string | null; name: string; message: string; stack?: string }
+  | { type: "vendor_start"; source: string; index: number; total: number; vendor: string }
+  | { type: "vendor_ok"; source: string; index: number; total: number; vendor: string; scanned: number; matched: number }
+  | { type: "vendor_err"; source: string; index: number; total: number; vendor: string; message: string; stack?: string }
+  | { type: "done"; source: string }
+  | { type: "fatal"; source: string; message: string; stack?: string };
+
+// ── Progress state ───────────────────────────────────────────────────────────
+
+interface ProgressStep {
+  label: string;
+  status: "running" | "ok" | "error";
+  detail?: string;
+  message?: string;
+  stack?: string;
+}
+
+interface SyncProgressState {
+  source: string;
+  total: number;
+  current: number;
+  steps: ProgressStep[];
+  fatalMessage?: string;
+  fatalStack?: string;
+}
+
+// ── Component ────────────────────────────────────────────────────────────────
+
 export function GatherView() {
   const [status, setStatus] = useState<GatherStatus | null>(null);
   const [accounts, setAccounts] = useState<AccountRow[]>([]);
   const [entities, setEntities] = useState<Entity[]>([]);
   const [loading, setLoading] = useState(true);
   const [busySource, setBusySource] = useState<string | null>(null);
+  const [syncProgress, setSyncProgress] = useState<SyncProgressState | null>(null);
 
   const refresh = async () => {
     setLoading(true);
@@ -55,20 +90,79 @@ export function GatherView() {
 
   const runSync = async (source: string) => {
     setBusySource(source);
+    setSyncProgress({ source, total: 0, current: 0, steps: [] });
+
+    const applyEvent = (ev: SseEvent): boolean => {
+      setSyncProgress(prev => {
+        if (!prev) return prev;
+        switch (ev.type) {
+          case "start":
+            return { ...prev, total: ev.total };
+          case "account_start": {
+            const label = `${ev.institution ?? "Unknown"} — ${ev.name}`;
+            return { ...prev, steps: [...prev.steps, { label, status: "running" }] };
+          }
+          case "vendor_start":
+            return { ...prev, steps: [...prev.steps, { label: ev.vendor, status: "running" }] };
+          case "account_ok": {
+            const steps = [...prev.steps];
+            const i = steps.length - 1;
+            if (i >= 0) steps[i] = { ...steps[i]!, status: "ok", detail: `${ev.found} found, ${ev.added} new` };
+            return { ...prev, current: prev.current + 1, steps };
+          }
+          case "vendor_ok": {
+            const steps = [...prev.steps];
+            const i = steps.length - 1;
+            if (i >= 0) steps[i] = { ...steps[i]!, status: "ok", detail: `${ev.scanned} scanned, ${ev.matched} matched` };
+            return { ...prev, current: prev.current + 1, steps };
+          }
+          case "account_err":
+          case "vendor_err": {
+            const steps = [...prev.steps];
+            const i = steps.length - 1;
+            if (i >= 0) steps[i] = { ...steps[i]!, status: "error", message: ev.message, stack: ev.stack };
+            return { ...prev, current: prev.current + 1, steps };
+          }
+          case "fatal":
+            return { ...prev, fatalMessage: ev.message, fatalStack: ev.stack };
+          default:
+            return prev;
+        }
+      });
+      return ev.type === "done" || ev.type === "fatal";
+    };
+
     try {
-      await api.post(`/api/web/gather/sync/${source}`);
-      toast.success('Sync started');
-      // Poll until all sync_log entries leave 'running' state (max ~60s)
-      for (let i = 0; i < 20; i++) {
-        await new Promise(r => setTimeout(r, 3000));
-        const s = await api.get<GatherStatus>('/api/web/gather/status');
-        setStatus(s);
-        if (!s.recent_log.some(r => r.status === 'running')) break;
+      const response = await fetch(`/api/web/gather/sync-stream/${source}`, { credentials: "same-origin" });
+      if (!response.ok || !response.body) throw new Error(`Sync stream failed: ${response.status}`);
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      outer: while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const events = buffer.split("\n\n");
+        buffer = events.pop() ?? "";
+        for (const chunk of events) {
+          const dataLine = chunk.split("\n").find(l => l.startsWith("data: "));
+          if (!dataLine) continue;
+          try {
+            const ev = JSON.parse(dataLine.slice(6)) as SseEvent;
+            const finished = applyEvent(ev);
+            if (finished) { reader.cancel(); break outer; }
+          } catch { /* skip malformed event */ }
+        }
       }
+      toast.success("Sync complete");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
       setBusySource(null);
+      // Keep progress visible for 8s so errors can be read, then clear
+      setTimeout(() => setSyncProgress(null), 8000);
       void refresh();
     }
   };
@@ -239,6 +333,83 @@ export function GatherView() {
           </table>
         </div>
       </Card>
+
+      {/* Live sync progress panel */}
+      {syncProgress !== null && (
+        <Card className="mb-5 border-accent-primary/20 bg-accent-primary/5">
+          <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+            <span className="font-semibold text-text-primary">
+              {busySource ? "Syncing…" : "Sync complete"} — {syncProgress.source}
+            </span>
+            <span className="text-xs text-text-muted">
+              {syncProgress.current} / {syncProgress.total || "?"} steps
+            </span>
+          </div>
+          <div className="px-4 py-3">
+            {/* Progress bar */}
+            <div className="w-full bg-bg-elevated rounded h-2 mb-4">
+              <div
+                className="bg-accent-primary rounded h-2 transition-all duration-500"
+                style={{ width: syncProgress.total > 0 ? `${Math.round((syncProgress.current / syncProgress.total) * 100)}%` : (busySource ? "5%" : "100%") }}
+              />
+            </div>
+
+            {/* Fatal error */}
+            {syncProgress.fatalMessage && (
+              <div className="mb-3 rounded border border-accent-danger/30 bg-accent-danger/5 p-3">
+                <div className="flex items-start gap-2">
+                  <XCircle className="w-4 h-4 text-accent-danger flex-shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium text-accent-danger">Fatal error</div>
+                    <div className="text-xs text-accent-danger mt-0.5">{syncProgress.fatalMessage}</div>
+                    {syncProgress.fatalStack && (
+                      <details className="mt-1">
+                        <summary className="text-xs text-text-muted cursor-pointer select-none">Stack trace</summary>
+                        <pre className="text-xs text-text-muted mt-1 overflow-x-auto whitespace-pre-wrap break-all leading-relaxed">{syncProgress.fatalStack}</pre>
+                      </details>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Step list */}
+            {syncProgress.steps.length === 0 && busySource && (
+              <div className="flex items-center gap-2 text-sm text-text-muted">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Starting…</span>
+              </div>
+            )}
+            <div className="space-y-1">
+              {syncProgress.steps.map((step, i) => (
+                <div key={i} className="flex items-start gap-2 text-sm py-0.5">
+                  {step.status === "ok" && <CheckCircle className="w-4 h-4 text-accent-success flex-shrink-0 mt-0.5" />}
+                  {step.status === "error" && <XCircle className="w-4 h-4 text-accent-danger flex-shrink-0 mt-0.5" />}
+                  {step.status === "running" && <Loader2 className="w-4 h-4 text-accent-primary flex-shrink-0 mt-0.5 animate-spin" />}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-baseline justify-between gap-4">
+                      <span className={step.status === "error" ? "text-accent-danger" : "text-text-primary"}>{step.label}</span>
+                      {step.detail && <span className="text-text-muted text-xs flex-shrink-0">{step.detail}</span>}
+                      {step.status === "running" && <span className="text-text-muted text-xs flex-shrink-0">fetching…</span>}
+                    </div>
+                    {step.status === "error" && step.message && (
+                      <div className="mt-0.5">
+                        <div className="text-xs text-accent-danger">{step.message}</div>
+                        {step.stack && (
+                          <details className="mt-1">
+                            <summary className="text-xs text-text-muted cursor-pointer select-none">Stack trace</summary>
+                            <pre className="text-xs text-text-muted mt-1 overflow-x-auto whitespace-pre-wrap break-all leading-relaxed">{step.stack}</pre>
+                          </details>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </Card>
+      )}
 
       {/* Recent sync log */}
       <Card>

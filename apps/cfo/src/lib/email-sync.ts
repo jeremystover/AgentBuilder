@@ -55,14 +55,20 @@ export interface EmailSyncResult {
   ran_at: string;
 }
 
-export async function runEmailSync(env: Env, vendors?: VendorHint[]): Promise<EmailSyncResult> {
+export async function runEmailSync(
+  env: Env,
+  vendors?: VendorHint[],
+  onProgress?: (event: object) => void,
+): Promise<EmailSyncResult> {
   const targets = vendors ?? VENDORS;
   const ranAt = new Date().toISOString();
   const sql = db(env);
+  onProgress?.({ type: 'start', total: targets.length });
   try {
     const results: VendorSyncResult[] = [];
-    for (const vendor of targets) {
+    for (const [idx, vendor] of targets.entries()) {
       const source = SOURCE_FOR_VENDOR[vendor];
+      onProgress?.({ type: 'vendor_start', index: idx, total: targets.length, vendor });
       const logRows = await sql<Array<{ id: string }>>`
         INSERT INTO sync_log (source, status) VALUES (${source}, 'running') RETURNING id
       `;
@@ -70,6 +76,7 @@ export async function runEmailSync(env: Env, vendors?: VendorHint[]): Promise<Em
       try {
         const result = await syncVendor(env, sql, vendor);
         results.push(result);
+        onProgress?.({ type: 'vendor_ok', index: idx, total: targets.length, vendor, scanned: result.scanned, matched: result.matched });
         await sql`
           UPDATE sync_log
           SET status = 'completed', completed_at = now(),
@@ -77,6 +84,14 @@ export async function runEmailSync(env: Env, vendors?: VendorHint[]): Promise<Em
           WHERE id = ${syncId}
         `;
       } catch (err) {
+        onProgress?.({
+          type: 'vendor_err',
+          index: idx,
+          total: targets.length,
+          vendor,
+          message: err instanceof Error ? err.message : String(err),
+          stack: err instanceof Error ? err.stack : undefined,
+        });
         results.push({ vendor, scanned: 0, parsed: 0, matched: 0, errors: 1, skipped_already_processed: 0 });
         await sql`
           UPDATE sync_log
@@ -92,10 +107,7 @@ export async function runEmailSync(env: Env, vendors?: VendorHint[]): Promise<Em
 }
 
 async function syncVendor(env: Env, sql: Sql, vendor: VendorHint): Promise<VendorSyncResult> {
-  const refs = await searchMessages(env, SEARCH_QUERIES[vendor]).catch(err => {
-    console.warn(`[email-sync] ${vendor} search failed:`, err);
-    return [] as Awaited<ReturnType<typeof searchMessages>>;
-  });
+  const refs = await searchMessages(env, SEARCH_QUERIES[vendor]);
 
   let parsed = 0;
   let matched = 0;

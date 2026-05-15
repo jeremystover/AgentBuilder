@@ -82,7 +82,7 @@ import {
 } from './routes/web-review';
 import { handleListTransactions, handleUpdateTransaction, handleTransactionsSummary } from './routes/web-transactions';
 import { handleListRules, handleCreateRule } from './routes/web-rules';
-import { handleGatherStatus, handleGatherSync } from './routes/web-gather';
+import { handleGatherStatus, handleGatherSync, handleGatherSyncStream } from './routes/web-gather';
 import {
   handleListReportConfigs, handleCreateReportConfig, handleUpdateReportConfig,
   handleListReportRuns, handleGetReportRun, handleGenerateReport,
@@ -168,7 +168,8 @@ const ROUTES: Route[] = [
   { method: 'GET',    pattern: /^\/api\/web\/rules$/,                   auth: 'api',    handler: (req, env) => handleListRules(req, env) },
   { method: 'POST',   pattern: /^\/api\/web\/rules$/,                   auth: 'api',    handler: (req, env) => handleCreateRule(req, env) },
   { method: 'GET',    pattern: /^\/api\/web\/gather\/status$/,          auth: 'api',    handler: (req, env) => handleGatherStatus(req, env) },
-  // NOTE: gather sync is handled separately in fetch() below to get ctx for waitUntil
+  { method: 'GET',    pattern: /^\/api\/web\/gather\/sync-stream\/(.+)$/, auth: 'api',  handler: (req, env, source) => handleGatherSyncStream(req, env, source!) },
+  // NOTE: gather sync POST is handled separately in fetch() below to get ctx for waitUntil
 
   // Spending (Module 4)
   { method: 'GET',    pattern: /^\/api\/web\/spending\/report$/,             auth: 'api', handler: (req, env) => handleSpendingReport(req, env) },
