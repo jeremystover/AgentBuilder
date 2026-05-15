@@ -297,21 +297,22 @@
   }
 
   /**
-   * Locate the check image inside an opened modal.
+   * Locate the check image for an opened check-view modal.
    *
-   * A check-view modal contains the check itself PLUS page chrome
-   * (marketing/lifestyle background images, logos). Picking "the largest
-   * <img>" grabs the wrong one. Instead, score every <img>:
-   *   - big positive for "check"-ish id/class/data-testid/alt
-   *   - positive for an inline data: URL (the check is embedded; chrome is
-   *     loaded from a CDN)
-   *   - the trained selector contributes a bonus, not an automatic win
-   *   - strong negative for marketing/chrome markers
-   * Polls because banks load the check image lazily.
+   * A check-view modal contains the check PLUS page chrome (marketing /
+   * lifestyle backgrounds, logos). And the check <img> is often rendered
+   * OUTSIDE the modal element (a portal). So: score every <img>, preferring
+   * the modal but falling back to the whole document; "check"-ish
+   * id/class/data-testid/alt and inline data: URLs win, marketing markers
+   * lose. Polls for lazy loading.
+   *
+   * `previousSrc` guards against a reused <img> element: if the bank swaps
+   * one element's src per check, we must wait until it differs from the
+   * prior check's image rather than capturing a stale one.
    *
    * Returns the best <img>, or throws if nothing check-like appeared.
    */
-  async function findCheckImage(modal, selector, timeoutMs) {
+  async function findCheckImage(modal, selector, timeoutMs, previousSrc) {
     const deadline = Date.now() + (timeoutMs || 12000);
     let lastCount = 0;
     while (Date.now() < deadline) {
@@ -323,22 +324,43 @@
         } catch (_) { selEl = null; }
       }
 
-      const imgs = Array.from(modal.querySelectorAll('img'));
+      // Prefer images inside the modal; if none look like a check, the
+      // check image is probably portalled elsewhere — search the document.
+      let imgs = Array.from(modal.querySelectorAll('img'));
+      let pick = pickBestCheckImage(imgs, selEl);
+      if (!pick.el || pick.score <= 0) {
+        imgs = Array.from(document.querySelectorAll('img'));
+        pick = pickBestCheckImage(imgs, selEl);
+      }
       lastCount = imgs.length;
 
-      let best = null;
-      let bestScore = -Infinity;
-      for (const img of imgs) {
-        const s = scoreCheckImage(img, img === selEl);
-        if (s > bestScore) { bestScore = s; best = img; }
+      if (pick.el && pick.score > 0) {
+        const src = pick.el.getAttribute('src') || pick.el.currentSrc || '';
+        // Must have loaded, and must not be the previous check's image
+        // still sitting in a reused element.
+        if (src && src !== previousSrc) return pick.el;
       }
-      // A positive score means it actually looks like a check, not chrome.
-      if (best && bestScore > 0) return best;
       await sleep(350);
     }
-    const e = new Error(`no check image found in modal (saw ${lastCount} img element(s))`);
+    const e = new Error(`no check image found (searched modal + document, saw ${lastCount} img element(s))`);
     e.imgCount = lastCount;
     throw e;
+  }
+
+  function pickBestCheckImage(imgs, selEl) {
+    let best = null;
+    let bestScore = -Infinity;
+    for (const img of imgs) {
+      const s = scoreCheckImage(img, img === selEl);
+      if (s > bestScore) { bestScore = s; best = img; }
+    }
+    return { el: best, score: bestScore };
+  }
+
+  /** One-shot best-effort check-image lookup across the document (no poll). */
+  function quickFindCheckImage() {
+    const pick = pickBestCheckImage(Array.from(document.querySelectorAll('img')), null);
+    return pick.el && pick.score > 0 ? pick.el : null;
   }
 
   function scoreCheckImage(img, isSelectorMatch) {
@@ -522,6 +544,11 @@
         const button = row.querySelector(ad.viewCheckButtonSelector);
         if (!button) throw new Error('view-check button not found inside row');
 
+        // Note the currently-shown check image (if any) — if the bank reuses
+        // one <img> element, the new check hasn't loaded until src changes.
+        const beforeEl = quickFindCheckImage();
+        const previousSrc = beforeEl ? (beforeEl.getAttribute('src') || beforeEl.currentSrc || '') : null;
+
         button.scrollIntoView({ block: 'center' });
         await sleep(250);
         button.click();
@@ -529,7 +556,8 @@
         const modal = await waitForElement(cm.modalSelector, document, 12000);
 
         // Banks load the check image lazily — poll for it, with fallbacks.
-        const frontImg = await findCheckImage(modal, cm.frontImageSelector, 14000);
+        const frontImg = await findCheckImage(modal, cm.frontImageSelector, 14000, previousSrc);
+        const frontSrc = frontImg.getAttribute('src') || frontImg.currentSrc || '';
         imageFront = await imgToDataUrl(frontImg);
 
         // Back image — either a separate <img> or the same one after a toggle.
@@ -540,7 +568,8 @@
             toggle.click();
             await sleep(1000);
             try {
-              const backImg = await findCheckImage(modal, cm.backImageSelector, 6000);
+              // Pass frontSrc so we wait for the image to flip to the back.
+              const backImg = await findCheckImage(modal, cm.backImageSelector, 6000, frontSrc);
               imageBack = await imgToDataUrl(backImg);
             } catch { /* back image optional */ }
           }
