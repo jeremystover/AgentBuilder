@@ -2,8 +2,7 @@
  * Bank Check Extractor — content script
  *
  * Injected on demand by the popup (chrome.scripting.executeScript). The
- * popup tells this script what to do via chrome.tabs.sendMessage and
- * chrome.tabs.connect; this script never runs autonomously.
+ * popup drives it with one-shot chrome.tabs.sendMessage calls.
  *
  * Capabilities:
  *
@@ -23,9 +22,11 @@
  *
  *   CLEAR_HIGHLIGHT      Remove all painted outlines.
  *
- *   EXTRACT              (via port) Walk the recipe and capture every check
- *                        image on the page. Streams progress + images back
- *                        to the popup via the port.
+ *   START_EXTRACT        Walk the recipe and capture every check image on
+ *                        the page. Runs detached — it keeps going after the
+ *                        popup closes — and mirrors progress to
+ *                        chrome.storage.local.extraction so the popup can
+ *                        resync whenever it's reopened.
  */
 
 (function () {
@@ -509,104 +510,79 @@
 
   // ── Extract (replay) ──────────────────────────────────────────────────
 
-  async function runExtract(recipe, port) {
+  let extractionRunning = false;
+
+  /** Persist extraction progress so the popup can show it even after it's
+   *  been closed and reopened. Only this content script writes `extraction`. */
+  function saveProgress(state) {
+    try { return chrome.storage.local.set({ extraction: state }); }
+    catch (_) { return Promise.resolve(); }
+  }
+
+  /**
+   * Capture one check: open its modal, grab front (+ back) images, close.
+   * Returns { imageFront, imageBack, error }. Never throws.
+   */
+  async function captureOneCheck(row, recipe, previousSrc) {
     const ad = recipe.accountDetail;
     const cm = recipe.checkModal;
-    if (!ad?.rowSelector || !ad?.viewCheckButtonSelector || !cm?.modalSelector || !cm?.frontImageSelector) {
-      port.postMessage({ type: 'fatal', error: 'recipe incomplete — please retrain' });
-      return;
-    }
+    let imageFront = null;
+    let imageBack = null;
+    let error = null;
+    try {
+      // Make sure the previous check's modal is fully gone — otherwise
+      // waitForElement() below would resolve instantly against a stale one.
+      await waitForElementGone(cm.modalSelector, document, 6000);
 
-    let rows;
-    try { rows = Array.from(document.querySelectorAll(ad.rowSelector)); }
-    catch (e) { port.postMessage({ type: 'fatal', error: 'row selector invalid: ' + e.message }); return; }
+      const button = row.querySelector(ad.viewCheckButtonSelector);
+      if (!button) throw new Error('view-check button not found inside row');
 
-    const total = rows.length;
-    port.postMessage({ type: 'start', total });
-    if (total === 0) { port.postMessage({ type: 'done', captures: [] }); return; }
+      button.scrollIntoView({ block: 'center' });
+      await sleep(250);
+      button.click();
 
-    const captures = [];
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
-      const meta = extractFromRow(row, recipe);
-      const current = i + 1;
-      port.postMessage({ type: 'progress', current, total, checkNumber: meta.checkNumber });
+      const modal = await waitForElement(cm.modalSelector, document, 20000);
 
-      let imageFront = null;
-      let imageBack = null;
-      let error = null;
+      // Generous timeout — the bank's check viewer is slow to warm up on
+      // the first open. The retry pass catches anything still too slow.
+      const frontImg = await findCheckImage(modal, cm.frontImageSelector, 28000, previousSrc);
+      const frontSrc = frontImg.getAttribute('src') || frontImg.currentSrc || '';
+      imageFront = await imgToDataUrl(frontImg);
 
-      try {
-        // Make sure the previous check's modal is fully gone — otherwise
-        // waitForElement() below would resolve instantly against a stale one.
-        await waitForElementGone(cm.modalSelector, document, 5000);
-
-        const button = row.querySelector(ad.viewCheckButtonSelector);
-        if (!button) throw new Error('view-check button not found inside row');
-
-        // Note the currently-shown check image (if any) — if the bank reuses
-        // one <img> element, the new check hasn't loaded until src changes.
-        const beforeEl = quickFindCheckImage();
-        const previousSrc = beforeEl ? (beforeEl.getAttribute('src') || beforeEl.currentSrc || '') : null;
-
-        button.scrollIntoView({ block: 'center' });
-        await sleep(250);
-        button.click();
-
-        const modal = await waitForElement(cm.modalSelector, document, 12000);
-
-        // Banks load the check image lazily — poll for it, with fallbacks.
-        const frontImg = await findCheckImage(modal, cm.frontImageSelector, 14000, previousSrc);
-        const frontSrc = frontImg.getAttribute('src') || frontImg.currentSrc || '';
-        imageFront = await imgToDataUrl(frontImg);
-
-        // Back image — either a separate <img> or the same one after a toggle.
-        if (cm.backImageToggleSelector) {
-          let toggle = null;
-          try { toggle = modal.querySelector(cm.backImageToggleSelector) || document.querySelector(cm.backImageToggleSelector); } catch {}
-          if (toggle) {
-            toggle.click();
-            await sleep(1000);
-            try {
-              // Pass frontSrc so we wait for the image to flip to the back.
-              const backImg = await findCheckImage(modal, cm.backImageSelector, 6000, frontSrc);
-              imageBack = await imgToDataUrl(backImg);
-            } catch { /* back image optional */ }
-          }
-        } else if (cm.backImageSelector) {
+      // Back image — either a separate <img> or the same one after a toggle.
+      if (cm.backImageToggleSelector) {
+        let toggle = null;
+        try { toggle = modal.querySelector(cm.backImageToggleSelector) || document.querySelector(cm.backImageToggleSelector); } catch {}
+        if (toggle) {
+          toggle.click();
+          await sleep(1000);
           try {
-            let backEl = modal.querySelector(cm.backImageSelector) || document.querySelector(cm.backImageSelector);
-            if (backEl && backEl.tagName !== 'IMG') backEl = backEl.querySelector('img');
-            if (backEl && backEl !== frontImg) imageBack = await imgToDataUrl(backEl);
+            const backImg = await findCheckImage(modal, cm.backImageSelector, 10000, frontSrc);
+            imageBack = await imgToDataUrl(backImg);
           } catch { /* back image optional */ }
         }
-      } catch (e) {
-        error = e.message;
-      } finally {
-        // Close modal
-        if (cm.closeSelector) {
-          try { (document.querySelector(cm.closeSelector))?.click(); } catch {}
-        }
-        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
-        await sleep(700);
+      } else if (cm.backImageSelector) {
+        try {
+          let backEl = modal.querySelector(cm.backImageSelector) || document.querySelector(cm.backImageSelector);
+          if (backEl && backEl.tagName !== 'IMG') backEl = backEl.querySelector('img');
+          if (backEl && backEl !== frontImg) imageBack = await imgToDataUrl(backEl);
+        } catch { /* back image optional */ }
       }
-
-      const cap = { ...meta, imageFront, imageBack, error };
-      captures.push(cap);
-
-      if (imageFront) {
-        port.postMessage({
-          type: 'captured', current, total, checkNumber: meta.checkNumber,
-          hasBack: !!imageBack,
-        });
-      } else {
-        port.postMessage({
-          type: 'capture_error', current, total, checkNumber: meta.checkNumber,
-          error: error || 'no image extracted',
-        });
+    } catch (e) {
+      error = e.message || String(e);
+    } finally {
+      if (cm.closeSelector) {
+        try { (document.querySelector(cm.closeSelector))?.click(); } catch {}
       }
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
+      await sleep(800);
+    }
+    return { imageFront, imageBack, error };
+  }
 
-      // Upload immediately so the popup doesn't have to buffer N images
+  function uploadCapture(meta, res) {
+    if (!res.imageFront) return;
+    try {
       chrome.runtime.sendMessage({
         type: 'UPLOAD_CHECK',
         check: {
@@ -614,16 +590,114 @@
           date: meta.date,
           amount: meta.amount,
           description: meta.description,
-          imageFront,
-          imageBack,
+          imageFront: res.imageFront,
+          imageBack: res.imageBack,
         },
       });
-    }
+    } catch (_) { /* background will wake on the next message */ }
+  }
 
-    port.postMessage({ type: 'done', captures: captures.map(c => ({
-      checkNumber: c.checkNumber, date: c.date, amount: c.amount,
-      error: c.error, hasFront: !!c.imageFront, hasBack: !!c.imageBack,
-    })) });
+  /**
+   * Run the full extraction. Driven by a one-shot START_EXTRACT message
+   * (NOT a popup port), so it keeps running even when the popup closes.
+   * Progress is mirrored to chrome.storage so a reopened popup can resync.
+   */
+  async function runExtract(recipe) {
+    if (extractionRunning) return;
+    extractionRunning = true;
+    try {
+      const ad = recipe.accountDetail;
+      const cm = recipe.checkModal;
+      const state = {
+        running: true, done: false, retrying: false,
+        startedAt: new Date().toISOString(),
+        total: 0, current: 0, currentCheck: null,
+        captures: [], fatal: null,
+      };
+
+      if (!ad?.rowSelector || !ad?.viewCheckButtonSelector || !cm?.modalSelector) {
+        state.running = false; state.done = true;
+        state.fatal = 'recipe incomplete — please retrain';
+        await saveProgress(state);
+        return;
+      }
+
+      let rows;
+      try { rows = Array.from(document.querySelectorAll(ad.rowSelector)); }
+      catch (e) {
+        state.running = false; state.done = true;
+        state.fatal = 'row selector invalid: ' + e.message;
+        await saveProgress(state);
+        return;
+      }
+
+      state.total = rows.length;
+      await saveProgress(state);
+      if (rows.length === 0) {
+        state.running = false; state.done = true;
+        await saveProgress(state);
+        return;
+      }
+
+      // ── First pass ──
+      for (let i = 0; i < rows.length; i++) {
+        const meta = extractFromRow(rows[i], recipe);
+        state.current = i + 1;
+        state.currentCheck = meta.checkNumber;
+        await saveProgress(state);
+
+        const beforeEl = quickFindCheckImage();
+        const previousSrc = beforeEl ? (beforeEl.getAttribute('src') || beforeEl.currentSrc || '') : null;
+
+        const res = await captureOneCheck(rows[i], recipe, previousSrc);
+        state.captures.push({
+          rowIndex: i,
+          checkNumber: meta.checkNumber, date: meta.date, amount: meta.amount,
+          status: res.imageFront ? 'ok' : 'error',
+          hasBack: !!res.imageBack,
+          error: res.error,
+          retried: false,
+        });
+        await saveProgress(state);
+        uploadCapture(meta, res);
+      }
+
+      // ── Retry pass — the first check often cold-starts slow; anything
+      //    that failed gets one more try now that the viewer is warm. ──
+      const failed = state.captures.filter(c => c.status === 'error');
+      if (failed.length) {
+        state.retrying = true;
+        await saveProgress(state);
+        for (const cap of failed) {
+          const meta = extractFromRow(rows[cap.rowIndex], recipe);
+          state.currentCheck = meta.checkNumber;
+          await saveProgress(state);
+
+          const beforeEl = quickFindCheckImage();
+          const previousSrc = beforeEl ? (beforeEl.getAttribute('src') || beforeEl.currentSrc || '') : null;
+
+          const res = await captureOneCheck(rows[cap.rowIndex], recipe, previousSrc);
+          cap.retried = true;
+          if (res.imageFront) {
+            cap.status = 'ok';
+            cap.hasBack = !!res.imageBack;
+            cap.error = null;
+            uploadCapture(meta, res);
+          } else {
+            cap.error = res.error;
+          }
+          await saveProgress(state);
+        }
+        state.retrying = false;
+      }
+
+      state.running = false;
+      state.done = true;
+      state.currentCheck = null;
+      await saveProgress(state);
+    } finally {
+      extractionRunning = false;
+    }
   }
 
   // ── Message wiring ────────────────────────────────────────────────────
@@ -645,6 +719,19 @@
         } else if (msg.type === 'CLEAR_HIGHLIGHT') {
           clearHighlight();
           sendResponse({ ok: true });
+        } else if (msg.type === 'START_EXTRACT') {
+          // Respond immediately; extraction runs detached so it survives
+          // the popup closing.
+          sendResponse({ ok: true, alreadyRunning: extractionRunning });
+          if (!extractionRunning) {
+            runExtract(msg.recipe).catch((err) => {
+              chrome.storage.local.set({ extraction: {
+                running: false, done: true, retrying: false,
+                total: 0, current: 0, captures: [],
+                fatal: 'extraction crashed: ' + (err.message || err),
+              } }).catch(() => {});
+            });
+          }
         } else {
           sendResponse({ ok: false, error: 'unknown message type: ' + msg.type });
         }
@@ -653,15 +740,5 @@
       }
     })();
     return true; // keep channel open for async sendResponse
-  });
-
-  chrome.runtime.onConnect.addListener((port) => {
-    if (port.name !== 'bce-extract') return;
-    port.onMessage.addListener((msg) => {
-      if (msg.type !== 'EXTRACT') return;
-      runExtract(msg.recipe, port).catch(err => {
-        try { port.postMessage({ type: 'fatal', error: err.message }); } catch {}
-      });
-    });
   });
 })();

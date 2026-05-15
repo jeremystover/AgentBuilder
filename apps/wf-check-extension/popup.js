@@ -205,6 +205,14 @@ async function renderMainView() {
   currentDomain = domainFromUrl(tab.url);
   el('recipe-domain').textContent = currentDomain;
 
+  // If an extraction is mid-run (popup was closed and reopened), resync to it.
+  const { extraction } = await chrome.storage.local.get('extraction');
+  if (extraction && extraction.running) {
+    el('extract-log').innerHTML = '';
+    renderedCaptureCount = 0;
+    renderExtraction(extraction);
+  }
+
   try {
     await ensureInjected(tab.id);
   } catch (e) {
@@ -379,74 +387,107 @@ el('train-finish').addEventListener('click', async () => {
 });
 
 // ── Extract ───────────────────────────────────────────────────────────
+//
+// Extraction runs entirely in the content script and survives the popup
+// closing. The popup just kicks it off (one-shot START_EXTRACT message)
+// and renders progress from chrome.storage.local.extraction — which it
+// re-reads on open and watches via storage.onChanged.
 
-let extractPort = null;
-let uploadStats = { ok: 0, err: 0 };
+let renderedCaptureCount = 0;
 
 async function runExtract() {
   show('view-main');
   setHidden('extract-progress', false);
   el('progress-fill').style.width = '0%';
-  el('progress-text').textContent = 'Connecting to page…';
   el('extract-log').innerHTML = '';
-  uploadStats = { ok: 0, err: 0 };
+  renderedCaptureCount = 0;
 
   if (!currentTabId || !currentRecipe) {
-    log('No recipe — train first.', 'log-err');
+    el('progress-text').textContent = 'No recipe — train first.';
     return;
   }
+
+  // Clear any stale progress from a previous run before starting.
+  await chrome.storage.local.remove('extraction');
+  el('progress-text').textContent = 'Starting…';
 
   try {
-    extractPort = chrome.tabs.connect(currentTabId, { name: 'bce-extract' });
+    await ensureInjected(currentTabId);
+    const resp = await csFetch(currentTabId, { type: 'START_EXTRACT', recipe: currentRecipe });
+    if (resp.alreadyRunning) {
+      log('An extraction is already running on this tab.', 'log-info');
+    }
   } catch (e) {
-    log('Failed to connect to page: ' + e.message, 'log-err');
+    el('progress-text').textContent = 'Failed to start: ' + e.message;
+    log('Failed to start: ' + e.message, 'log-err');
     return;
   }
-  extractPort.onMessage.addListener(onExtractMessage);
-  extractPort.onDisconnect.addListener(() => {
-    log('Page disconnected.', 'log-info');
-  });
-  extractPort.postMessage({ type: 'EXTRACT', recipe: currentRecipe });
+
+  el('progress-text').textContent =
+    'Running — you can close this popup; extraction keeps going in the tab.';
+  void renderExtractionFromStorage();
 }
 
-function onExtractMessage(msg) {
-  switch (msg.type) {
-    case 'start':
-      el('progress-text').textContent = `Processing ${msg.total} check(s)…`;
-      log(`Found ${msg.total} check(s) on this page.`);
-      if (msg.total === 0) log('Nothing to do.');
-      break;
-    case 'progress':
-      el('progress-fill').style.width = `${Math.round(msg.current / msg.total * 100)}%`;
-      el('progress-text').textContent = `Processing ${msg.current} / ${msg.total} — CHECK #${msg.checkNumber || '?'}`;
-      break;
-    case 'captured':
-      log(`✓ CHECK #${msg.checkNumber || '?'} captured${msg.hasBack ? ' (front+back)' : ' (front)'}`, 'log-ok');
-      break;
-    case 'capture_error':
-      log(`✗ CHECK #${msg.checkNumber || '?'}: ${msg.error}`, 'log-err');
-      break;
-    case 'done': {
-      const captures = msg.captures || [];
-      const successCount = captures.filter(c => c.hasFront).length;
-      log(`Capture phase complete: ${successCount} of ${captures.length} succeeded. Uploads continue in background.`);
-      el('progress-text').textContent = `Done capturing. ${successCount}/${captures.length} succeeded.`;
-      break;
+async function renderExtractionFromStorage() {
+  const { extraction } = await chrome.storage.local.get('extraction');
+  renderExtraction(extraction);
+}
+
+function renderExtraction(state) {
+  if (!state) return;
+  setHidden('extract-progress', false);
+
+  if (state.total > 0) {
+    el('progress-fill').style.width = `${Math.round((state.current / state.total) * 100)}%`;
+  }
+
+  // Append capture log entries we haven't shown yet.
+  const caps = state.captures || [];
+  for (let i = renderedCaptureCount; i < caps.length; i++) {
+    const c = caps[i];
+    if (c.status === 'ok') {
+      log(`✓ CHECK #${c.checkNumber || '?'} captured${c.hasBack ? ' (front+back)' : ' (front)'}` +
+          `${c.retried ? ' [retry]' : ''}`, 'log-ok');
+    } else {
+      log(`✗ CHECK #${c.checkNumber || '?'}: ${c.error || 'no image'}` +
+          `${c.retried ? ' [retry failed]' : ''}`, 'log-err');
     }
-    case 'fatal':
-      log('Fatal: ' + msg.error, 'log-err');
-      break;
+  }
+  renderedCaptureCount = caps.length;
+
+  if (state.fatal) {
+    el('progress-text').textContent = 'Stopped: ' + state.fatal;
+    return;
+  }
+  if (state.done) {
+    const ok = caps.filter(c => c.status === 'ok').length;
+    el('progress-fill').style.width = '100%';
+    el('progress-text').textContent =
+      `Done — ${ok}/${state.total} captured. Uploads finish in the background; check the CFO app.`;
+  } else if (state.retrying) {
+    el('progress-text').textContent =
+      `Retrying failed checks — CHECK #${state.currentCheck || '?'}…`;
+  } else {
+    el('progress-text').textContent =
+      `Processing ${state.current} / ${state.total} — CHECK #${state.currentCheck || '?'} ` +
+      `(safe to close this popup)`;
   }
 }
 
-// Listen for upload outcomes the content script triggered via background
+// Live progress updates while the popup is open.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.extraction) {
+    renderExtraction(changes.extraction.newValue);
+  }
+});
+
+// Upload outcomes broadcast by the background worker (only seen while the
+// popup is open — uploads still complete regardless).
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === 'UPLOAD_RESULT') {
     if (msg.ok) {
-      uploadStats.ok++;
       log(`↑ Uploaded CHECK #${msg.checkNumber || '?'} → CFO will analyze it.`, 'log-ok');
     } else {
-      uploadStats.err++;
       log(`↑✗ Upload failed for #${msg.checkNumber || '?'}: ${msg.error}`, 'log-err');
     }
   }
