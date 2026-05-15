@@ -84,3 +84,55 @@ export function handleGatherSync(_req: Request, env: Env, ctx: ExecutionContext,
   }
   return jsonError(`unknown source: ${source}`, 400);
 }
+
+/**
+ * SSE streaming endpoint. Runs the sync inline (not waitUntil) so progress
+ * events can be streamed to the client in real time. The open response body
+ * keeps the Worker alive for the duration of the sync.
+ */
+export function handleGatherSyncStream(_req: Request, env: Env, source: string): Response {
+  const { readable, writable } = new TransformStream<Uint8Array>();
+  const writer = writable.getWriter();
+  const enc = new TextEncoder();
+
+  const send = (event: object): void => {
+    const payload = JSON.stringify(Object.assign({ source }, event));
+    writer.write(enc.encode(`data: ${payload}\n\n`)).catch(() => {});
+  };
+
+  (async () => {
+    try {
+      if (source === 'teller') {
+        await runTellerSync(env, {}, send);
+      } else if (source === 'email') {
+        await runEmailSync(env, undefined, send);
+      } else if (source.startsWith('email:')) {
+        const vendor = source.slice('email:'.length) as VendorHint;
+        if (!(VENDORS as readonly string[]).includes(vendor)) {
+          send({ type: 'fatal', message: `unknown vendor: ${vendor}` });
+          return;
+        }
+        await runEmailSync(env, [vendor], send);
+      } else {
+        send({ type: 'fatal', message: `unknown source: ${source}` });
+        return;
+      }
+      send({ type: 'done' });
+    } catch (err) {
+      send({
+        type: 'fatal',
+        message: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : undefined,
+      });
+    } finally {
+      await writer.close().catch(() => {});
+    }
+  })();
+
+  return new Response(readable, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+    },
+  });
+}

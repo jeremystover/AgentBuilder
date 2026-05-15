@@ -80,27 +80,31 @@ async function tellerRequest<T>(
     if (value) url.searchParams.set(key, value);
   }
 
-  const res = requiresMtls(env)
-    ? await (() => {
-        if (!env.TELLER_MTLS) {
-          throw new Error('Teller development/production requires a TELLER_MTLS binding in wrangler.toml.');
-        }
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 30_000);
+  const headers: HeadersInit = {
+    Accept: 'application/json',
+    Authorization: `Basic ${btoa(`${accessToken}:`)}`,
+  };
 
-        return env.TELLER_MTLS.fetch(url.toString(), {
-          method: 'GET',
-          headers: {
-            Accept: 'application/json',
-            Authorization: `Basic ${btoa(`${accessToken}:`)}`,
-          },
-        });
-      })()
-    : await fetch(url.toString(), {
-    method: 'GET',
-    headers: {
-      Accept: 'application/json',
-      Authorization: `Basic ${btoa(`${accessToken}:`)}`,
-    },
-  });
+  let res: Response;
+  try {
+    if (requiresMtls(env)) {
+      if (!env.TELLER_MTLS) {
+        throw new Error('Teller development/production requires a TELLER_MTLS binding in wrangler.toml.');
+      }
+      res = await env.TELLER_MTLS.fetch(url.toString(), { method: 'GET', headers, signal: ac.signal });
+    } else {
+      res = await fetch(url.toString(), { method: 'GET', headers, signal: ac.signal });
+    }
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error(`Teller API timed out after 30s: ${path}`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 
   const raw = await res.text();
   let data: T | TellerApiErrorResponse | null = null;
