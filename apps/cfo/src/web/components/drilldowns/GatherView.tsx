@@ -1,8 +1,30 @@
 import { useEffect, useState } from "react";
-import { RefreshCw, AlertCircle, CheckCircle, XCircle, Loader2 } from "lucide-react";
+import { RefreshCw, AlertCircle, CheckCircle, XCircle, Loader2, PlusCircle } from "lucide-react";
 import { toast } from "sonner";
 import { api, type GatherStatus, type AccountRow, type Entity } from "../../api";
 import { Card, Button, Badge, Select, PageHeader, EmptyState } from "../ui";
+
+// ── Teller Connect types ─────────────────────────────────────────────────────
+
+interface TellerEnrollment {
+  accessToken: string;
+  enrollment: { id: string; institution: { id: string; name: string } };
+}
+
+declare global {
+  interface Window {
+    TellerConnect: {
+      setup: (cfg: {
+        applicationId: string;
+        environment: string;
+        products: string[];
+        selectAccount: string;
+        onSuccess: (e: TellerEnrollment) => void;
+        onExit: () => void;
+      }) => { open: () => void };
+    };
+  }
+}
 
 const STALE_HOURS = 36;
 
@@ -167,6 +189,46 @@ export function GatherView() {
     }
   };
 
+  const connectTeller = async () => {
+    const cfg = status?.teller?.connect_config;
+    if (!cfg) { toast.error("Teller Connect is not configured (TELLER_APPLICATION_ID missing)."); return; }
+
+    // Load Teller.js on demand
+    if (!window.TellerConnect) {
+      await new Promise<void>((resolve, reject) => {
+        const s = document.createElement("script");
+        s.src = "https://cdn.teller.io/connect/connect.js";
+        s.onload = () => resolve();
+        s.onerror = () => reject(new Error("Failed to load Teller Connect script"));
+        document.head.appendChild(s);
+      });
+    }
+
+    window.TellerConnect.setup({
+      applicationId: cfg.application_id,
+      environment: cfg.environment,
+      products: cfg.products,
+      selectAccount: cfg.select_account,
+      onSuccess: (enrollment) => {
+        void (async () => {
+          try {
+            await api.post("/teller/enroll", {
+              access_token: enrollment.accessToken,
+              enrollment_id: enrollment.enrollment.id,
+              institution_id: enrollment.enrollment.institution.id,
+              institution_name: enrollment.enrollment.institution.name,
+            });
+            toast.success(`Connected: ${enrollment.enrollment.institution.name}`);
+            await refresh();
+          } catch (e) {
+            toast.error(e instanceof Error ? e.message : String(e));
+          }
+        })();
+      },
+      onExit: () => {},
+    }).open();
+  };
+
   const allSynced = (status?.recent_log ?? []).slice(0, 5).every(r => r.status === "completed" || r.status === "running");
 
   return (
@@ -199,7 +261,14 @@ export function GatherView() {
       <Card className="mb-5">
         <div className="px-4 py-3 border-b border-border font-semibold text-text-primary">Accounts</div>
         {accounts.length === 0
-          ? <EmptyState>No accounts configured. Connect Teller to start.</EmptyState>
+          ? (
+            <EmptyState>
+              No accounts configured.{" "}
+              {status?.teller?.connect_config
+                ? <button className="underline text-accent-primary" onClick={() => void connectTeller()}>Connect Teller</button>
+                : "Connect Teller to start."}
+            </EmptyState>
+          )
           : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -314,10 +383,15 @@ export function GatherView() {
               <tr className="border-t border-border">
                 <td className="px-4 py-2 font-medium">Teller</td>
                 <td className="px-4 py-2 text-text-muted">Daily at 9:00 UTC (~05:00 ET)</td>
-                <td className="px-4 py-2">
+                <td className="px-4 py-2 flex gap-2 items-center">
                   <Button onClick={() => void runSync("teller")} disabled={busySource === "teller"}>
                     {busySource === "teller" ? "Running…" : "Run now"}
                   </Button>
+                  {status?.teller?.connect_config && (
+                    <Button onClick={() => void connectTeller()}>
+                      <PlusCircle className="w-4 h-4" /> Add connection
+                    </Button>
+                  )}
                 </td>
               </tr>
               <tr className="border-t border-border">
