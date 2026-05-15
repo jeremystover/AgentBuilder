@@ -5,7 +5,7 @@ import {
 } from "recharts";
 import {
   Plus, Copy, GitBranch, Star, Archive, RefreshCw, Trash2, Save, ChevronDown, ChevronRight,
-  Lightbulb,
+  Lightbulb, Wand2,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -93,13 +93,13 @@ export function PlansView() {
     try {
       const res = await api.get<{ plans: Plan[] }>("/api/web/plans");
       setPlans(res.plans);
-      if (!selectedId && res.plans.length > 0) setSelectedId(res.plans[0]!.id);
+      setSelectedId(prev => (!prev && res.plans.length > 0) ? res.plans[0]!.id : prev);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
-  }, [selectedId]);
+  }, []);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
@@ -305,6 +305,7 @@ function PlanEditor({ plan, plans, onChanged }: { plan: Plan; plans: Plan[]; onC
     setSavingName(true);
     try {
       await api.put(`/api/web/plans/${plan.id}`, { name });
+      toast.success("Plan name saved");
       await onChanged();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
@@ -368,6 +369,7 @@ function CategoryGrid({ plan }: { plan: Plan }) {
   const [parentResolved, setParentResolved] = useState<Map<string, ResolvedAmount>>(new Map());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
+  const [filling, setFilling] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -408,11 +410,52 @@ function CategoryGrid({ plan }: { plan: Plan }) {
     }
   };
 
+  const fillBlanks = async (periodType: 'monthly' | 'annual') => {
+    setFilling(true);
+    try {
+      const res = await api.get<{ categories: Array<{ category_id: string; average_monthly: number; average_annual: number }> }>(
+        `/api/web/plans/${plan.id}/categories/suggest-all`,
+      );
+      const suggestMap = new Map(res.categories.map(s => [s.category_id, s]));
+      const blanks = categories.filter(cat => amountByCategory.get(cat.id)?.amount == null);
+      const toFill = blanks.flatMap(cat => {
+        const s = suggestMap.get(cat.id);
+        const value = periodType === 'monthly' ? s?.average_monthly : s?.average_annual;
+        if (!value) return [];
+        return [{ catId: cat.id, value }];
+      });
+      await Promise.all(toFill.map(({ catId, value }) =>
+        api.put(`/api/web/plans/${plan.id}/categories/${catId}`, {
+          amount: Math.round(value * 100) / 100,
+          period_type: periodType,
+          override_type: 'fixed',
+          base_rate_pct: null,
+          base_rate_start: null,
+          changes: [],
+        }),
+      ));
+      if (toFill.length > 0) await refresh();
+      toast.success(`Filled ${toFill.length} blank categor${toFill.length === 1 ? 'y' : 'ies'} with ${periodType} averages`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setFilling(false);
+    }
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-2">
         <div className="text-xs text-text-muted">{categories.length} categories</div>
-        <Button size="sm" onClick={() => void refresh()}><RefreshCw className={"w-3.5 h-3.5 " + (loading ? "animate-spin" : "")} /></Button>
+        <div className="flex items-center gap-1">
+          <Button size="sm" variant="ghost" onClick={() => void fillBlanks('monthly')} disabled={filling || loading}>
+            <Wand2 className="w-3.5 h-3.5" /> Fill blanks · Monthly
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => void fillBlanks('annual')} disabled={filling || loading}>
+            <Wand2 className="w-3.5 h-3.5" /> Fill blanks · Annual
+          </Button>
+          <Button size="sm" onClick={() => void refresh()}><RefreshCw className={"w-3.5 h-3.5 " + (loading ? "animate-spin" : "")} /></Button>
+        </div>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">

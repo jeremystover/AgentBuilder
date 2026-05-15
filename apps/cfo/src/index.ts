@@ -96,7 +96,7 @@ import {
   handleListPlans, handleCreatePlan, handleGetPlan, handleUpdatePlan, handleArchivePlan,
   handleDuplicatePlan, handleExtendPlan, handleSetActivePlanV2,
   handleResolvePlan, handleForecastPlan,
-  handleListPlanCategories, handleUpsertPlanCategory, handleSuggestPlanCategory,
+  handleListPlanCategories, handleUpsertPlanCategory, handleSuggestPlanCategory, handleSuggestAllPlanCategories,
   handleListOneTimeItems, handleCreateOneTimeItem, handleUpdateOneTimeItem, handleDeleteOneTimeItem,
 } from './routes/planning';
 import {
@@ -197,6 +197,7 @@ const ROUTES: Route[] = [
   { method: 'GET',    pattern: /^\/api\/web\/plans\/([^/]+)\/forecast$/,                           auth: 'api', handler: (req, env, id) => handleForecastPlan(req, env, id!) },
   { method: 'GET',    pattern: /^\/api\/web\/plans\/([^/]+)\/categories$/,                         auth: 'api', handler: (req, env, id) => handleListPlanCategories(req, env, id!) },
   { method: 'PUT',    pattern: /^\/api\/web\/plans\/([^/]+)\/categories\/([^/]+)$/,                auth: 'api', handler: (req, env, id, cid) => handleUpsertPlanCategory(req, env, id!, cid!) },
+  { method: 'GET',    pattern: /^\/api\/web\/plans\/([^/]+)\/categories\/suggest-all$/,            auth: 'api', handler: (req, env, id) => handleSuggestAllPlanCategories(req, env, id!) },
   { method: 'GET',    pattern: /^\/api\/web\/plans\/([^/]+)\/categories\/([^/]+)\/suggest$/,       auth: 'api', handler: (req, env, id, cid) => handleSuggestPlanCategory(req, env, id!, cid!) },
   { method: 'GET',    pattern: /^\/api\/web\/plans\/([^/]+)\/one-time-items$/,                     auth: 'api', handler: (req, env, id) => handleListOneTimeItems(req, env, id!) },
   { method: 'POST',   pattern: /^\/api\/web\/plans\/([^/]+)\/one-time-items$/,                     auth: 'api', handler: (req, env, id) => handleCreateOneTimeItem(req, env, id!) },
