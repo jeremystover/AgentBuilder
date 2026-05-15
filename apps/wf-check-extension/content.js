@@ -54,6 +54,22 @@
     });
   }
 
+  /** Resolve once `selector` no longer matches inside root (or timeout). */
+  function waitForElementGone(selector, root, timeoutMs) {
+    root = root || document;
+    timeoutMs = timeoutMs || 6000;
+    return new Promise((resolve) => {
+      if (!root.querySelector(selector)) return resolve();
+      const obs = new MutationObserver(() => {
+        if (!root.querySelector(selector)) { obs.disconnect(); clearTimeout(timer); resolve(); }
+      });
+      const target = root.nodeType === Node.DOCUMENT_NODE ? root.body || root : root;
+      obs.observe(target, { childList: true, subtree: true });
+      const timer = setTimeout(() => { obs.disconnect(); resolve(); }, timeoutMs);
+    });
+  }
+
+
   function waitForImageLoaded(img, timeoutMs) {
     timeoutMs = timeoutMs || 10000;
     if (img.complete && img.naturalWidth > 0) return Promise.resolve(img);
@@ -184,26 +200,91 @@
 
   // ── Image capture ──────────────────────────────────────────────────────
 
+  /**
+   * Export a check <img> to a base64 data URL.
+   *
+   * Bank check images are typically cross-origin (a separate image host),
+   * which means the canvas is tainted and toDataURL() throws, and a direct
+   * fetch() from the content script is blocked by CORS. The reliable path
+   * is to hand the URL to the background service worker, which has
+   * <all_urls> host permission, can fetch cross-origin (bypassing CORS),
+   * sends the bank's cookies, and re-encodes to JPEG from raw bytes (a
+   * canvas built from fetched bytes is never tainted).
+   */
   async function imgToDataUrl(img) {
+    const src = img.currentSrc || img.src || '';
+    if (!src) throw new Error('image element has no src');
+
+    // Already inline. Banks sometimes use a bogus MIME ("data:image/check")
+    // — re-derive the real type from the bytes so the server accepts it.
+    if (src.startsWith('data:')) return normalizeDataUrl(src);
+
+    // blob: URLs only resolve in the page context — the background can't
+    // read them, so the content script must.
+    if (src.startsWith('blob:')) {
+      const resp = await fetch(src);
+      if (!resp.ok) throw new Error('blob fetch failed: ' + resp.status);
+      return await blobToDataUrl(await resp.blob());
+    }
+
+    // http(s): background fetch (cross-origin safe, re-encodes to JPEG)
+    const viaBg = await fetchImageViaBackground(src);
+    if (viaBg && viaBg.ok && viaBg.dataUrl) return viaBg.dataUrl;
+
+    // Same-origin / CORS-enabled images: a direct page fetch also works,
+    // and carries SameSite=Strict cookies the background fetch can't.
+    try {
+      const resp = await fetch(src, { credentials: 'include' });
+      if (resp.ok) {
+        const blob = await resp.blob();
+        if (blob.size > 0) return await blobToDataUrl(blob);
+      }
+    } catch (_) { /* fall through */ }
+
+    // Last resort — canvas. Throws "tainted" for cross-origin images.
     await waitForImageLoaded(img);
-    if (img.src && !img.src.startsWith('data:') && !img.src.startsWith('blob:')) {
-      try {
-        const resp = await fetch(img.src, { credentials: 'include' });
-        if (resp.ok) return await blobToDataUrl(await resp.blob());
-      } catch (_) { /* fall through */ }
-    }
-    if (img.src && img.src.startsWith('blob:')) {
-      try {
-        const resp = await fetch(img.src);
-        if (resp.ok) return await blobToDataUrl(await resp.blob());
-      } catch (_) { /* fall through */ }
-    }
-    // Canvas fallback (may taint if cross-origin)
     const canvas = document.createElement('canvas');
     canvas.width = img.naturalWidth || 800;
     canvas.height = img.naturalHeight || 400;
     canvas.getContext('2d').drawImage(img, 0, 0);
     return canvas.toDataURL('image/jpeg', 0.92);
+  }
+
+  /**
+   * Re-derive the MIME type of a base64 data: URL from its magic bytes.
+   * Wells Fargo serves check images as "data:image/check;base64,…" — a
+   * non-standard type the server (and Claude) won't accept. The bytes are
+   * really PNG/JPEG, so sniff and re-label.
+   */
+  function normalizeDataUrl(dataUrl) {
+    const comma = dataUrl.indexOf(',');
+    if (comma === -1) return dataUrl;
+    const meta = dataUrl.slice(5, comma); // e.g. "image/check;base64"
+    if (!/;base64$/i.test(meta)) return dataUrl; // not base64 — leave alone
+    const b64 = dataUrl.slice(comma + 1);
+    let type = 'image/png';
+    try {
+      const head = atob(b64.slice(0, 24));
+      const c = (i) => head.charCodeAt(i);
+      if (c(0) === 0x89 && c(1) === 0x50 && c(2) === 0x4e && c(3) === 0x47) type = 'image/png';
+      else if (c(0) === 0xff && c(1) === 0xd8) type = 'image/jpeg';
+      else if (head.slice(0, 3) === 'GIF') type = 'image/gif';
+      else if (head.slice(0, 4) === 'RIFF' && head.slice(8, 12) === 'WEBP') type = 'image/webp';
+    } catch (_) { /* keep default */ }
+    return `data:${type};base64,${b64}`;
+  }
+
+  function fetchImageViaBackground(url) {
+    return new Promise((resolve) => {
+      try {
+        chrome.runtime.sendMessage({ type: 'FETCH_IMAGE', url }, (resp) => {
+          if (chrome.runtime.lastError) return resolve(null);
+          resolve(resp || null);
+        });
+      } catch (_) {
+        resolve(null);
+      }
+    });
   }
 
   function blobToDataUrl(blob) {
@@ -213,6 +294,104 @@
       reader.onerror = reject;
       reader.readAsDataURL(blob);
     });
+  }
+
+  /**
+   * Locate the check image for an opened check-view modal.
+   *
+   * A check-view modal contains the check PLUS page chrome (marketing /
+   * lifestyle backgrounds, logos). And the check <img> is often rendered
+   * OUTSIDE the modal element (a portal). So: score every <img>, preferring
+   * the modal but falling back to the whole document; "check"-ish
+   * id/class/data-testid/alt and inline data: URLs win, marketing markers
+   * lose. Polls for lazy loading.
+   *
+   * `previousSrc` guards against a reused <img> element: if the bank swaps
+   * one element's src per check, we must wait until it differs from the
+   * prior check's image rather than capturing a stale one.
+   *
+   * Returns the best <img>, or throws if nothing check-like appeared.
+   */
+  async function findCheckImage(modal, selector, timeoutMs, previousSrc) {
+    const deadline = Date.now() + (timeoutMs || 12000);
+    let lastCount = 0;
+    while (Date.now() < deadline) {
+      let selEl = null;
+      if (selector) {
+        try {
+          const m = modal.querySelector(selector) || document.querySelector(selector);
+          if (m) selEl = m.tagName === 'IMG' ? m : m.querySelector('img');
+        } catch (_) { selEl = null; }
+      }
+
+      // Prefer images inside the modal; if none look like a check, the
+      // check image is probably portalled elsewhere — search the document.
+      let imgs = Array.from(modal.querySelectorAll('img'));
+      let pick = pickBestCheckImage(imgs, selEl);
+      if (!pick.el || pick.score <= 0) {
+        imgs = Array.from(document.querySelectorAll('img'));
+        pick = pickBestCheckImage(imgs, selEl);
+      }
+      lastCount = imgs.length;
+
+      if (pick.el && pick.score > 0) {
+        const src = pick.el.getAttribute('src') || pick.el.currentSrc || '';
+        // Must have loaded, and must not be the previous check's image
+        // still sitting in a reused element.
+        if (src && src !== previousSrc) return pick.el;
+      }
+      await sleep(350);
+    }
+    const e = new Error(`no check image found (searched modal + document, saw ${lastCount} img element(s))`);
+    e.imgCount = lastCount;
+    throw e;
+  }
+
+  function pickBestCheckImage(imgs, selEl) {
+    let best = null;
+    let bestScore = -Infinity;
+    for (const img of imgs) {
+      const s = scoreCheckImage(img, img === selEl);
+      if (s > bestScore) { bestScore = s; best = img; }
+    }
+    return { el: best, score: bestScore };
+  }
+
+  /** One-shot best-effort check-image lookup across the document (no poll). */
+  function quickFindCheckImage() {
+    const pick = pickBestCheckImage(Array.from(document.querySelectorAll('img')), null);
+    return pick.el && pick.score > 0 ? pick.el : null;
+  }
+
+  function scoreCheckImage(img, isSelectorMatch) {
+    const attrText = [
+      img.id, img.className, img.getAttribute('data-testid'),
+      img.getAttribute('alt'), img.getAttribute('name'), img.getAttribute('aria-label'),
+    ].filter(Boolean).join(' ').toLowerCase();
+    const src = (img.getAttribute('src') || img.currentSrc || '').toLowerCase();
+    const haystack = attrText + ' ' + src;
+
+    let score = 0;
+    if (/\bcheck/.test(attrText)) score += 100;        // id=checkImageId, data-testid=…check-image
+    if (/cheque|deposited|item.?image/.test(attrText)) score += 30;
+    if (src.startsWith('data:')) score += 60;          // the check is embedded inline
+    if (isSelectorMatch) score += 40;                  // trained selector pointed here
+
+    // Marketing / page-chrome images — strongly demote
+    if (/lifestyle|background|\bbg[-_]|hero|banner|logo|icon|sprite|avatar|promo/.test(haystack)) score -= 150;
+    if (src.includes('media') || src.includes('/assets/') || src.includes('/static/')) score -= 40;
+
+    // Size — checks are reasonably large; tiny imgs are icons
+    const area = (img.naturalWidth || 0) * (img.naturalHeight || 0);
+    if (area > 0 && area < 4000) score -= 60;
+    score += Math.min(area / 80000, 15);
+
+    // Hidden images (e.g. the non-active side, or preload stubs) — mild demotion
+    let hidden = false;
+    try { hidden = !img.offsetParent && getComputedStyle(img).position !== 'fixed'; } catch (_) {}
+    if (hidden) score -= 25;
+
+    return score;
   }
 
   // ── Probe ──────────────────────────────────────────────────────────────
@@ -237,15 +416,35 @@
   // ── Modal capture (training step) ─────────────────────────────────────
 
   /**
-   * Watch the DOM for a new dialog/modal to appear, then return its
-   * sanitized outerHTML. Times out after 30s.
+   * Watch the DOM for a new dialog/modal to appear, wait for the check
+   * image to load inside it, then return its sanitized outerHTML.
+   *
+   * Waiting for the <img> matters: banks fetch the check image after the
+   * modal renders. If we snapshot too early the LLM can't see the image
+   * element and can't propose a frontImageSelector. Times out after 35s.
    */
   function captureNextModal() {
     const dialogSelectors = '[role="dialog"], [aria-modal="true"], dialog, [class*="modal" i]:not(body):not(html)';
+
+    // Once a modal is found, wait up to 12s for a real <img> to appear
+    // inside it, then snapshot.
+    const snapshotWhenReady = async (dlg) => {
+      const deadline = Date.now() + 12000;
+      while (Date.now() < deadline) {
+        const imgs = Array.from(dlg.querySelectorAll('img')).filter(im => {
+          const src = im.getAttribute('src') || im.currentSrc || '';
+          return src && !src.startsWith('data:image/svg');
+        });
+        if (imgs.length) break;
+        await sleep(400);
+      }
+      return sanitizeForUpload(dlg);
+    };
+
     return new Promise((resolve, reject) => {
       const existing = document.querySelector(dialogSelectors);
       if (existing) {
-        setTimeout(() => resolve(sanitizeForUpload(existing)), 600);
+        snapshotWhenReady(existing).then(resolve, reject);
         return;
       }
       let resolved = false;
@@ -257,9 +456,8 @@
             if (dlg) {
               resolved = true;
               obs.disconnect();
-              // Give the modal contents a moment to populate (esp. images)
-              setTimeout(() => resolve(sanitizeForUpload(dlg)), 1200);
               clearTimeout(timer);
+              snapshotWhenReady(dlg).then(resolve, reject);
               return;
             }
           }
@@ -267,8 +465,8 @@
       });
       obs.observe(document.body, { childList: true, subtree: true });
       const timer = setTimeout(() => {
-        if (!resolved) { obs.disconnect(); reject(new Error('no modal appeared within 30s')); }
-      }, 30000);
+        if (!resolved) { obs.disconnect(); reject(new Error('no modal appeared within 35s')); }
+      }, 35000);
     });
   }
 
@@ -339,36 +537,58 @@
       let error = null;
 
       try {
+        // Make sure the previous check's modal is fully gone — otherwise
+        // waitForElement() below would resolve instantly against a stale one.
+        await waitForElementGone(cm.modalSelector, document, 5000);
+
         const button = row.querySelector(ad.viewCheckButtonSelector);
         if (!button) throw new Error('view-check button not found inside row');
 
-        button.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        await sleep(300);
+        // Note the currently-shown check image (if any) — if the bank reuses
+        // one <img> element, the new check hasn't loaded until src changes.
+        const beforeEl = quickFindCheckImage();
+        const previousSrc = beforeEl ? (beforeEl.getAttribute('src') || beforeEl.currentSrc || '') : null;
+
+        button.scrollIntoView({ block: 'center' });
+        await sleep(250);
         button.click();
 
         const modal = await waitForElement(cm.modalSelector, document, 12000);
-        await sleep(500);
 
-        const frontImg = modal.querySelector(cm.frontImageSelector);
-        if (frontImg) imageFront = await imgToDataUrl(frontImg);
+        // Banks load the check image lazily — poll for it, with fallbacks.
+        const frontImg = await findCheckImage(modal, cm.frontImageSelector, 14000, previousSrc);
+        const frontSrc = frontImg.getAttribute('src') || frontImg.currentSrc || '';
+        imageFront = await imgToDataUrl(frontImg);
 
-        if (cm.backImageSelector) {
-          if (cm.backImageToggleSelector) {
-            const toggle = modal.querySelector(cm.backImageToggleSelector);
-            if (toggle) { toggle.click(); await sleep(700); }
+        // Back image — either a separate <img> or the same one after a toggle.
+        if (cm.backImageToggleSelector) {
+          let toggle = null;
+          try { toggle = modal.querySelector(cm.backImageToggleSelector) || document.querySelector(cm.backImageToggleSelector); } catch {}
+          if (toggle) {
+            toggle.click();
+            await sleep(1000);
+            try {
+              // Pass frontSrc so we wait for the image to flip to the back.
+              const backImg = await findCheckImage(modal, cm.backImageSelector, 6000, frontSrc);
+              imageBack = await imgToDataUrl(backImg);
+            } catch { /* back image optional */ }
           }
-          const backImg = modal.querySelector(cm.backImageSelector);
-          if (backImg) imageBack = await imgToDataUrl(backImg);
+        } else if (cm.backImageSelector) {
+          try {
+            let backEl = modal.querySelector(cm.backImageSelector) || document.querySelector(cm.backImageSelector);
+            if (backEl && backEl.tagName !== 'IMG') backEl = backEl.querySelector('img');
+            if (backEl && backEl !== frontImg) imageBack = await imgToDataUrl(backEl);
+          } catch { /* back image optional */ }
         }
       } catch (e) {
         error = e.message;
       } finally {
         // Close modal
         if (cm.closeSelector) {
-          try { document.querySelector(cm.closeSelector)?.click(); } catch {}
+          try { (document.querySelector(cm.closeSelector))?.click(); } catch {}
         }
         document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
-        await sleep(900);
+        await sleep(700);
       }
 
       const cap = { ...meta, imageFront, imageBack, error };

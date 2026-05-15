@@ -43,6 +43,36 @@ function broadcastUploadResult(ok, checkNumber, error, id) {
   }).catch(() => { /* no popup open — ignore */ });
 }
 
+// ── Cross-origin image fetch + JPEG normalization ─────────────────────────
+
+/**
+ * Re-encode arbitrary image bytes to a JPEG data URL. The bitmap is built
+ * from a same-origin Blob, so the OffscreenCanvas is never tainted. Falls
+ * back to passing the original bytes through if the format can't be decoded.
+ */
+async function normalizeToJpegDataUrl(blob) {
+  try {
+    const bitmap = await createImageBitmap(blob);
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    canvas.getContext('2d').drawImage(bitmap, 0, 0);
+    if (bitmap.close) bitmap.close();
+    const jpeg = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.92 });
+    return await blobToBase64DataUrl(jpeg);
+  } catch (_) {
+    return await blobToBase64DataUrl(blob);
+  }
+}
+
+async function blobToBase64DataUrl(blob) {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let bin = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  return `data:${blob.type || 'image/jpeg'};base64,${btoa(bin)}`;
+}
+
 // ── Message router ────────────────────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -57,6 +87,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       } else if (msg.type === 'FETCH_ACCOUNTS') {
         const r = await apiFetch('/api/extension/v1/accounts', { method: 'GET' });
         sendResponse({ ok: true, accounts: r.accounts || [] });
+      } else if (msg.type === 'FETCH_IMAGE') {
+        try {
+          const resp = await fetch(msg.url, { credentials: 'include' });
+          if (!resp.ok) {
+            sendResponse({ ok: false, error: `image fetch HTTP ${resp.status}` });
+            return;
+          }
+          const blob = await resp.blob();
+          if (!blob || blob.size === 0) {
+            sendResponse({ ok: false, error: 'empty image response' });
+            return;
+          }
+          const dataUrl = await normalizeToJpegDataUrl(blob);
+          sendResponse({ ok: true, dataUrl });
+        } catch (imgErr) {
+          sendResponse({ ok: false, error: `image fetch failed: ${imgErr.message || imgErr}` });
+        }
       } else if (msg.type === 'ANALYZE_PAGE') {
         const r = await apiFetch('/api/extension/v1/analyze-page', {
           method: 'POST',
