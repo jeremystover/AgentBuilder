@@ -76,9 +76,20 @@ https://www.googleapis.com/auth/spreadsheets
 https://www.googleapis.com/auth/drive.file
 ```
 
-Token seeding currently rides on the chief-of-staff OAuth flow with
-`agent_id` rewritten to `cfo`. A dedicated `/auth/google/*` route inside
-this worker is a future task.
+**Bootstrap steps (one-time per environment):**
+
+1. Register `https://<worker-url>/oauth/google/callback` as an authorized
+   redirect URI in your Google Cloud OAuth 2.0 client.
+2. Visit `https://<worker-url>/oauth/google/start?user_id=default` in a
+   browser and grant consent.
+3. The callback stores the encrypted token in the `cfo-tokens` D1. Gmail
+   sync and Sheets reporting will work immediately.
+
+To confirm the row was written:
+```bash
+wrangler d1 execute cfo-tokens --remote \
+  --command "SELECT agent_id, user_id, scopes FROM google_tokens"
+```
 
 ## 6. Verify
 
