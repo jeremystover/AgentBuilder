@@ -19,7 +19,9 @@ import { handleSpendingReport } from './routes/spending';
 import { handleListPlans, handleForecastPlan } from './routes/planning';
 import { handleListAccounts } from './routes/web-lookups';
 import { handleListRules, handleCreateRule } from './routes/web-rules';
-import { handleGatherSync } from './routes/web-gather';
+import { runTellerSync } from './routes/teller';
+import { runEmailSync } from './lib/email-sync';
+import type { VendorHint } from './lib/email-matchers/match';
 import { handleListReportConfigs, handleGenerateReport } from './routes/reports';
 import { db } from './lib/db';
 
@@ -501,13 +503,18 @@ async function syncRun(args: Record<string, unknown>, env: Env): Promise<string>
   for (const s of targets) {
     const source = typeof s === 'string' ? s : '';
     if (!source) continue;
-    const mapped =
-      source === 'teller' ? 'teller'
-      : source.startsWith('email_') ? `email:${source.slice('email_'.length)}`
-      : source;
-    const resp = await handleGatherSync(getReq(`https://cfo.invalid/api/web/gather/sync/${mapped}`), env, mapped);
-    try { results.push({ source, result: await resp.clone().json() }); }
-    catch { results.push({ source, result: await resp.clone().text() }); }
+    try {
+      if (source === 'teller') {
+        const out = await runTellerSync(env);
+        results.push({ source, result: out });
+      } else if (source.startsWith('email_')) {
+        const vendor = source.slice('email_'.length) as VendorHint;
+        const out = await runEmailSync(env, [vendor]);
+        results.push({ source, result: out });
+      }
+    } catch (err) {
+      results.push({ source, result: { error: err instanceof Error ? err.message : String(err) } });
+    }
   }
   return JSON.stringify({ syncs: results });
 }
