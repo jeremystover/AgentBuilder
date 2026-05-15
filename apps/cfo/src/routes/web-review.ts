@@ -82,14 +82,14 @@ export async function handleListReview(req: Request, env: Env): Promise<Response
         entity_id: string | null; category_id: string | null; category_slug: string | null;
         classification_method: string | null; ai_confidence: string | null; ai_notes: string | null;
         human_notes: string | null; is_transfer: boolean; is_reimbursable: boolean;
-        status: string; waiting_for: string | null; supplement_json: unknown;
+        expense_flag: string | null; status: string; waiting_for: string | null; supplement_json: unknown;
       }>>`
         SELECT
           r.id, to_char(r.date, 'YYYY-MM-DD') AS date, r.amount::text AS amount, r.description, r.merchant,
           r.account_id, a.name AS account_name, a.type AS account_type,
           r.entity_id, r.category_id, c.slug AS category_slug,
           r.classification_method, r.ai_confidence::text AS ai_confidence, r.ai_notes,
-          r.human_notes, r.is_transfer, r.is_reimbursable,
+          r.human_notes, r.is_transfer, r.is_reimbursable, r.expense_flag,
           r.status, r.waiting_for, r.supplement_json
         FROM raw_transactions r
         LEFT JOIN gather_accounts a ON a.id = r.account_id
@@ -124,7 +124,7 @@ export async function handleGetReview(_req: Request, env: Env, id: string): Prom
         r.account_id, a.name AS account_name, a.type AS account_type,
         r.entity_id, r.category_id, c.slug AS category_slug,
         r.classification_method, r.ai_confidence::text AS ai_confidence, r.ai_notes,
-        r.human_notes, r.is_transfer, r.is_reimbursable,
+        r.human_notes, r.is_transfer, r.is_reimbursable, r.expense_flag,
         r.status, r.waiting_for, r.supplement_json
       FROM raw_transactions r
       LEFT JOIN gather_accounts a ON a.id = r.account_id
@@ -153,6 +153,7 @@ interface UpdateBody {
   human_notes?: string | null;
   is_transfer?: boolean;
   is_reimbursable?: boolean;
+  expense_flag?: 'cut' | 'one_time' | null;
 }
 
 export async function handleUpdateReview(req: Request, env: Env, id: string): Promise<Response> {
@@ -172,6 +173,7 @@ export async function handleUpdateReview(req: Request, env: Env, id: string): Pr
     if ('human_notes' in body) await sql`UPDATE raw_transactions SET human_notes = ${body.human_notes ?? null} WHERE id = ${id}`;
     if ('is_transfer' in body) await sql`UPDATE raw_transactions SET is_transfer = ${body.is_transfer ?? false} WHERE id = ${id}`;
     if ('is_reimbursable' in body) await sql`UPDATE raw_transactions SET is_reimbursable = ${body.is_reimbursable ?? false} WHERE id = ${id}`;
+    if ('expense_flag' in body) await sql`UPDATE raw_transactions SET expense_flag = ${body.expense_flag ?? null} WHERE id = ${id}`;
     return jsonOk({ ok: true });
   } catch (err) {
     return jsonError(`update review failed: ${String(err)}`, 500);
@@ -200,23 +202,28 @@ interface ApproveResult {
 
 async function approveOne(sql: Sql, id: string): Promise<ApproveResult | null> {
   // Read the raw row, INSERT into transactions, mark raw 'processed' and null its raw_payload.
+  // COALESCE entity_id with the account's entity so implicit entity from account is preserved.
   const inserted = await sql<Array<{ transaction_id: string; raw_id: string }>>`
     WITH src AS (
-      SELECT id, account_id, date, amount, description, merchant,
-             entity_id, category_id, classification_method,
-             ai_confidence, ai_notes, human_notes, is_transfer, is_reimbursable
-      FROM raw_transactions WHERE id = ${id}
+      SELECT r.id, r.account_id, r.date, r.amount, r.description, r.merchant,
+             COALESCE(r.entity_id, a.entity_id) AS entity_id,
+             r.category_id, r.classification_method,
+             r.ai_confidence, r.ai_notes, r.human_notes,
+             r.is_transfer, r.is_reimbursable, r.expense_flag
+      FROM raw_transactions r
+      LEFT JOIN gather_accounts a ON a.id = r.account_id
+      WHERE r.id = ${id}
     ),
     ins AS (
       INSERT INTO transactions
         (raw_id, account_id, date, amount, description, merchant,
          entity_id, category_id, classification_method,
          ai_confidence, ai_notes, human_notes,
-         is_transfer, is_reimbursable, status, approved_at)
+         is_transfer, is_reimbursable, expense_flag, status, approved_at)
       SELECT id, account_id, date, amount, description, merchant,
              entity_id, category_id, classification_method,
              ai_confidence, ai_notes, human_notes,
-             is_transfer, is_reimbursable, 'approved', now()
+             is_transfer, is_reimbursable, expense_flag, 'approved', now()
       FROM src
       RETURNING id AS transaction_id, raw_id
     ),
