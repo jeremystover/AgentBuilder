@@ -47,6 +47,8 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
     steps:
       - uses: actions/checkout@v4
 
@@ -76,10 +78,10 @@ jobs:
           command: d1 migrations apply ${{ inputs.d1_database }} --remote
 
       - name: Apply Neon migrations
-        if: inputs.neon_migrations == true
+        if: inputs.neon_migrations == true && env.NEON_DATABASE_URL != ''
         working-directory: apps/${{ inputs.agent_id }}
         env:
-          DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+          DATABASE_URL: ${{ env.NEON_DATABASE_URL }}
         run: pnpm run migrate
 
       - name: Deploy Worker
