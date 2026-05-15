@@ -54,6 +54,22 @@
     });
   }
 
+  /** Resolve once `selector` no longer matches inside root (or timeout). */
+  function waitForElementGone(selector, root, timeoutMs) {
+    root = root || document;
+    timeoutMs = timeoutMs || 6000;
+    return new Promise((resolve) => {
+      if (!root.querySelector(selector)) return resolve();
+      const obs = new MutationObserver(() => {
+        if (!root.querySelector(selector)) { obs.disconnect(); clearTimeout(timer); resolve(); }
+      });
+      const target = root.nodeType === Node.DOCUMENT_NODE ? root.body || root : root;
+      obs.observe(target, { childList: true, subtree: true });
+      const timer = setTimeout(() => { obs.disconnect(); resolve(); }, timeoutMs);
+    });
+  }
+
+
   function waitForImageLoaded(img, timeoutMs) {
     timeoutMs = timeoutMs || 10000;
     if (img.complete && img.naturalWidth > 0) return Promise.resolve(img);
@@ -215,6 +231,47 @@
     });
   }
 
+  /**
+   * Locate the check image inside an opened modal. Robust against:
+   *   - lazy loading (banks fetch the image after the modal renders) — polls
+   *   - selector scoping mistakes (LLM bakes the modal into the path) — tries
+   *     the selector scoped to the modal AND to the whole document
+   *   - a wrong/empty selector — falls back to the largest <img> in the modal,
+   *     which in a check-view dialog is the check itself
+   *
+   * Returns the <img> element, or null if nothing usable appeared in time.
+   */
+  async function findCheckImage(modal, selector, timeoutMs) {
+    const deadline = Date.now() + (timeoutMs || 12000);
+    let lastImgCount = 0;
+    while (Date.now() < deadline) {
+      // 1. Honor the trained selector (modal-scoped, then document-scoped)
+      if (selector) {
+        let el = null;
+        try { el = modal.querySelector(selector) || document.querySelector(selector); } catch { el = null; }
+        if (el && el.tagName === 'IMG' && (el.getAttribute('src') || el.currentSrc)) return el;
+        if (el && el.tagName !== 'IMG') {
+          const nested = el.querySelector('img');
+          if (nested) return nested;
+        }
+      }
+      // 2. Fallback: largest <img> in the modal that has a real source
+      const imgs = Array.from(modal.querySelectorAll('img')).filter(im => {
+        const src = im.getAttribute('src') || im.currentSrc || '';
+        return src && !src.startsWith('data:image/svg');
+      });
+      lastImgCount = imgs.length;
+      if (imgs.length) {
+        imgs.sort((a, b) => (b.naturalWidth * b.naturalHeight) - (a.naturalWidth * a.naturalHeight));
+        return imgs[0];
+      }
+      await sleep(350);
+    }
+    const e = new Error(`no <img> appeared in the modal (last saw ${lastImgCount})`);
+    e.imgCount = lastImgCount;
+    throw e;
+  }
+
   // ── Probe ──────────────────────────────────────────────────────────────
 
   function probe(recipe) {
@@ -237,15 +294,35 @@
   // ── Modal capture (training step) ─────────────────────────────────────
 
   /**
-   * Watch the DOM for a new dialog/modal to appear, then return its
-   * sanitized outerHTML. Times out after 30s.
+   * Watch the DOM for a new dialog/modal to appear, wait for the check
+   * image to load inside it, then return its sanitized outerHTML.
+   *
+   * Waiting for the <img> matters: banks fetch the check image after the
+   * modal renders. If we snapshot too early the LLM can't see the image
+   * element and can't propose a frontImageSelector. Times out after 35s.
    */
   function captureNextModal() {
     const dialogSelectors = '[role="dialog"], [aria-modal="true"], dialog, [class*="modal" i]:not(body):not(html)';
+
+    // Once a modal is found, wait up to 12s for a real <img> to appear
+    // inside it, then snapshot.
+    const snapshotWhenReady = async (dlg) => {
+      const deadline = Date.now() + 12000;
+      while (Date.now() < deadline) {
+        const imgs = Array.from(dlg.querySelectorAll('img')).filter(im => {
+          const src = im.getAttribute('src') || im.currentSrc || '';
+          return src && !src.startsWith('data:image/svg');
+        });
+        if (imgs.length) break;
+        await sleep(400);
+      }
+      return sanitizeForUpload(dlg);
+    };
+
     return new Promise((resolve, reject) => {
       const existing = document.querySelector(dialogSelectors);
       if (existing) {
-        setTimeout(() => resolve(sanitizeForUpload(existing)), 600);
+        snapshotWhenReady(existing).then(resolve, reject);
         return;
       }
       let resolved = false;
@@ -257,9 +334,8 @@
             if (dlg) {
               resolved = true;
               obs.disconnect();
-              // Give the modal contents a moment to populate (esp. images)
-              setTimeout(() => resolve(sanitizeForUpload(dlg)), 1200);
               clearTimeout(timer);
+              snapshotWhenReady(dlg).then(resolve, reject);
               return;
             }
           }
@@ -267,8 +343,8 @@
       });
       obs.observe(document.body, { childList: true, subtree: true });
       const timer = setTimeout(() => {
-        if (!resolved) { obs.disconnect(); reject(new Error('no modal appeared within 30s')); }
-      }, 30000);
+        if (!resolved) { obs.disconnect(); reject(new Error('no modal appeared within 35s')); }
+      }, 35000);
     });
   }
 
@@ -339,36 +415,51 @@
       let error = null;
 
       try {
+        // Make sure the previous check's modal is fully gone — otherwise
+        // waitForElement() below would resolve instantly against a stale one.
+        await waitForElementGone(cm.modalSelector, document, 5000);
+
         const button = row.querySelector(ad.viewCheckButtonSelector);
         if (!button) throw new Error('view-check button not found inside row');
 
-        button.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        await sleep(300);
+        button.scrollIntoView({ block: 'center' });
+        await sleep(250);
         button.click();
 
         const modal = await waitForElement(cm.modalSelector, document, 12000);
-        await sleep(500);
 
-        const frontImg = modal.querySelector(cm.frontImageSelector);
-        if (frontImg) imageFront = await imgToDataUrl(frontImg);
+        // Banks load the check image lazily — poll for it, with fallbacks.
+        const frontImg = await findCheckImage(modal, cm.frontImageSelector, 14000);
+        imageFront = await imgToDataUrl(frontImg);
 
-        if (cm.backImageSelector) {
-          if (cm.backImageToggleSelector) {
-            const toggle = modal.querySelector(cm.backImageToggleSelector);
-            if (toggle) { toggle.click(); await sleep(700); }
+        // Back image — either a separate <img> or the same one after a toggle.
+        if (cm.backImageToggleSelector) {
+          let toggle = null;
+          try { toggle = modal.querySelector(cm.backImageToggleSelector) || document.querySelector(cm.backImageToggleSelector); } catch {}
+          if (toggle) {
+            toggle.click();
+            await sleep(1000);
+            try {
+              const backImg = await findCheckImage(modal, cm.backImageSelector, 6000);
+              imageBack = await imgToDataUrl(backImg);
+            } catch { /* back image optional */ }
           }
-          const backImg = modal.querySelector(cm.backImageSelector);
-          if (backImg) imageBack = await imgToDataUrl(backImg);
+        } else if (cm.backImageSelector) {
+          try {
+            let backEl = modal.querySelector(cm.backImageSelector) || document.querySelector(cm.backImageSelector);
+            if (backEl && backEl.tagName !== 'IMG') backEl = backEl.querySelector('img');
+            if (backEl && backEl !== frontImg) imageBack = await imgToDataUrl(backEl);
+          } catch { /* back image optional */ }
         }
       } catch (e) {
         error = e.message;
       } finally {
         // Close modal
         if (cm.closeSelector) {
-          try { document.querySelector(cm.closeSelector)?.click(); } catch {}
+          try { (document.querySelector(cm.closeSelector))?.click(); } catch {}
         }
         document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
-        await sleep(900);
+        await sleep(700);
       }
 
       const cap = { ...meta, imageFront, imageBack, error };
