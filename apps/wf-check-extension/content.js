@@ -215,8 +215,9 @@
     const src = img.currentSrc || img.src || '';
     if (!src) throw new Error('image element has no src');
 
-    // Already inline
-    if (src.startsWith('data:')) return src;
+    // Already inline. Banks sometimes use a bogus MIME ("data:image/check")
+    // — re-derive the real type from the bytes so the server accepts it.
+    if (src.startsWith('data:')) return normalizeDataUrl(src);
 
     // blob: URLs only resolve in the page context — the background can't
     // read them, so the content script must.
@@ -249,6 +250,30 @@
     return canvas.toDataURL('image/jpeg', 0.92);
   }
 
+  /**
+   * Re-derive the MIME type of a base64 data: URL from its magic bytes.
+   * Wells Fargo serves check images as "data:image/check;base64,…" — a
+   * non-standard type the server (and Claude) won't accept. The bytes are
+   * really PNG/JPEG, so sniff and re-label.
+   */
+  function normalizeDataUrl(dataUrl) {
+    const comma = dataUrl.indexOf(',');
+    if (comma === -1) return dataUrl;
+    const meta = dataUrl.slice(5, comma); // e.g. "image/check;base64"
+    if (!/;base64$/i.test(meta)) return dataUrl; // not base64 — leave alone
+    const b64 = dataUrl.slice(comma + 1);
+    let type = 'image/png';
+    try {
+      const head = atob(b64.slice(0, 24));
+      const c = (i) => head.charCodeAt(i);
+      if (c(0) === 0x89 && c(1) === 0x50 && c(2) === 0x4e && c(3) === 0x47) type = 'image/png';
+      else if (c(0) === 0xff && c(1) === 0xd8) type = 'image/jpeg';
+      else if (head.slice(0, 3) === 'GIF') type = 'image/gif';
+      else if (head.slice(0, 4) === 'RIFF' && head.slice(8, 12) === 'WEBP') type = 'image/webp';
+    } catch (_) { /* keep default */ }
+    return `data:${type};base64,${b64}`;
+  }
+
   function fetchImageViaBackground(url) {
     return new Promise((resolve) => {
       try {
@@ -272,44 +297,79 @@
   }
 
   /**
-   * Locate the check image inside an opened modal. Robust against:
-   *   - lazy loading (banks fetch the image after the modal renders) — polls
-   *   - selector scoping mistakes (LLM bakes the modal into the path) — tries
-   *     the selector scoped to the modal AND to the whole document
-   *   - a wrong/empty selector — falls back to the largest <img> in the modal,
-   *     which in a check-view dialog is the check itself
+   * Locate the check image inside an opened modal.
    *
-   * Returns the <img> element, or null if nothing usable appeared in time.
+   * A check-view modal contains the check itself PLUS page chrome
+   * (marketing/lifestyle background images, logos). Picking "the largest
+   * <img>" grabs the wrong one. Instead, score every <img>:
+   *   - big positive for "check"-ish id/class/data-testid/alt
+   *   - positive for an inline data: URL (the check is embedded; chrome is
+   *     loaded from a CDN)
+   *   - the trained selector contributes a bonus, not an automatic win
+   *   - strong negative for marketing/chrome markers
+   * Polls because banks load the check image lazily.
+   *
+   * Returns the best <img>, or throws if nothing check-like appeared.
    */
   async function findCheckImage(modal, selector, timeoutMs) {
     const deadline = Date.now() + (timeoutMs || 12000);
-    let lastImgCount = 0;
+    let lastCount = 0;
     while (Date.now() < deadline) {
-      // 1. Honor the trained selector (modal-scoped, then document-scoped)
+      let selEl = null;
       if (selector) {
-        let el = null;
-        try { el = modal.querySelector(selector) || document.querySelector(selector); } catch { el = null; }
-        if (el && el.tagName === 'IMG' && (el.getAttribute('src') || el.currentSrc)) return el;
-        if (el && el.tagName !== 'IMG') {
-          const nested = el.querySelector('img');
-          if (nested) return nested;
-        }
+        try {
+          const m = modal.querySelector(selector) || document.querySelector(selector);
+          if (m) selEl = m.tagName === 'IMG' ? m : m.querySelector('img');
+        } catch (_) { selEl = null; }
       }
-      // 2. Fallback: largest <img> in the modal that has a real source
-      const imgs = Array.from(modal.querySelectorAll('img')).filter(im => {
-        const src = im.getAttribute('src') || im.currentSrc || '';
-        return src && !src.startsWith('data:image/svg');
-      });
-      lastImgCount = imgs.length;
-      if (imgs.length) {
-        imgs.sort((a, b) => (b.naturalWidth * b.naturalHeight) - (a.naturalWidth * a.naturalHeight));
-        return imgs[0];
+
+      const imgs = Array.from(modal.querySelectorAll('img'));
+      lastCount = imgs.length;
+
+      let best = null;
+      let bestScore = -Infinity;
+      for (const img of imgs) {
+        const s = scoreCheckImage(img, img === selEl);
+        if (s > bestScore) { bestScore = s; best = img; }
       }
+      // A positive score means it actually looks like a check, not chrome.
+      if (best && bestScore > 0) return best;
       await sleep(350);
     }
-    const e = new Error(`no <img> appeared in the modal (last saw ${lastImgCount})`);
-    e.imgCount = lastImgCount;
+    const e = new Error(`no check image found in modal (saw ${lastCount} img element(s))`);
+    e.imgCount = lastCount;
     throw e;
+  }
+
+  function scoreCheckImage(img, isSelectorMatch) {
+    const attrText = [
+      img.id, img.className, img.getAttribute('data-testid'),
+      img.getAttribute('alt'), img.getAttribute('name'), img.getAttribute('aria-label'),
+    ].filter(Boolean).join(' ').toLowerCase();
+    const src = (img.getAttribute('src') || img.currentSrc || '').toLowerCase();
+    const haystack = attrText + ' ' + src;
+
+    let score = 0;
+    if (/\bcheck/.test(attrText)) score += 100;        // id=checkImageId, data-testid=…check-image
+    if (/cheque|deposited|item.?image/.test(attrText)) score += 30;
+    if (src.startsWith('data:')) score += 60;          // the check is embedded inline
+    if (isSelectorMatch) score += 40;                  // trained selector pointed here
+
+    // Marketing / page-chrome images — strongly demote
+    if (/lifestyle|background|\bbg[-_]|hero|banner|logo|icon|sprite|avatar|promo/.test(haystack)) score -= 150;
+    if (src.includes('media') || src.includes('/assets/') || src.includes('/static/')) score -= 40;
+
+    // Size — checks are reasonably large; tiny imgs are icons
+    const area = (img.naturalWidth || 0) * (img.naturalHeight || 0);
+    if (area > 0 && area < 4000) score -= 60;
+    score += Math.min(area / 80000, 15);
+
+    // Hidden images (e.g. the non-active side, or preload stubs) — mild demotion
+    let hidden = false;
+    try { hidden = !img.offsetParent && getComputedStyle(img).position !== 'fixed'; } catch (_) {}
+    if (hidden) score -= 25;
+
+    return score;
   }
 
   // ── Probe ──────────────────────────────────────────────────────────────
