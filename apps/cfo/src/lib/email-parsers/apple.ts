@@ -1,5 +1,8 @@
 /**
  * Apple receipt email parser. Adapted from the legacy CFO apple-email.ts.
+ * Handles both direct and forwarded receipts — when forwarded, the email
+ * `internalDate` is the forward time so we prefer dates extracted from
+ * the body when available.
  */
 
 import type { GmailMessage } from '../gmail';
@@ -10,6 +13,7 @@ export interface AppleContext {
   total_amount: number;
   items: Array<{ name: string; price: number }>;
   date: string;
+  date_is_from_body: boolean;
 }
 
 const RECEIPT_ID_RE = /\bM\d{9,}\b/;
@@ -73,6 +77,21 @@ function extractItemsFromHtml(html: string): Array<{ name: string; price: number
   return items;
 }
 
+function extractDateFromBody(text: string): string | null {
+  const months = 'Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?';
+  const mdy = new RegExp(`(${months})\\s+(\\d{1,2})(?:st|nd|rd|th)?,?\\s+(20\\d{2})`, 'i');
+  const iso = /\b(20\d{2})-(0[1-9]|1[0-2])-([0-2]\d|3[01])\b/;
+
+  const mdyMatch = text.match(mdy);
+  if (mdyMatch) {
+    const d = new Date(`${mdyMatch[1]} ${mdyMatch[2]}, ${mdyMatch[3]}`);
+    if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+  }
+  const isoMatch = text.match(iso);
+  if (isoMatch) return isoMatch[0];
+  return null;
+}
+
 function extractItemsFromText(text: string): Array<{ name: string; price: number }> {
   const items: Array<{ name: string; price: number }> = [];
   for (const line of text.split('\n')) {
@@ -90,10 +109,8 @@ function extractItemsFromText(text: string): Array<{ name: string; price: number
 
 export function parseAppleEmail(message: GmailMessage): AppleContext | null {
   try {
-    const from = getHeader(message, 'from');
-    if (!/no_reply@email\.apple\.com/i.test(from)) return null;
     const subject = getHeader(message, 'subject');
-    if (!/receipt/i.test(subject)) return null;
+    if (!/receipt from apple/i.test(subject)) return null;
 
     const { text, html } = getMessageBody(message);
     const bodyText = text || stripHtml(html);
@@ -109,11 +126,14 @@ export function parseAppleEmail(message: GmailMessage): AppleContext | null {
     const fromHtml = html ? extractItemsFromHtml(html) : [];
     const items = fromHtml.length > 0 ? fromHtml : extractItemsFromText(bodyText);
 
+    const bodyDate = extractDateFromBody(bodyText);
+
     return {
       receipt_id: receiptId,
       total_amount: totalAmount,
       items,
-      date: epochToIsoDate(message.internalDate),
+      date: bodyDate ?? epochToIsoDate(message.internalDate),
+      date_is_from_body: bodyDate !== null,
     };
   } catch (err) {
     console.warn('[apple-parser] failed:', err);

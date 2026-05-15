@@ -30,8 +30,8 @@ export const VENDORS: readonly VendorHint[] = ['amazon', 'venmo', 'apple', 'etsy
 const SEARCH_QUERIES: Record<VendorHint, string> = {
   amazon: 'from:(auto-confirm@amazon.com OR ship-confirm@amazon.com OR shipment-tracking@amazon.com OR order-update@amazon.com) subject:"Your Amazon.com order" newer_than:90d',
   venmo:  'from:venmo@venmo.com newer_than:90d',
-  apple:  'from:no_reply@email.apple.com subject:"Your receipt from Apple" newer_than:90d',
-  etsy:   '(from:transaction@etsy.com OR from:support@etsy.com OR subject:"Etsy receipt" OR subject:"you just bought") newer_than:90d',
+  apple:  'subject:"receipt from Apple" newer_than:90d',
+  etsy:   '(from:(transaction@etsy.com OR support@etsy.com) OR subject:etsy) newer_than:90d',
 };
 
 const SOURCE_FOR_VENDOR: Record<VendorHint, 'email_amazon' | 'email_venmo' | 'email_apple' | 'email_etsy'> = {
@@ -210,7 +210,10 @@ function windowDaysFor(vendor: VendorHint, context: VendorContext): { back: numb
     const c = context as EtsyContext;
     return c.date_is_from_body ? { back: 2, forward: 5 } : { back: 60, forward: 5 };
   }
-  if (vendor === 'apple') return { back: 2, forward: 5 };
+  if (vendor === 'apple') {
+    const c = context as AppleContext;
+    return c.date_is_from_body ? { back: 2, forward: 5 } : { back: 60, forward: 5 };
+  }
   return { back: 2, forward: 2 }; // venmo
 }
 
