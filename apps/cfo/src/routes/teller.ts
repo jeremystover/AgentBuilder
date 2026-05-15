@@ -174,7 +174,11 @@ export interface RunTellerSyncResult {
   reconnect_required: ReconnectRequiredError[];
 }
 
-export async function runTellerSync(env: Env, opts: RunTellerSyncOpts = {}): Promise<RunTellerSyncResult> {
+export async function runTellerSync(
+  env: Env,
+  opts: RunTellerSyncOpts = {},
+  onProgress?: (event: object) => void,
+): Promise<RunTellerSyncResult> {
   const accountIdsFilter = new Set(opts.account_ids ?? []);
   const days = opts.days ?? DEFAULT_SYNC_WINDOW_DAYS;
   const endDate = new Date().toISOString().slice(0, 10);
@@ -192,9 +196,18 @@ export async function runTellerSync(env: Env, opts: RunTellerSyncOpts = {}): Pro
       institution_name: string | null;
     }>>`SELECT id, enrollment_id, access_token, institution_name FROM teller_enrollments`;
 
+    // Pre-count total accounts for progress reporting
+    const countRows = await sql<Array<{ c: string }>>`
+      SELECT COUNT(*) AS c FROM gather_accounts
+      WHERE is_active = true AND teller_account_id IS NOT NULL
+    `;
+    const total = Number(countRows[0]?.c ?? 0);
+    onProgress?.({ type: 'start', total });
+
+    let accountIdx = 0;
     for (const enr of enrollments) {
-      const accounts = await sql<Array<{ id: string; teller_account_id: string | null }>>`
-        SELECT id, teller_account_id
+      const accounts = await sql<Array<{ id: string; teller_account_id: string | null; name: string }>>`
+        SELECT id, teller_account_id, name
         FROM gather_accounts
         WHERE teller_enrollment_id = ${enr.enrollment_id}
           AND is_active = true
@@ -205,6 +218,9 @@ export async function runTellerSync(env: Env, opts: RunTellerSyncOpts = {}): Pro
         if (!acct.teller_account_id) continue;
         if (accountIdsFilter.size > 0 && !accountIdsFilter.has(acct.id)) continue;
 
+        const idx = accountIdx++;
+        onProgress?.({ type: 'account_start', index: idx, total, institution: enr.institution_name, name: acct.name });
+
         const syncId = await startSyncLog(sql, acct.id);
         try {
           const txs = await listTransactions(env, enr.access_token, acct.teller_account_id, {
@@ -214,6 +230,7 @@ export async function runTellerSync(env: Env, opts: RunTellerSyncOpts = {}): Pro
           const { found, added } = await ingestTellerTransactions(sql, acct.id, txs);
           await completeSyncLog(sql, syncId, found, added);
           await sql`UPDATE gather_accounts SET last_synced_at = now() WHERE id = ${acct.id}`;
+          onProgress?.({ type: 'account_ok', index: idx, total, institution: enr.institution_name, name: acct.name, found, added });
           results.push({
             enrollment_id: enr.enrollment_id,
             institution_name: enr.institution_name,
@@ -222,6 +239,15 @@ export async function runTellerSync(env: Env, opts: RunTellerSyncOpts = {}): Pro
           });
         } catch (err) {
           await failSyncLog(sql, syncId, String(err));
+          onProgress?.({
+            type: 'account_err',
+            index: idx,
+            total,
+            institution: enr.institution_name,
+            name: acct.name,
+            message: err instanceof Error ? err.message : String(err),
+            stack: err instanceof Error ? err.stack : undefined,
+          });
           if (isDisconnected(err)) {
             reconnectRequired.push({
               kind: 'reconnect_required',
