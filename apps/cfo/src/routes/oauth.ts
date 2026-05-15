@@ -51,7 +51,7 @@ export async function handleOAuthStart(request: Request, env: Env): Promise<Resp
       include_granted_scopes: 'true',
       state,
     });
-    return Response.redirect(`${AUTHORIZE_URL}?${params}`, 302);
+    return new Response(null, { status: 302, headers: { location: `${AUTHORIZE_URL}?${params}` } });
   } catch (err) {
     return text(`Failed to build OAuth URL: ${err instanceof Error ? err.message : String(err)}`, 500);
   }
