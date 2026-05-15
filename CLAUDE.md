@@ -66,15 +66,8 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 After completing any change that should go live:
 
 1. Commit and push to the current branch (or main for small fixes)
-2. Run `wrangler deploy` directly — do not wait for a PR merge to trigger deploy
+2. Create a PR and merge with main to trigger deploy
 3. Confirm deploy succeeded before reporting back
-
-For small fixes and single-commit changes: push directly to main.
-For multi-commit phases: use a branch, but still run `wrangler deploy` 
-immediately after pushing — don't open a PR and wait.
-
-PRs are for code review only, not for triggering deploys. Deploy is 
-always `wrangler deploy` run locally.
 
 ---
 
