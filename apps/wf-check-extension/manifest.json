@@ -1,29 +1,22 @@
 {
   "manifest_version": 3,
-  "name": "WF Check Extractor",
-  "version": "1.0.0",
-  "description": "Extract check images from Wells Fargo online banking and upload payee info to the CFO agent.",
+  "name": "Bank Check Extractor",
+  "version": "2.0.0",
+  "description": "Train-once, replay-many Chrome extension that captures check images from your bank and uploads them to your CFO agent for vision OCR, payee extraction, and transaction matching.",
   "permissions": [
     "activeTab",
+    "scripting",
     "storage",
     "tabs"
   ],
   "host_permissions": [
-    "*://connect.secure.wellsfargo.com/*",
     "<all_urls>"
   ],
   "background": {
     "service_worker": "background.js"
   },
-  "content_scripts": [
-    {
-      "matches": ["*://connect.secure.wellsfargo.com/accounts/start*"],
-      "js": ["content.js"],
-      "run_at": "document_idle"
-    }
-  ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "WF Check Extractor"
+    "default_title": "Bank Check Extractor"
   }
 }

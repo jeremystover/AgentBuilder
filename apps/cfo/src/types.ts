@@ -5,8 +5,9 @@ export interface Env {
   // Storage
   STORAGE: R2Bucket;
 
-  // Queue
+  // Queues
   SCENARIO_QUEUE: Queue;
+  CHECK_QUEUE: Queue;
 
   // Assets (SPA)
   ASSETS: Fetcher;

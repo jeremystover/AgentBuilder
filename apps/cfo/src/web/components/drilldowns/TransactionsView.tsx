@@ -6,6 +6,7 @@ import {
 } from "../ui";
 import { txAmountColor } from "../../utils/txColor";
 import { api, type Entity, type Category, type AccountRow, type TransactionRow, type TransactionListResponse } from "../../api";
+import { CheckImagesPanel } from "../CheckImagesPanel";
 
 const PAGE_SIZE = 50;
 
@@ -245,6 +246,7 @@ export function TransactionsView() {
                 <div className="bg-bg-elevated rounded-lg p-3">{openRow.human_notes}</div>
               </section>
             )}
+            <CheckImagesPanel endpoint={`/api/web/transactions/${openRow.id}`} />
           </div>
         )}
       </Drawer>

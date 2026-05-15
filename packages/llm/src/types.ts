@@ -25,7 +25,18 @@ export interface ToolResultBlock {
   is_error?: boolean;
 }
 
-export type ContentBlock = TextBlock | ToolUseBlock | ToolResultBlock;
+/**
+ * Image input for vision-capable models. Only valid on user-role messages.
+ * `data` is the raw base64 payload (no `data:` prefix). Workers AI tier
+ * doesn't support images — it falls back to a `[image attached]` text stub.
+ */
+export interface ImageBlock {
+  type: 'image';
+  mediaType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+  data: string;
+}
+
+export type ContentBlock = TextBlock | ToolUseBlock | ToolResultBlock | ImageBlock;
 
 export interface ChatMessage {
   role: 'user' | 'assistant';

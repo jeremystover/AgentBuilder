@@ -10,6 +10,7 @@ import {
   api, type Entity, type Category, type AccountRow, type ReviewRow, type ReviewListResponse,
 } from "../../api";
 import { ProposeRuleModal } from "../ProposeRuleModal";
+import { CheckImagesPanel } from "../CheckImagesPanel";
 
 const PAGE_SIZE = 50;
 
@@ -580,6 +581,9 @@ function DetailDrawerBody({ row, entities, categories, accounts, onUpdate }: Det
           </pre>
         </section>
       )}
+
+      <CheckImagesPanel endpoint={`/api/web/review/${row.id}`} />
+
 
       {row.ai_notes && (
         <section>

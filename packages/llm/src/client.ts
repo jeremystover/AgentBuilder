@@ -258,6 +258,15 @@ function toAnthropicBlock(block: ContentBlock): any {
         content: block.content,
         is_error: block.is_error,
       };
+    case 'image':
+      return {
+        type: 'image',
+        source: {
+          type: 'base64',
+          media_type: block.mediaType,
+          data: block.data,
+        },
+      };
   }
 }
 
@@ -271,6 +280,7 @@ function flattenContentToText(blocks: ContentBlock[]): string {
     .map((b) => {
       if (b.type === 'text') return b.text;
       if (b.type === 'tool_use') return `[called ${b.name}(${JSON.stringify(b.input)})]`;
+      if (b.type === 'image') return `[image attached: ${b.mediaType}]`;
       return `[tool result: ${b.content}]`;
     })
     .join('\n');

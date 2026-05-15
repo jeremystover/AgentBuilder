@@ -30,6 +30,18 @@ max_batch_size = 1
 max_batch_timeout = 5
 max_retries = 1
 
+# Check-image processing — vision OCR + transaction matching for checks
+# uploaded by the WF check extension. One message per check.
+[[queues.producers]]
+binding = "CHECK_QUEUE"
+queue = "cfo-check-images"
+
+[[queues.consumers]]
+queue = "cfo-check-images"
+max_batch_size = 5
+max_batch_timeout = 10
+max_retries = 2
+
 # Shared fleet-wide D1 — observability tables (cron_runs, cron_errors).
 # Read by the AgentBuilder dashboard.
 [[d1_databases]]
