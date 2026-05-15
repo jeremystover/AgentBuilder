@@ -202,6 +202,7 @@ export async function runTellerSync(
       WHERE is_active = true AND teller_account_id IS NOT NULL
     `;
     const total = Number(countRows[0]?.c ?? 0);
+    console.log(`[teller-sync] enrollments=${enrollments.length} total_active_accounts=${total}`);
     onProgress?.({ type: 'start', total });
 
     let accountIdx = 0;
@@ -213,6 +214,7 @@ export async function runTellerSync(
           AND is_active = true
           AND teller_account_id IS NOT NULL
       `;
+      console.log(`[teller-sync] enrollment=${enr.enrollment_id} institution=${enr.institution_name} accounts=${accounts.length}`);
 
       for (const acct of accounts) {
         if (!acct.teller_account_id) continue;
