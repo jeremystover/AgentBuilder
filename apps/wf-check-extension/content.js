@@ -200,26 +200,66 @@
 
   // ── Image capture ──────────────────────────────────────────────────────
 
+  /**
+   * Export a check <img> to a base64 data URL.
+   *
+   * Bank check images are typically cross-origin (a separate image host),
+   * which means the canvas is tainted and toDataURL() throws, and a direct
+   * fetch() from the content script is blocked by CORS. The reliable path
+   * is to hand the URL to the background service worker, which has
+   * <all_urls> host permission, can fetch cross-origin (bypassing CORS),
+   * sends the bank's cookies, and re-encodes to JPEG from raw bytes (a
+   * canvas built from fetched bytes is never tainted).
+   */
   async function imgToDataUrl(img) {
+    const src = img.currentSrc || img.src || '';
+    if (!src) throw new Error('image element has no src');
+
+    // Already inline
+    if (src.startsWith('data:')) return src;
+
+    // blob: URLs only resolve in the page context — the background can't
+    // read them, so the content script must.
+    if (src.startsWith('blob:')) {
+      const resp = await fetch(src);
+      if (!resp.ok) throw new Error('blob fetch failed: ' + resp.status);
+      return await blobToDataUrl(await resp.blob());
+    }
+
+    // http(s): background fetch (cross-origin safe, re-encodes to JPEG)
+    const viaBg = await fetchImageViaBackground(src);
+    if (viaBg && viaBg.ok && viaBg.dataUrl) return viaBg.dataUrl;
+
+    // Same-origin / CORS-enabled images: a direct page fetch also works,
+    // and carries SameSite=Strict cookies the background fetch can't.
+    try {
+      const resp = await fetch(src, { credentials: 'include' });
+      if (resp.ok) {
+        const blob = await resp.blob();
+        if (blob.size > 0) return await blobToDataUrl(blob);
+      }
+    } catch (_) { /* fall through */ }
+
+    // Last resort — canvas. Throws "tainted" for cross-origin images.
     await waitForImageLoaded(img);
-    if (img.src && !img.src.startsWith('data:') && !img.src.startsWith('blob:')) {
-      try {
-        const resp = await fetch(img.src, { credentials: 'include' });
-        if (resp.ok) return await blobToDataUrl(await resp.blob());
-      } catch (_) { /* fall through */ }
-    }
-    if (img.src && img.src.startsWith('blob:')) {
-      try {
-        const resp = await fetch(img.src);
-        if (resp.ok) return await blobToDataUrl(await resp.blob());
-      } catch (_) { /* fall through */ }
-    }
-    // Canvas fallback (may taint if cross-origin)
     const canvas = document.createElement('canvas');
     canvas.width = img.naturalWidth || 800;
     canvas.height = img.naturalHeight || 400;
     canvas.getContext('2d').drawImage(img, 0, 0);
     return canvas.toDataURL('image/jpeg', 0.92);
+  }
+
+  function fetchImageViaBackground(url) {
+    return new Promise((resolve) => {
+      try {
+        chrome.runtime.sendMessage({ type: 'FETCH_IMAGE', url }, (resp) => {
+          if (chrome.runtime.lastError) return resolve(null);
+          resolve(resp || null);
+        });
+      } catch (_) {
+        resolve(null);
+      }
+    });
   }
 
   function blobToDataUrl(blob) {
