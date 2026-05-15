@@ -55,6 +55,14 @@ interface TxRow {
   form_line: string | null;
 }
 
+// postgres-js with fetch_types:false returns PG array columns as "{a,b,c}" strings.
+function parsePgArr(val: unknown): string[] {
+  if (Array.isArray(val)) return val as string[];
+  if (typeof val !== 'string') return [];
+  const inner = val.replace(/^\{|\}$/g, '').trim();
+  return inner ? inner.split(',') : [];
+}
+
 export async function getReportConfig(env: Env, id: string): Promise<ReportConfig | null> {
   const sql = db(env);
   try {
@@ -65,7 +73,13 @@ export async function getReportConfig(env: Env, id: string): Promise<ReportConfi
       WHERE id = ${id} AND is_active = true
       LIMIT 1
     `;
-    return rows[0] ?? null;
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      ...row,
+      entity_ids: parsePgArr(row.entity_ids),
+      category_ids: parsePgArr(row.category_ids),
+    };
   } finally {
     await sql.end({ timeout: 5 }).catch(() => {});
   }
