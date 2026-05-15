@@ -57,12 +57,19 @@ export function GatherView() {
     setBusySource(source);
     try {
       await api.post(`/api/web/gather/sync/${source}`);
-      toast.success(`Sync started: ${source}`);
-      await refresh();
+      toast.success('Sync started');
+      // Poll until all sync_log entries leave 'running' state (max ~60s)
+      for (let i = 0; i < 20; i++) {
+        await new Promise(r => setTimeout(r, 3000));
+        const s = await api.get<GatherStatus>('/api/web/gather/status');
+        setStatus(s);
+        if (!s.recent_log.some(r => r.status === 'running')) break;
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
       setBusySource(null);
+      void refresh();
     }
   };
 
