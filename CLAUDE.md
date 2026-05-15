@@ -66,28 +66,35 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 ---
 
 ## 5. Deploy Workflow
-**Fix → commit → merge → deploy → test. No human gate.**
+**Fix → commit → PR → merge → confirm. No human gate.**
 
-After completing any change that should go live, run this sequence:
+Merging to `main` triggers the per-agent GitHub Actions workflow, which applies
+D1 + Neon migrations and deploys the Worker. There are two execution contexts —
+use the one that matches where you are running.
 
-```bash
-# 1. Commit
-git add -A
-git commit -m "fix: <description>"
-git push
+### Claude Code web sessions (the default)
+Outbound HTTP is blocked here: `wrangler` and `curl` to `*.workers.dev` do not
+work. Drive the whole deploy through the **GitHub MCP** and confirm through the
+**Cloudflare MCP** — never ask the user to open a PR for you.
 
-# 2. Open and immediately auto-merge PR (no review required)
-gh pr create --fill
-gh pr merge --squash --auto
-
-# 3. Wait for GitHub Actions deploy to complete
-gh run watch
-
-# 4. Run smoke test (see §6)
-make test
+```
+1. git add -A && git commit -m "fix: <description>" && git push   (feature branch)
+2. mcp__github__create_pull_request   (base: main)
+3. mcp__github__merge_pull_request    (squash)  → this triggers the deploy
+4. Confirm: query the `deployments` table in agentbuilder-core D1 via the
+   Cloudflare MCP d1_database_query for a row matching the merge commit SHA
+   with status='success' AND smoke_status='ok'.
+   Secondary check: workers_get_worker shows a fresh version / modified_on.
 ```
 
-**Do not stop and ask for merge approval.** The workflow is intentionally no-gate. If the smoke test fails after deploy, diagnose using logs (see §6) and loop.
+If no `success` row appears, or `status='failed'`, read the failure and loop —
+do **not** report "it's deployed" until the `deployments` row confirms it.
+
+### Local developer terminal
+`wrangler`, `gh`, and `curl` all work. Use `make fix-and-ship` (see §7).
+
+**Do not stop and ask for merge approval.** The workflow is intentionally
+no-gate.
 
 ---
 
@@ -108,40 +115,40 @@ gh auth status           # should show authenticated to GitHub
 
 If either fails, stop and tell the developer — do not attempt to set up credentials yourself.
 
-### Reading logs
-Stream live logs from a specific worker while triggering a request:
+### Reading logs / errors
+
+**Claude Code web sessions:** `wrangler tail` and `curl` are blocked. Read
+errors from the `agentbuilder-core` D1 instead — query `fleet_errors` (every
+request/cron/queue/frontend error), `bug_tickets` (deduped, with triage
+state), and `cron_runs`/`cron_errors` via the Cloudflare MCP `d1_database_query`.
+
+**Local developer terminal:** stream live logs while triggering a request:
 ```bash
 npx wrangler tail <worker-name> --format pretty
-# e.g.: npx wrangler tail agent-builder --format pretty
-```
-
-For recent errors without live streaming:
-```bash
-npx wrangler tail <worker-name> --format json | head -50
+npx wrangler tail <worker-name> --format json | head -50   # recent only
 ```
 
 ### Smoke test
+CI runs a post-deploy smoke test automatically (see `_deploy-agent.yml`) and
+records the result in the `deployments` table. Locally you can also run:
 ```bash
 make test
-# or directly:
-curl -s -X POST https://agent-builder.jsstover.workers.dev/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"tools/list","id":1}' | jq .
 ```
-
-A successful response has a `result.tools` array. An error response has an `error` key — read it and diagnose before reporting back.
 
 ### Debug loop
 When something is broken:
-1. Run `make test` — read the error response body carefully.
-2. If the error is unclear, run `wrangler tail` in one terminal and re-run the test in another.
-3. Fix the code. Deploy (`make fix-and-ship` or the sequence in §5). Re-run `make test`.
-4. Don't report "it's deployed" — report whether the smoke test passed or failed.
+1. Read the error: `fleet_errors` in D1 (web) or `wrangler tail` (local).
+2. Fix the code. Deploy via the §5 workflow.
+3. Confirm the `deployments` row shows `status='success'` and
+   `smoke_status='ok'` — re-loop if not.
+4. Don't report "it's deployed" — report what the `deployments` row says.
 
 ---
 
 ## 7. Makefile Targets
-These targets are available for common tasks. Prefer them over ad-hoc commands:
+The Makefile is for the **local developer terminal only** — every target shells
+out to `wrangler`, `gh`, or `curl`, which are blocked in Claude Code web
+sessions (use the §5 MCP workflow there instead).
 
 ```bash
 make deploy          # wrangler deploy only (no git)
@@ -151,6 +158,31 @@ make fix-and-ship    # commit + PR + merge + deploy + test (pass msg="..." for c
 ```
 
 If a Makefile target is missing for a repeated task, add it and commit it.
+
+---
+
+## 8. Bug Monitoring (autonomous)
+
+Errors from every agent are captured into the shared `agentbuilder-core` D1:
+
+- `fleet_errors` — one row per occurrence (request / cron / queue / frontend).
+- `bug_tickets` — deduped by fingerprint, with triage + fix state.
+- `bug_fixes` — append-only audit of what got fixed or flagged.
+
+Capture is wired through `@agentbuilder/observability`: `withObservability`
+wraps each `fetch` handler, `runCron` covers crons, and `handleClientError`
+(mounted at `POST /api/v1/client-error`) takes browser errors. See `AGENTS.md`
+rules 11–12.
+
+The **`/fleet-doctor`** slash command (`.claude/commands/fleet-doctor.md`) is
+the autonomous triage loop: it reads open `bug_tickets`, fixes what it's
+confident about (PR → merge → confirm via `deployments`), and opens a
+`needs-human` GitHub issue for the rest. It is **anti-spin**: at most 2 fix
+attempts per fingerprint, then it flags and stops.
+
+Run it on a recurring **scheduled trigger** (Claude Code on the web →
+environment settings; recommend hourly). To review what it has done, query
+`bug_tickets` / `bug_fixes`.
 
 ---
 
