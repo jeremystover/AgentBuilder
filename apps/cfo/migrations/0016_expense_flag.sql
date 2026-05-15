@@ -3,7 +3,7 @@
 -- analysis without affecting the approval/ledger flow.
 
 ALTER TABLE raw_transactions
-  ADD COLUMN expense_flag TEXT CHECK (expense_flag IN ('cut', 'one_time'));
+  ADD COLUMN IF NOT EXISTS expense_flag TEXT CHECK (expense_flag IN ('cut', 'one_time'));
 
 ALTER TABLE transactions
-  ADD COLUMN expense_flag TEXT CHECK (expense_flag IN ('cut', 'one_time'));
+  ADD COLUMN IF NOT EXISTS expense_flag TEXT CHECK (expense_flag IN ('cut', 'one_time'));
