@@ -75,6 +75,7 @@ export interface ReviewRow {
   human_notes: string | null;
   is_transfer: boolean;
   is_reimbursable: boolean;
+  expense_flag: "cut" | "one_time" | null;
   status: "staged" | "waiting";
   waiting_for: string | null;
   supplement_json: Record<string, unknown> | null;

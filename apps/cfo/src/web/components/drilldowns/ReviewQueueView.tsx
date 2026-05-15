@@ -3,7 +3,7 @@ import { RefreshCw, ArrowLeftRight, Sparkles, Clock } from "lucide-react";
 import { toast } from "sonner";
 import {
   Button, Card, Badge, Input, Select, Drawer, PageHeader, EmptyState,
-  IndeterminateCheckbox, ConfidenceBadge, SortTh, fmtUsd, humanizeSlug,
+  IndeterminateCheckbox, SortTh, fmtUsd, humanizeSlug,
 } from "../ui";
 import { txAmountColor } from "../../utils/txColor";
 import {
@@ -13,27 +13,24 @@ import { ProposeRuleModal } from "../ProposeRuleModal";
 
 const PAGE_SIZE = 50;
 
-type ConfidenceFilter = "" | "high" | "medium" | "low" | "rule";
 type StatusTab = "staged" | "waiting";
 
 interface Filters {
   q: string;
   date_from: string;
   date_to: string;
-  entity_ids: string[];
-  category_ids: string[];
-  confidence: ConfidenceFilter;
-  account_ids: string[];
+  entity_id: string;
+  category_id: string;
+  account_id: string;
 }
 
 const EMPTY_FILTERS: Filters = {
   q: "",
   date_from: "",
   date_to: "",
-  entity_ids: [],
-  category_ids: [],
-  confidence: "",
-  account_ids: [],
+  entity_id: "",
+  category_id: "",
+  account_id: "",
 };
 
 function activeFilterCount(f: Filters): number {
@@ -41,10 +38,9 @@ function activeFilterCount(f: Filters): number {
   if (f.q) n++;
   if (f.date_from) n++;
   if (f.date_to) n++;
-  if (f.entity_ids.length) n++;
-  if (f.category_ids.length) n++;
-  if (f.confidence) n++;
-  if (f.account_ids.length) n++;
+  if (f.entity_id) n++;
+  if (f.category_id) n++;
+  if (f.account_id) n++;
   return n;
 }
 
@@ -54,10 +50,9 @@ function filtersToParams(f: Filters, status: StatusTab, sortBy: string, sortDir:
   if (f.q) p.set("q", f.q);
   if (f.date_from) p.set("date_from", f.date_from);
   if (f.date_to) p.set("date_to", f.date_to);
-  for (const id of f.entity_ids) p.append("entity_id", id);
-  for (const id of f.category_ids) p.append("category_id", id);
-  for (const id of f.account_ids) p.append("account_id", id);
-  if (f.confidence) p.set("confidence", f.confidence);
+  if (f.entity_id) p.set("entity_id", f.entity_id);
+  if (f.category_id) p.set("category_id", f.category_id);
+  if (f.account_id) p.set("account_id", f.account_id);
   p.set("sort_by", sortBy);
   p.set("sort_dir", sortDir);
   p.set("offset", String(offset));
@@ -117,7 +112,7 @@ export function ReviewQueueView() {
   const effectiveFilters = useMemo(() => ({ ...filters, q: debouncedQ }), [filters, debouncedQ]);
 
   // Reset offset when filters/tab/sort change
-  useEffect(() => { setOffset(0); }, [tab, debouncedQ, filters.entity_ids, filters.category_ids, filters.account_ids, filters.confidence, filters.date_from, filters.date_to, sortBy, sortDir]);
+  useEffect(() => { setOffset(0); }, [tab, debouncedQ, filters.entity_id, filters.category_id, filters.account_id, filters.date_from, filters.date_to, sortBy, sortDir]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -262,12 +257,6 @@ export function ReviewQueueView() {
     }
   };
 
-  // ── Filter helpers ─────────────────────────────────────────────────────
-  const setMultiSelect = (key: "entity_ids" | "category_ids" | "account_ids") => (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const ids = Array.from(e.target.selectedOptions).map(o => o.value).filter(Boolean);
-    setFilters(f => ({ ...f, [key]: ids }));
-  };
-
   const accountById = useMemo(() => new Map(accounts.map(a => [a.id, a])), [accounts]);
 
   return (
@@ -320,29 +309,22 @@ export function ReviewQueueView() {
           </div>
           <div>
             <label className="block text-xs text-text-muted mb-1">Entity</label>
-            <Select multiple value={filters.entity_ids} onChange={setMultiSelect("entity_ids")} className="min-w-[140px] h-24">
+            <Select value={filters.entity_id} onChange={e => setFilters(f => ({ ...f, entity_id: e.target.value }))}>
+              <option value="">All entities</option>
               {entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
             </Select>
           </div>
           <div>
             <label className="block text-xs text-text-muted mb-1">Category</label>
-            <Select multiple value={filters.category_ids} onChange={setMultiSelect("category_ids")} className="min-w-[180px] h-24">
+            <Select value={filters.category_id} onChange={e => setFilters(f => ({ ...f, category_id: e.target.value }))}>
+              <option value="">All categories</option>
               {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </Select>
           </div>
           <div>
-            <label className="block text-xs text-text-muted mb-1">Confidence</label>
-            <Select value={filters.confidence} onChange={e => setFilters(f => ({ ...f, confidence: e.target.value as ConfidenceFilter }))}>
-              <option value="">Any</option>
-              <option value="high">High (≥0.9)</option>
-              <option value="medium">Medium (0.7–0.9)</option>
-              <option value="low">Low (&lt;0.7)</option>
-              <option value="rule">Rule-matched</option>
-            </Select>
-          </div>
-          <div>
             <label className="block text-xs text-text-muted mb-1">Account</label>
-            <Select multiple value={filters.account_ids} onChange={setMultiSelect("account_ids")} className="min-w-[160px] h-24">
+            <Select value={filters.account_id} onChange={e => setFilters(f => ({ ...f, account_id: e.target.value }))}>
+              <option value="">All accounts</option>
               {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
             </Select>
           </div>
@@ -374,6 +356,15 @@ export function ReviewQueueView() {
             <Button disabled={!bulkCategoryId || busy} onClick={() => void runBulk({ action: "set_category", category_id: bulkCategoryId })}>Apply category</Button>
             <Button disabled={busy} onClick={() => void runBulk({ action: "set_transfer", is_transfer: true })}>Mark transfer</Button>
             <Button disabled={busy} onClick={() => void runBulk({ action: "set_reimbursable", is_reimbursable: true })}>Mark reimbursable</Button>
+            <Button
+              disabled={busy}
+              onClick={() => {
+                const source = rows.find(r => selectedIds.has(r.id)) ?? rows[0] ?? null;
+                setProposeFor(source);
+              }}
+            >
+              Propose rule
+            </Button>
             <Button variant="success" disabled={busy} onClick={() => void runBulk({ action: "approve" })}>
               <Sparkles className="w-4 h-4" /> Approve
             </Button>
@@ -417,15 +408,14 @@ export function ReviewQueueView() {
                     <th className="px-3 py-2">Account</th>
                     <th className="px-3 py-2">Entity</th>
                     <th className="px-3 py-2">Category</th>
-                    <th className="px-3 py-2">Confidence</th>
-                    <th className="px-3 py-2">Method</th>
-                    <th className="px-3 py-2 w-8"></th>
+                    <th className="px-3 py-2 w-16"></th>
                   </tr>
                 </thead>
                 <tbody>
                   {rows.map(r => {
                     const acct = r.account_id ? accountById.get(r.account_id) : null;
                     const acctType = acct?.type ?? null;
+                    const effectiveEntityId = r.entity_id ?? acct?.entity_id ?? "";
                     return (
                       <tr key={r.id} className="border-t border-border hover:bg-bg-elevated/50">
                         <td className="px-3 py-2">
@@ -438,7 +428,12 @@ export function ReviewQueueView() {
                         </td>
                         <td className="px-3 py-2 text-text-muted whitespace-nowrap">{r.date}</td>
                         <td className="px-3 py-2 max-w-md">
-                          <div className="font-medium truncate">{r.description}</div>
+                          <button
+                            className="font-medium truncate hover:underline text-left w-full cursor-pointer"
+                            onClick={() => setOpenRow(r)}
+                          >
+                            {r.description}
+                          </button>
                           {r.merchant && <div className="text-xs text-text-muted truncate">{r.merchant}</div>}
                           {(r.is_transfer || r.is_reimbursable || r.waiting_for) && (
                             <div className="mt-1 flex gap-1">
@@ -453,7 +448,7 @@ export function ReviewQueueView() {
                         </td>
                         <td className="px-3 py-2 text-text-muted truncate max-w-[140px]">{r.account_name ?? "—"}</td>
                         <td className="px-3 py-2 min-w-[140px]">
-                          <Select value={r.entity_id ?? ""} onChange={e => void updateRow(r.id, { entity_id: e.target.value || null })}>
+                          <Select value={effectiveEntityId} onChange={e => void updateRow(r.id, { entity_id: e.target.value || null })}>
                             <option value="">—</option>
                             {entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
                           </Select>
@@ -464,10 +459,10 @@ export function ReviewQueueView() {
                             {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                           </Select>
                         </td>
-                        <td className="px-3 py-2"><ConfidenceBadge confidence={r.ai_confidence} /></td>
-                        <td className="px-3 py-2">{r.classification_method ? <Badge tone="neutral">{r.classification_method}</Badge> : <Badge tone="neutral">—</Badge>}</td>
                         <td className="px-3 py-2">
-                          <button className="text-accent-primary hover:underline text-sm" onClick={() => setOpenRow(r)}>→</button>
+                          <Button size="sm" variant="success" disabled={busy} onClick={() => void approveOne(r.id)}>
+                            <Sparkles className="w-4 h-4" />
+                          </Button>
                         </td>
                       </tr>
                     );
@@ -561,8 +556,10 @@ interface DetailProps {
 
 function DetailDrawerBody({ row, entities, categories, accounts, onUpdate }: DetailProps) {
   const [notes, setNotes] = useState(row.human_notes ?? "");
+  const [expenseFlag, setExpenseFlag] = useState<"cut" | "one_time" | "">(row.expense_flag ?? "");
   const account = row.account_id ? accounts.find(a => a.id === row.account_id) : null;
   const supplement = row.supplement_json;
+  const effectiveEntityId = row.entity_id ?? account?.entity_id ?? "";
 
   return (
     <div className="space-y-4 text-sm">
@@ -594,7 +591,7 @@ function DetailDrawerBody({ row, entities, categories, accounts, onUpdate }: Det
       <section className="grid grid-cols-2 gap-3">
         <div>
           <label className="block text-xs uppercase text-text-muted mb-1">Entity</label>
-          <Select value={row.entity_id ?? ""} onChange={e => void onUpdate(row.id, { entity_id: e.target.value || null })}>
+          <Select value={effectiveEntityId} onChange={e => void onUpdate(row.id, { entity_id: e.target.value || null })}>
             <option value="">—</option>
             {entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
           </Select>
@@ -629,6 +626,22 @@ function DetailDrawerBody({ row, entities, categories, accounts, onUpdate }: Det
           />
           Reimbursable
         </label>
+      </section>
+
+      <section>
+        <label className="block text-xs uppercase text-text-muted mb-1">Flag</label>
+        <Select
+          value={expenseFlag}
+          onChange={e => {
+            const val = e.target.value as "cut" | "one_time" | "";
+            setExpenseFlag(val);
+            void onUpdate(row.id, { expense_flag: val || null });
+          }}
+        >
+          <option value="">— none —</option>
+          <option value="cut">To cut</option>
+          <option value="one_time">One-time expense</option>
+        </Select>
       </section>
 
       <section>
