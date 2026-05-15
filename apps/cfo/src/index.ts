@@ -168,7 +168,7 @@ const ROUTES: Route[] = [
   { method: 'GET',    pattern: /^\/api\/web\/rules$/,                   auth: 'api',    handler: (req, env) => handleListRules(req, env) },
   { method: 'POST',   pattern: /^\/api\/web\/rules$/,                   auth: 'api',    handler: (req, env) => handleCreateRule(req, env) },
   { method: 'GET',    pattern: /^\/api\/web\/gather\/status$/,          auth: 'api',    handler: (req, env) => handleGatherStatus(req, env) },
-  { method: 'POST',   pattern: /^\/api\/web\/gather\/sync\/(.+)$/,      auth: 'api',    handler: (req, env, source) => handleGatherSync(req, env, source!) },
+  // NOTE: gather sync is handled separately in fetch() below to get ctx for waitUntil
 
   // Spending (Module 4)
   { method: 'GET',    pattern: /^\/api\/web\/spending\/report$/,             auth: 'api', handler: (req, env) => handleSpendingReport(req, env) },
@@ -258,7 +258,7 @@ async function handleNightlySync(env: Env): Promise<void> {
 }
 
 export default {
-  async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     if (request.method === 'OPTIONS') {
       return new Response(null, {
         headers: {
@@ -336,6 +336,16 @@ export default {
         const message = err instanceof Error ? err.message : String(err);
         return Response.json({ jsonrpc: '2.0', id: msg.id ?? null, error: { code: -32000, message } });
       }
+    }
+
+    // ── Gather sync: needs ctx for waitUntil, so not in ROUTES table ────────
+    const gatherSyncMatch = method === 'POST' && path.match(/^\/api\/web\/gather\/sync\/(.+)$/);
+    if (gatherSyncMatch) {
+      const auth = await requireApiAuth(request, env);
+      if (!auth.ok) return auth.response;
+      const response = handleGatherSync(request, env, ctx, gatherSyncMatch[1]!);
+      response.headers.set('Access-Control-Allow-Origin', '*');
+      return response;
     }
 
     // ── Match registered routes ───────────────────────────────────────────

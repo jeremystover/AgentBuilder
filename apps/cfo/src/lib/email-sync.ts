@@ -62,7 +62,28 @@ export async function runEmailSync(env: Env, vendors?: VendorHint[]): Promise<Em
   try {
     const results: VendorSyncResult[] = [];
     for (const vendor of targets) {
-      results.push(await syncVendor(env, sql, vendor));
+      const source = SOURCE_FOR_VENDOR[vendor];
+      const logRows = await sql<Array<{ id: string }>>`
+        INSERT INTO sync_log (source, status) VALUES (${source}, 'running') RETURNING id
+      `;
+      const syncId = logRows[0]!.id;
+      try {
+        const result = await syncVendor(env, sql, vendor);
+        results.push(result);
+        await sql`
+          UPDATE sync_log
+          SET status = 'completed', completed_at = now(),
+              transactions_found = ${result.scanned}, transactions_new = ${result.matched}
+          WHERE id = ${syncId}
+        `;
+      } catch (err) {
+        results.push({ vendor, scanned: 0, parsed: 0, matched: 0, errors: 1, skipped_already_processed: 0 });
+        await sql`
+          UPDATE sync_log
+          SET status = 'failed', completed_at = now(), error_message = ${String(err)}
+          WHERE id = ${syncId}
+        `;
+      }
     }
     return { results, ran_at: ranAt };
   } finally {

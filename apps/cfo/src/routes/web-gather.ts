@@ -67,24 +67,20 @@ export async function handleGatherStatus(_req: Request, env: Env): Promise<Respo
   }
 }
 
-export async function handleGatherSync(_req: Request, env: Env, source: string): Promise<Response> {
-  try {
-    if (source === 'teller') {
-      const out = await runTellerSync(env);
-      return jsonOk({ source: 'teller', ...out });
-    }
-    if (source === 'email') {
-      const out = await runEmailSync(env);
-      return jsonOk({ source: 'email', ...out });
-    }
-    if (source.startsWith('email:')) {
-      const vendor = source.slice('email:'.length) as VendorHint;
-      if (!(VENDORS as readonly string[]).includes(vendor)) return jsonError(`unknown vendor: ${vendor}`, 400);
-      const out = await runEmailSync(env, [vendor]);
-      return jsonOk({ source, ...out });
-    }
-    return jsonError(`unknown source: ${source}`, 400);
-  } catch (err) {
-    return jsonError(`sync failed: ${String(err)}`, 500);
+export function handleGatherSync(_req: Request, env: Env, ctx: ExecutionContext, source: string): Response {
+  if (source === 'teller') {
+    ctx.waitUntil(runTellerSync(env));
+    return jsonOk({ source: 'teller', status: 'started' });
   }
+  if (source === 'email') {
+    ctx.waitUntil(runEmailSync(env));
+    return jsonOk({ source: 'email', status: 'started' });
+  }
+  if (source.startsWith('email:')) {
+    const vendor = source.slice('email:'.length) as VendorHint;
+    if (!(VENDORS as readonly string[]).includes(vendor)) return jsonError(`unknown vendor: ${vendor}`, 400);
+    ctx.waitUntil(runEmailSync(env, [vendor]));
+    return jsonOk({ source, status: 'started' });
+  }
+  return jsonError(`unknown source: ${source}`, 400);
 }
