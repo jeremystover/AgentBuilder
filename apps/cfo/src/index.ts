@@ -69,6 +69,7 @@ import {
   handleTellerDeleteEnrollment, runTellerSync,
 } from './routes/teller';
 import { handleGmailSyncAll, handleGmailSyncVendor, handleGmailStatus } from './routes/gmail';
+import { handleOAuthStart, handleOAuthCallback } from './routes/oauth';
 import { runEmailSync } from './lib/email-sync';
 
 import { handleSnapshot } from './routes/web-snapshot';
@@ -135,6 +136,8 @@ const ROUTES: Route[] = [
   { method: 'GET',    pattern: /^\/teller\/accounts$/,                  auth: 'public', handler: (req, env) => handleTellerListAccounts(req, env) },
   { method: 'POST',   pattern: /^\/teller\/sync$/,                      auth: 'public', handler: (req, env) => handleTellerSync(req, env) },
   { method: 'DELETE', pattern: /^\/teller\/enrollments\/([^/]+)$/,      auth: 'public', handler: (req, env, id) => handleTellerDeleteEnrollment(req, env, id!) },
+  { method: 'GET',    pattern: /^\/oauth\/google\/start$/,              auth: 'public', handler: (req, env) => handleOAuthStart(req, env) },
+  { method: 'GET',    pattern: /^\/oauth\/google\/callback$/,           auth: 'public', handler: (req, env) => handleOAuthCallback(req, env) },
   { method: 'GET',    pattern: /^\/gmail\/status$/,                     auth: 'public', handler: (req, env) => handleGmailStatus(req, env) },
   { method: 'POST',   pattern: /^\/gmail\/sync$/,                       auth: 'public', handler: (req, env) => handleGmailSyncAll(req, env) },
   { method: 'POST',   pattern: /^\/gmail\/sync\/([^/]+)$/,              auth: 'public', handler: (req, env, vendor) => handleGmailSyncVendor(req, env, vendor!) },
