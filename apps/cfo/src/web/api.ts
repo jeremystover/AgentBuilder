@@ -154,6 +154,12 @@ export interface GatherStatus {
       last_synced_at: string | null;
       account_count: number;
     }>;
+    connect_config: {
+      application_id: string;
+      environment: string;
+      products: string[];
+      select_account: string;
+    } | null;
   };
   email: SnapshotResponse["email_sync"];
   recent_log: Array<{

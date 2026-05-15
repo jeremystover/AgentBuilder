@@ -8,6 +8,7 @@ import { jsonOk, jsonError } from '../types';
 import { db } from '../lib/db';
 import { VENDORS, runEmailSync } from '../lib/email-sync';
 import { runTellerSync } from './teller';
+import { getTellerConnectConfig } from '../lib/teller';
 import type { VendorHint } from '../lib/email-matchers/match';
 
 export async function handleGatherStatus(_req: Request, env: Env): Promise<Response> {
@@ -50,12 +51,16 @@ export async function handleGatherStatus(_req: Request, env: Env): Promise<Respo
       LIMIT 20
     `;
 
+    let connectConfig = null;
+    try { connectConfig = getTellerConnectConfig(env); } catch { /* not configured */ }
+
     return jsonOk({
       teller: {
         enrollments: enrollments.map(e => ({
           ...e,
           account_count: Number(e.account_count),
         })),
+        connect_config: connectConfig,
       },
       email,
       recent_log: recentLog,
