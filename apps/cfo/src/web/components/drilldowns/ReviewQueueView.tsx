@@ -3,7 +3,7 @@ import { RefreshCw, ArrowLeftRight, Sparkles, Clock } from "lucide-react";
 import { toast } from "sonner";
 import {
   Button, Card, Badge, Input, Select, Drawer, PageHeader, EmptyState,
-  IndeterminateCheckbox, SortTh, fmtUsd, humanizeSlug,
+  IndeterminateCheckbox, SortTh, fmtUsd,
 } from "../ui";
 import { txAmountColor } from "../../utils/txColor";
 import {
@@ -12,6 +12,29 @@ import {
 import { ProposeRuleModal } from "../ProposeRuleModal";
 
 const PAGE_SIZE = 50;
+
+const ENTITY_TYPE_LABEL: Record<string, string> = {
+  schedule_c: "(C)",
+  schedule_e: "(SE)",
+  personal: "(P)",
+};
+
+function categoryLabel(c: Category, ambiguous: Set<string>): string {
+  if (!ambiguous.has(c.name)) return c.name;
+  const suffix = ENTITY_TYPE_LABEL[c.entity_type];
+  return suffix ? `${c.name} ${suffix}` : c.name;
+}
+
+function filterCategoriesByEntity(
+  cats: Category[],
+  entityId: string | null | undefined,
+  entities: Entity[]
+): Category[] {
+  if (!entityId) return cats;
+  const ent = entities.find(e => e.id === entityId);
+  if (!ent) return cats;
+  return cats.filter(c => c.entity_type === "all" || c.entity_type === ent.type);
+}
 
 type StatusTab = "staged" | "waiting";
 
@@ -259,6 +282,20 @@ export function ReviewQueueView() {
 
   const accountById = useMemo(() => new Map(accounts.map(a => [a.id, a])), [accounts]);
 
+  const ambiguousCategoryNames = useMemo(() => {
+    const byName = new Map<string, Set<string>>();
+    for (const c of categories) {
+      if (c.entity_type === "all") continue;
+      if (!byName.has(c.name)) byName.set(c.name, new Set());
+      byName.get(c.name)!.add(c.entity_type);
+    }
+    const s = new Set<string>();
+    for (const [name, types] of byName) {
+      if (types.size > 1) s.add(name);
+    }
+    return s;
+  }, [categories]);
+
   return (
     <div className="p-6 max-w-7xl mx-auto">
       <PageHeader
@@ -318,7 +355,8 @@ export function ReviewQueueView() {
             <label className="block text-xs text-text-muted mb-1">Category</label>
             <Select value={filters.category_id} onChange={e => setFilters(f => ({ ...f, category_id: e.target.value }))}>
               <option value="">All categories</option>
-              {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              {filterCategoriesByEntity(categories, filters.entity_id, entities).map(c =>
+                <option key={c.id} value={c.id}>{categoryLabel(c, ambiguousCategoryNames)}</option>)}
             </Select>
           </div>
           <div>
@@ -351,7 +389,7 @@ export function ReviewQueueView() {
             <Button disabled={!bulkEntityId || busy} onClick={() => void runBulk({ action: "set_entity", entity_id: bulkEntityId })}>Apply entity</Button>
             <Select value={bulkCategoryId} onChange={e => setBulkCategoryId(e.target.value)}>
               <option value="">Set category…</option>
-              {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              {categories.map(c => <option key={c.id} value={c.id}>{categoryLabel(c, ambiguousCategoryNames)}</option>)}
             </Select>
             <Button disabled={!bulkCategoryId || busy} onClick={() => void runBulk({ action: "set_category", category_id: bulkCategoryId })}>Apply category</Button>
             <Button disabled={busy} onClick={() => void runBulk({ action: "set_transfer", is_transfer: true })}>Mark transfer</Button>
@@ -456,7 +494,8 @@ export function ReviewQueueView() {
                         <td className="px-3 py-2 min-w-[180px]">
                           <Select value={r.category_id ?? ""} onChange={e => void updateRow(r.id, { category_id: e.target.value || null, classification_method: "manual" })}>
                             <option value="">—</option>
-                            {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                            {filterCategoriesByEntity(categories, effectiveEntityId, entities).map(c =>
+                              <option key={c.id} value={c.id}>{categoryLabel(c, ambiguousCategoryNames)}</option>)}
                           </Select>
                         </td>
                         <td className="px-3 py-2">
@@ -504,7 +543,7 @@ export function ReviewQueueView() {
           </div>
         )}
       >
-        {openRow && <DetailDrawerBody row={openRow} entities={entities} categories={categories} accounts={accounts} onUpdate={updateRow} />}
+        {openRow && <DetailDrawerBody row={openRow} entities={entities} categories={categories} accounts={accounts} onUpdate={updateRow} ambiguousCategories={ambiguousCategoryNames} />}
       </Drawer>
 
       {/* Propose rule modal */}
@@ -552,9 +591,10 @@ interface DetailProps {
   categories: Category[];
   accounts: AccountRow[];
   onUpdate: (id: string, body: Partial<ReviewRow>) => Promise<void>;
+  ambiguousCategories: Set<string>;
 }
 
-function DetailDrawerBody({ row, entities, categories, accounts, onUpdate }: DetailProps) {
+function DetailDrawerBody({ row, entities, categories, accounts, onUpdate, ambiguousCategories }: DetailProps) {
   const [notes, setNotes] = useState(row.human_notes ?? "");
   const [expenseFlag, setExpenseFlag] = useState<"cut" | "one_time" | "">(row.expense_flag ?? "");
   const account = row.account_id ? accounts.find(a => a.id === row.account_id) : null;
@@ -600,15 +640,8 @@ function DetailDrawerBody({ row, entities, categories, accounts, onUpdate }: Det
           <label className="block text-xs uppercase text-text-muted mb-1">Category</label>
           <Select value={row.category_id ?? ""} onChange={e => void onUpdate(row.id, { category_id: e.target.value || null, classification_method: "manual" })}>
             <option value="">—</option>
-            {categories
-              .filter(c => {
-                if (!row.entity_id) return true;
-                const ent = entities.find(en => en.id === row.entity_id);
-                if (!ent) return true;
-                if (c.entity_type === "all") return true;
-                return c.entity_type === ent.type;
-              })
-              .map(c => <option key={c.id} value={c.id}>{humanizeSlug(c.slug)} · {c.name}</option>)}
+            {filterCategoriesByEntity(categories, effectiveEntityId, entities).map(c =>
+              <option key={c.id} value={c.id}>{categoryLabel(c, ambiguousCategories)}</option>)}
           </Select>
         </div>
       </section>
