@@ -26,6 +26,11 @@ on:
         required: false
         type: boolean
         default: false
+      health_path:
+        description: Path curl'd after deploy to confirm the Worker is live.
+        required: false
+        type: string
+        default: '/health'
       node_version:
         description: Node.js version used to install deps and run wrangler.
         required: false
@@ -85,9 +90,55 @@ jobs:
         run: pnpm run migrate
 
       - name: Deploy Worker
+        id: deploy
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: apps/${{ inputs.agent_id }}
           command: deploy
+
+      # Liveness check from the GitHub runner (which has outbound internet).
+      # Connection failure or any 5xx fails the job.
+      - name: Smoke test
+        id: smoke
+        if: steps.deploy.outcome == 'success'
+        env:
+          HEALTH_URL: https://${{ inputs.agent_id }}.jsstover.workers.dev${{ inputs.health_path }}
+        run: |
+          echo "Smoke testing $HEALTH_URL"
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$HEALTH_URL" || echo "000")
+          echo "HTTP $CODE"
+          if [ "$CODE" = "000" ] || [ "$CODE" -ge 500 ]; then
+            echo "::error::Smoke test failed (HTTP $CODE)"
+            exit 1
+          fi
+
+      # Record the outcome into agentbuilder-core D1 so Claude Code web
+      # sessions can confirm the deploy by querying D1 (curl is blocked there).
+      - name: Record deployment
+        if: always()
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          AGENT_ID: ${{ inputs.agent_id }}
+          GIT_SHA: ${{ github.sha }}
+          ACTOR: ${{ github.actor }}
+          RUN_ID: ${{ github.run_id }}
+          DEPLOY_OUTCOME: ${{ steps.deploy.outcome }}
+          SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
+        run: |
+          if [ "$DEPLOY_OUTCOME" = "success" ]; then STATUS=success; else STATUS=failed; fi
+          case "$SMOKE_OUTCOME" in
+            success) SMOKE=ok ;;
+            skipped) SMOKE=skipped ;;
+            *)       SMOKE=fail ;;
+          esac
+          DEPLOY_ID="${AGENT_ID}-${GIT_SHA:0:12}-${RUN_ID}"
+          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          # Ensure the table exists — only agent-builder's workflow migrates
+          # agentbuilder-core, but every agent's deploy writes here.
+          npx wrangler d1 execute agentbuilder-core --remote --command \
+            "CREATE TABLE IF NOT EXISTS deployments (deploy_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, git_sha TEXT NOT NULL, version_id TEXT DEFAULT '', status TEXT NOT NULL, smoke_status TEXT DEFAULT '', deployed_at TEXT NOT NULL, actor TEXT DEFAULT '', notes TEXT DEFAULT '')"
+          npx wrangler d1 execute agentbuilder-core --remote --command \
+            "INSERT INTO deployments (deploy_id, agent_id, git_sha, status, smoke_status, deployed_at, actor) VALUES ('${DEPLOY_ID}', '${AGENT_ID}', '${GIT_SHA}', '${STATUS}', '${SMOKE}', '${NOW}', '${ACTOR}')"
