@@ -4,6 +4,10 @@ name: Deploy Agent (reusable)
 # when the agent has a `migrations/` directory, applies pending D1
 # migrations before the deploy. Per-agent workflows under this directory
 # call this one with their own `agent_id` / `d1_database` inputs.
+#
+# For Neon (Postgres) databases: pass neon_migrations: true and supply the
+# NEON_DATABASE_URL secret. The agent must have scripts/migrate.ts and a
+# "migrate" npm script (see apps/cfo for the reference implementation).
 
 on:
   workflow_call:
@@ -17,6 +21,11 @@ on:
         required: false
         type: string
         default: ''
+      neon_migrations:
+        description: Set to true to run scripts/migrate.ts against Neon before deploy.
+        required: false
+        type: boolean
+        default: false
       node_version:
         description: Node.js version used to install deps and run wrangler.
         required: false
@@ -32,6 +41,8 @@ on:
         required: true
       CLOUDFLARE_ACCOUNT_ID:
         required: true
+      NEON_DATABASE_URL:
+        required: false
 
 jobs:
   deploy:
@@ -63,6 +74,13 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: apps/${{ inputs.agent_id }}
           command: d1 migrations apply ${{ inputs.d1_database }} --remote
+
+      - name: Apply Neon migrations
+        if: inputs.neon_migrations == true
+        working-directory: apps/${{ inputs.agent_id }}
+        env:
+          DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+        run: pnpm run migrate
 
       - name: Deploy Worker
         uses: cloudflare/wrangler-action@v3
