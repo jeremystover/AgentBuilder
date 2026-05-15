@@ -495,6 +495,42 @@ export async function handleDeleteOneTimeItem(
   }
 }
 
+export async function handleSuggestAllPlanCategories(req: Request, env: Env, _planId: string): Promise<Response> {
+  const url = new URL(req.url);
+  const months = Math.max(1, Number(url.searchParams.get('months') ?? '12'));
+  const today = new Date();
+  const from = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - months, 1));
+  const to   = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 0));
+  const sql = db(env);
+  try {
+    const rows = await sql<Array<{ category_id: string; total: string; ct: string }>>`
+      SELECT category_id,
+             COALESCE(SUM(amount), 0)::text AS total,
+             COUNT(*)::text                 AS ct
+      FROM transactions
+      WHERE status = 'approved'
+        AND date BETWEEN ${iso(from)} AND ${iso(to)}
+      GROUP BY category_id
+    `;
+    return jsonOk({
+      lookback_months: months,
+      categories: rows.map(r => {
+        const total = Number(r.total);
+        return {
+          category_id: r.category_id,
+          transaction_count: Number(r.ct),
+          average_monthly: total / months,
+          average_annual:  (total / months) * 12,
+        };
+      }),
+    });
+  } catch (err) {
+    return jsonError(`suggest-all failed: ${String(err)}`, 500);
+  } finally {
+    await sql.end({ timeout: 5 }).catch(() => {});
+  }
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function iso(d: Date): string { return d.toISOString().slice(0, 10); }
