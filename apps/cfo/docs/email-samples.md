@@ -44,8 +44,8 @@ Defined in `src/lib/email-sync.ts`:
 |--------|-------|
 | Amazon | `from:(auto-confirm@amazon.com OR ship-confirm@amazon.com OR shipment-tracking@amazon.com OR order-update@amazon.com) subject:"Your Amazon.com order" newer_than:90d` |
 | Venmo  | `from:venmo@venmo.com newer_than:90d` |
-| Apple  | `from:no_reply@email.apple.com subject:"Your receipt from Apple" newer_than:90d` |
-| Etsy   | `(from:transaction@etsy.com OR from:support@etsy.com OR subject:"Etsy receipt" OR subject:"you just bought") newer_than:90d` |
+| Apple  | `subject:"receipt from Apple" newer_than:90d` |
+| Etsy   | `(from:(transaction@etsy.com OR support@etsy.com) OR subject:etsy) newer_than:90d` |
 
 ## Current matcher thresholds
 
