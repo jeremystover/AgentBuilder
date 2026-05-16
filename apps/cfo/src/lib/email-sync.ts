@@ -281,9 +281,14 @@ async function updateSupplement(
   const supplement = { [vendor]: context };
   const expectedWaiting = SOURCE_FOR_VENDOR[vendor];
   // Merge into supplement_json; if the row was waiting for THIS vendor, promote it.
+  // The CASE guards against a legacy non-object supplement_json (a value that
+  // was stored double-encoded) — `array || object` would append, not merge.
   await sql`
     UPDATE raw_transactions
-    SET supplement_json = COALESCE(supplement_json, '{}'::jsonb) || ${JSON.stringify(supplement)}::jsonb,
+    SET supplement_json = (
+          CASE WHEN jsonb_typeof(supplement_json) = 'object'
+               THEN supplement_json ELSE '{}'::jsonb END
+        ) || ${JSON.stringify(supplement)}::jsonb,
         status = CASE
           WHEN status = 'waiting' AND waiting_for = ${expectedWaiting} THEN 'staged'
           ELSE status

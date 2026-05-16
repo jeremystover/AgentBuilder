@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { cleanItemName, computeAppleSplits, deriveDescription } from './transaction-split';
+import { cleanItemName, computeAppleSplits, deriveDescription, normalizeSupplement } from './transaction-split';
 import type { AppleContext } from './email-parsers/apple';
 import type { VenmoContext } from './email-parsers/venmo';
 
@@ -54,6 +54,28 @@ describe('computeAppleSplits', () => {
 
   it('returns null for a single-item receipt', () => {
     expect(computeAppleSplits(9.99, apple([{ name: 'One Thing', price: 9.99 }]))).toBeNull();
+  });
+});
+
+describe('normalizeSupplement', () => {
+  it('passes through a well-formed object', () => {
+    const ok = { apple: { items: [{ name: 'A', price: 1 }] } };
+    expect(normalizeSupplement(ok)).toEqual(ok);
+  });
+  it('recovers the legacy [{}, "<json>"] array shape', () => {
+    const malformed = [{}, JSON.stringify({ apple: { receipt_id: null, items: [] } })];
+    expect(normalizeSupplement(malformed)).toEqual({ apple: { receipt_id: null, items: [] } });
+  });
+  it('parses a value that was double-encoded as a string', () => {
+    expect(normalizeSupplement({ venmo: JSON.stringify({ memo: 'Rent' }) }))
+      .toEqual({ venmo: { memo: 'Rent' } });
+  });
+  it('parses a whole supplement stored as a JSON string', () => {
+    expect(normalizeSupplement('{"apple":{"items":[]}}')).toEqual({ apple: { items: [] } });
+  });
+  it('returns an empty object for null or unrecoverable input', () => {
+    expect(normalizeSupplement(null)).toEqual({});
+    expect(normalizeSupplement('not json')).toEqual({});
   });
 });
 
