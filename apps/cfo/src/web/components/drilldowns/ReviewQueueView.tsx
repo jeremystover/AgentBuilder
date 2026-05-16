@@ -433,7 +433,7 @@ export function ReviewQueueView() {
           ? <EmptyState>{tab === "staged" ? "No transactions waiting for review." : "No transactions on hold."}</EmptyState>
           : (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="w-full text-sm table-fixed">
                 <thead className="text-left text-xs uppercase text-text-muted bg-bg-elevated">
                   <tr>
                     <th className="px-3 py-2 w-8">
@@ -443,13 +443,13 @@ export function ReviewQueueView() {
                         onChange={e => togglePage(e.target.checked)}
                       />
                     </th>
-                    <SortTh col="date" currentSort={sortBy} currentDir={sortDir} onSort={onSort} className="px-3 py-2">Date</SortTh>
-                    <th className="px-3 py-2">Description</th>
-                    <SortTh col="amount" currentSort={sortBy} currentDir={sortDir} onSort={onSort} className="px-3 py-2 text-right">Amount</SortTh>
-                    <th className="px-3 py-2">Account</th>
-                    <th className="px-3 py-2">Entity</th>
-                    <th className="px-3 py-2">Category</th>
-                    <th className="px-3 py-2 w-16"></th>
+                    <SortTh col="date" currentSort={sortBy} currentDir={sortDir} onSort={onSort} className="px-3 py-2 w-24">Date</SortTh>
+                    <SortTh col="description" currentSort={sortBy} currentDir={sortDir} onSort={onSort} className="px-3 py-2">Description</SortTh>
+                    <SortTh col="amount" currentSort={sortBy} currentDir={sortDir} onSort={onSort} className="px-3 py-2 text-right w-24">Amount</SortTh>
+                    <th className="px-3 py-2 w-28">Account</th>
+                    <th className="px-3 py-2 w-36">Entity</th>
+                    <th className="px-3 py-2 w-44">Category</th>
+                    <th className="px-3 py-2 w-12"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -468,7 +468,7 @@ export function ReviewQueueView() {
                           />
                         </td>
                         <td className="px-3 py-2 text-text-muted whitespace-nowrap">{r.date}</td>
-                        <td className="px-3 py-2 max-w-md">
+                        <td className="px-3 py-2">
                           <button
                             className="font-medium truncate hover:underline text-left w-full cursor-pointer"
                             onClick={() => setOpenRow(r)}
@@ -487,15 +487,15 @@ export function ReviewQueueView() {
                         <td className={`px-3 py-2 text-right whitespace-nowrap font-medium ${txAmountColor(r.amount, acctType, r.category_slug)}`}>
                           {fmtUsd(r.amount, { sign: true })}
                         </td>
-                        <td className="px-3 py-2 text-text-muted truncate max-w-[140px]">{r.account_name ?? "—"}</td>
-                        <td className="px-3 py-2 min-w-[140px]">
-                          <Select value={effectiveEntityId} onChange={e => void updateRow(r.id, { entity_id: e.target.value || null })}>
+                        <td className="px-3 py-2 text-text-muted truncate">{r.account_name ?? "—"}</td>
+                        <td className="px-3 py-2">
+                          <Select className="w-full" value={effectiveEntityId} onChange={e => void updateRow(r.id, { entity_id: e.target.value || null })}>
                             <option value="">—</option>
                             {entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
                           </Select>
                         </td>
-                        <td className="px-3 py-2 min-w-[180px]">
-                          <Select value={r.category_id ?? ""} onChange={e => void updateRow(r.id, { category_id: e.target.value || null, classification_method: "manual" })}>
+                        <td className="px-3 py-2">
+                          <Select className="w-full" value={r.category_id ?? ""} onChange={e => void updateRow(r.id, { category_id: e.target.value || null, classification_method: "manual" })}>
                             <option value="">—</option>
                             {filterCategoriesByEntity(categories, effectiveEntityId, entities).map(c =>
                               <option key={c.id} value={c.id}>{categoryLabel(c, ambiguousCategoryNames)}</option>)}
