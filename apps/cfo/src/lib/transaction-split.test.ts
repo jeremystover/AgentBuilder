@@ -3,6 +3,7 @@ import { cleanItemName, computeAppleSplits, computeAmazonSplits, computeEtsySpli
 import type { AppleContext } from './email-parsers/apple';
 import type { AmazonContext } from './email-parsers/amazon';
 import type { EtsyContext } from './email-parsers/etsy';
+import type { EbayContext } from './email-parsers/ebay';
 import type { VenmoContext } from './email-parsers/venmo';
 
 function apple(items: Array<{ name: string; price: number }>): AppleContext {
@@ -195,5 +196,12 @@ describe('deriveDescription', () => {
     expect(deriveDescription('etsy', etsy([
       { name: 'A', price: 1 }, { name: 'B', price: 2 },
     ]))).toBeNull();
+  });
+  it('uses the item name for an eBay order', () => {
+    const e: EbayContext = {
+      order_id: '05-14447-26915', item_name: 'CST/berger Magna-Trak 200 Magnetic Locator',
+      total_amount: 189.99, date: '2026-01-22',
+    };
+    expect(deriveDescription('ebay', e)).toBe('CST/berger Magna-Trak 200 Magnetic Locator');
   });
 });

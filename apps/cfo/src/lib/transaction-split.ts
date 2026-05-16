@@ -17,6 +17,7 @@ import { db, type Sql } from './db';
 import type { AppleContext } from './email-parsers/apple';
 import type { AmazonContext } from './email-parsers/amazon';
 import type { EtsyContext } from './email-parsers/etsy';
+import type { EbayContext } from './email-parsers/ebay';
 import type { VenmoContext } from './email-parsers/venmo';
 
 const MAX_DESC = 140;
@@ -209,6 +210,10 @@ export function deriveDescription(vendor: string, context: unknown): string | nu
     }
     return null;
   }
+  if (vendor === 'ebay') {
+    const e = context as EbayContext;
+    return e.item_name ? clip(e.item_name) : null;
+  }
   if (vendor === 'venmo') {
     const v = context as VenmoContext;
     const d = (v.memo && v.memo.trim()) || v.counterparty;
@@ -322,6 +327,7 @@ export async function backfillEmailEnrichment(env: Env): Promise<BackfillResult>
       const apple = norm.apple as AppleContext | undefined;
       const amazon = norm.amazon as AmazonContext | undefined;
       const etsy = norm.etsy as EtsyContext | undefined;
+      const ebay = norm.ebay as EbayContext | undefined;
       const venmo = norm.venmo as VenmoContext | undefined;
       const malformed = JSON.stringify(r.supplement_json) !== JSON.stringify(norm);
 
@@ -356,9 +362,11 @@ export async function backfillEmailEnrichment(env: Env): Promise<BackfillResult>
           ? deriveDescription('amazon', amazon)
           : etsy
             ? deriveDescription('etsy', etsy)
-            : venmo
-              ? deriveDescription('venmo', venmo)
-              : null;
+            : ebay
+              ? deriveDescription('ebay', ebay)
+              : venmo
+                ? deriveDescription('venmo', venmo)
+                : null;
 
       if (malformed) {
         await sql`
