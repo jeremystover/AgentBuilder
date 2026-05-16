@@ -1,8 +1,9 @@
 /**
- * Approved transactions list + edit endpoints. Editing approved
- * transactions sets status='pending_review' which moves them out of this
- * view and back into the review queue (in `transactions`, not back to
- * raw_transactions).
+ * Approved transactions list + edit endpoints. Field edits update the
+ * transactions ledger row in place. Re-opening (status='pending_review')
+ * re-stages the originating raw_transactions row — carrying the latest
+ * edits forward — and deletes the ledger row, so the item reappears in
+ * the review queue.
  */
 
 import type { Env } from '../types';
@@ -184,7 +185,9 @@ export async function handleUpdateTransaction(req: Request, env: Env, id: string
     if ('is_transfer' in body) await sql`UPDATE transactions SET is_transfer = ${body.is_transfer ?? false}, updated_at = now() WHERE id = ${id}`;
     if ('is_reimbursable' in body) await sql`UPDATE transactions SET is_reimbursable = ${body.is_reimbursable ?? false}, updated_at = now() WHERE id = ${id}`;
     if (body.status === 'pending_review') {
-      await sql`UPDATE transactions SET status = 'pending_review', approved_at = NULL, updated_at = now() WHERE id = ${id}`;
+      const reopened = await reopenToReview(sql, id);
+      if (!reopened) return jsonError('cannot re-open: transaction has no originating review row', 409);
+      return jsonOk({ ok: true, reopened: true });
     }
     return jsonOk({ ok: true });
   } catch (err) {
@@ -192,4 +195,29 @@ export async function handleUpdateTransaction(req: Request, env: Env, id: string
   } finally {
     await sql.end({ timeout: 5 }).catch(() => {});
   }
+}
+
+/**
+ * Re-open an approved transaction: re-stage its originating raw_transactions
+ * row (carrying the latest classification edits forward) and delete the
+ * ledger row, so the item reappears in the review queue. Returns false if
+ * the transaction has no raw_id to re-stage.
+ */
+async function reopenToReview(sql: Sql, id: string): Promise<boolean> {
+  const restaged = await sql<Array<{ id: string }>>`
+    UPDATE raw_transactions r
+    SET status = 'staged', waiting_for = NULL,
+        entity_id = t.entity_id, category_id = t.category_id,
+        classification_method = t.classification_method,
+        ai_confidence = t.ai_confidence, ai_notes = t.ai_notes,
+        human_notes = t.human_notes,
+        is_transfer = t.is_transfer, is_reimbursable = t.is_reimbursable,
+        expense_flag = t.expense_flag
+    FROM transactions t
+    WHERE t.id = ${id} AND r.id = t.raw_id
+    RETURNING r.id
+  `;
+  if (restaged.length === 0) return false;
+  await sql`DELETE FROM transactions WHERE id = ${id}`;
+  return true;
 }
