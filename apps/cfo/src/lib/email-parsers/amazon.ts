@@ -12,7 +12,7 @@ export interface AmazonContext {
   order_date: string | null;
   shipment_date: string | null;
   total_amount: number | null;
-  items: Array<{ name: string }>;
+  items: Array<{ name: string; price?: number }>;
   ship_to: string | null;
   shipping_address: string | null;
   order_status: 'Confirmed' | 'Shipped' | 'Delivered';
@@ -72,6 +72,32 @@ function productsFromHtml(html: string): string[] {
   return names;
 }
 
+/**
+ * Per-item names + prices from an order-confirmation email. Scans table rows
+ * that contain a product (`/dp/`) link. The HTML is cut at the order-total
+ * label first so "recommended for you" blocks below the order summary aren't
+ * scraped as ordered items.
+ */
+function extractPricedItemsFromHtml(html: string): Array<{ name: string; price?: number }> {
+  const totalIdx = html.search(/order total|grand total|total for this order/i);
+  const scope = totalIdx > 0 ? html.slice(0, totalIdx) : html;
+
+  const items: Array<{ name: string; price?: number }> = [];
+  const rowRe = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = rowRe.exec(scope)) !== null) {
+    const rowHtml = m[1]!;
+    const nameMatch = rowHtml.match(/<a\b[^>]*\/dp\/[^"']*["'][^>]*>\s*([^<]{4,120}?)\s*<\/a>/i);
+    if (!nameMatch) continue;
+    const name = nameMatch[1]!.trim();
+    if (items.some(it => it.name === name)) continue;
+    const priceMatch = stripHtml(rowHtml).match(/\$([\d,]+\.\d{2})/);
+    const price = priceMatch ? parseFloat(priceMatch[1]!.replace(/,/g, '')) : NaN;
+    items.push(isFinite(price) && price > 0 ? { name, price } : { name });
+  }
+  return items;
+}
+
 function extractShipping(text: string): { shipTo: string | null; address: string | null } {
   const m = text.match(/(?:Shipping to|Ships to|Ship to):?\s*([\w\s]+?)\s*\n([\w\s,\.]+,\s*[A-Z]{2}\s*\d{5})/i);
   if (m) return { shipTo: m[1]!.trim(), address: `${m[1]!.trim()}, ${m[2]!.trim()}` };
@@ -102,10 +128,14 @@ export function parseAmazonEmail(message: GmailMessage): AmazonContext | null {
     const orderDate = isOrderConfirmation ? receivedDate : null;
     const shipmentDate = isShipment ? receivedDate : null;
 
-    const productNames = [
-      ...productsFromHtml(html),
-      ...productsFromSubject(subject),
-    ].filter((v, i, a) => a.indexOf(v) === i);
+    const pricedItems = html ? extractPricedItemsFromHtml(html) : [];
+    const fallbackNames = pricedItems.length === 0
+      ? [...productsFromHtml(html), ...productsFromSubject(subject)].filter((v, i, a) => a.indexOf(v) === i)
+      : [];
+    const items: Array<{ name: string; price?: number }> =
+      pricedItems.length > 0 ? pricedItems
+      : fallbackNames.length > 0 ? fallbackNames.map(name => ({ name }))
+      : [{ name: `Amazon Order ${orderId}` }];
 
     const { shipTo, address } = extractShipping(bodyText);
 
@@ -114,7 +144,7 @@ export function parseAmazonEmail(message: GmailMessage): AmazonContext | null {
       order_date: orderDate,
       shipment_date: shipmentDate,
       total_amount: totalAmount,
-      items: (productNames.length > 0 ? productNames : [`Amazon Order ${orderId}`]).map(name => ({ name })),
+      items,
       ship_to: shipTo,
       shipping_address: address,
       order_status: isOrderConfirmation ? 'Confirmed' : isShipment ? 'Shipped' : 'Delivered',
