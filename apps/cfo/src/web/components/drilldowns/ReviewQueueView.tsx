@@ -229,7 +229,9 @@ export function ReviewQueueView() {
       };
       const res = await api.post<{ updated: number }>("/api/web/review/bulk", payload);
       toast.success(`Updated ${res.updated} row${res.updated !== 1 ? "s" : ""}`);
-      clearSelection();
+      // Keep the selection after set_entity/set_category/etc. so the user can
+      // chain edits; only 'approve' removes the rows from the queue.
+      if (body.action === "approve") clearSelection();
       await refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));

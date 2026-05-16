@@ -21,6 +21,7 @@ import { handleListAccounts } from './routes/web-lookups';
 import { handleListRules, handleCreateRule } from './routes/web-rules';
 import { runTellerSync } from './routes/teller';
 import { runEmailSync } from './lib/email-sync';
+import { backfillEmailEnrichment } from './lib/transaction-split';
 import type { VendorHint } from './lib/email-matchers/match';
 import { handleListReportConfigs, handleGenerateReport } from './routes/reports';
 import { db } from './lib/db';
@@ -176,6 +177,12 @@ export const MCP_TOOLS = [
     },
   },
   {
+    name: 'email_enrichment_backfill',
+    description:
+      'One-time: re-apply email enrichment to already-matched review-queue transactions — split multi-item Apple receipts into per-item rows and rewrite Apple/Venmo descriptions to the item name / payment memo.',
+    inputSchema: { type: 'object' as const, properties: {}, additionalProperties: false },
+  },
+  {
     name: 'report_list_configs',
     description:
       'List available report configurations (Schedule C, Schedule E, family summary, etc.) with their IDs and last run dates.',
@@ -305,6 +312,9 @@ export async function dispatchTool(name: string, args: Record<string, unknown>, 
 
     case 'sync_run':
       return syncRun(args, env);
+
+    case 'email_enrichment_backfill':
+      return JSON.stringify(await backfillEmailEnrichment(env));
 
     case 'plan_list':
       return respondText(await handleListPlans(getReq('https://cfo.invalid/api/web/plans'), env));
