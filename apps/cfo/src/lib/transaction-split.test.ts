@@ -1,10 +1,18 @@
 import { describe, it, expect } from 'vitest';
-import { cleanItemName, computeAppleSplits, deriveDescription, normalizeSupplement } from './transaction-split';
+import { cleanItemName, computeAppleSplits, computeAmazonSplits, deriveDescription, normalizeSupplement } from './transaction-split';
 import type { AppleContext } from './email-parsers/apple';
+import type { AmazonContext } from './email-parsers/amazon';
 import type { VenmoContext } from './email-parsers/venmo';
 
 function apple(items: Array<{ name: string; price: number }>): AppleContext {
   return { receipt_id: 'M123', total_amount: 0, items, date: '2026-05-06', date_is_from_body: true };
+}
+
+function amazon(items: Array<{ name: string; price?: number }>): AmazonContext {
+  return {
+    order_id: '111-2222222-3333333', order_date: '2026-05-06', shipment_date: null,
+    total_amount: 0, items, ship_to: null, shipping_address: null, order_status: 'Confirmed',
+  };
 }
 
 describe('cleanItemName', () => {
@@ -57,6 +65,49 @@ describe('computeAppleSplits', () => {
   });
 });
 
+describe('computeAmazonSplits', () => {
+  it('splits a 2-item order with a tax & shipping remainder', () => {
+    const rows = computeAmazonSplits(54.30, amazon([
+      { name: 'USB-C Cable', price: 12.99 },
+      { name: 'Desk Lamp', price: 38.00 },
+    ]));
+    expect(rows!).toHaveLength(3);
+    expect(rows![2]!.description).toBe('Amazon — tax & shipping');
+    expect(rows![2]!.amount).toBeCloseTo(3.31, 2);
+    expect(rows!.reduce((s, r) => s + r.amount, 0)).toBeCloseTo(54.30, 2);
+  });
+
+  it('preserves the sign of a negative (bank debit) charge', () => {
+    const rows = computeAmazonSplits(-23.98, amazon([
+      { name: 'Item A', price: 11.99 },
+      { name: 'Item B', price: 11.99 },
+    ]));
+    expect(rows!.map(r => r.amount)).toEqual([-11.99, -11.99]);
+  });
+
+  it('returns null when an item has no price', () => {
+    expect(computeAmazonSplits(30, amazon([
+      { name: 'Priced', price: 15 }, { name: 'Unpriced' },
+    ]))).toBeNull();
+  });
+
+  it('returns null when item prices exceed the charge (noisy scrape)', () => {
+    expect(computeAmazonSplits(20, amazon([
+      { name: 'A', price: 15 }, { name: 'B', price: 18 },
+    ]))).toBeNull();
+  });
+
+  it('returns null when the remainder dominates the charge', () => {
+    expect(computeAmazonSplits(100, amazon([
+      { name: 'A', price: 10 }, { name: 'B', price: 12 },
+    ]))).toBeNull();
+  });
+
+  it('returns null for a single-item order', () => {
+    expect(computeAmazonSplits(9.99, amazon([{ name: 'One Thing', price: 9.99 }]))).toBeNull();
+  });
+});
+
 describe('normalizeSupplement', () => {
   it('passes through a well-formed object', () => {
     const ok = { apple: { items: [{ name: 'A', price: 1 }] } };
@@ -95,5 +146,13 @@ describe('deriveDescription', () => {
     expect(deriveDescription('apple', apple([
       { name: 'A', price: 1 }, { name: 'B', price: 2 },
     ]))).toBeNull();
+  });
+  it('uses the item name for a single-item Amazon order', () => {
+    expect(deriveDescription('amazon', amazon([{ name: 'USB-C Cable' }]))).toBe('USB-C Cable');
+  });
+  it('summarizes a multi-item Amazon order as "first +N more"', () => {
+    expect(deriveDescription('amazon', amazon([
+      { name: 'USB-C Cable' }, { name: 'Desk Lamp' }, { name: 'Mouse Pad' },
+    ]))).toBe('USB-C Cable +2 more');
   });
 });

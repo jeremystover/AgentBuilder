@@ -24,7 +24,7 @@ import {
   type MatchCandidate,
   type VendorHint,
 } from './email-matchers/match';
-import { splitApple, deriveDescription } from './transaction-split';
+import { splitApple, splitAmazon, deriveDescription } from './transaction-split';
 
 export const VENDORS: readonly VendorHint[] = ['amazon', 'venmo', 'apple', 'etsy'] as const;
 
@@ -151,7 +151,9 @@ async function syncVendor(env: Env, sql: Sql, vendor: VendorHint): Promise<Vendo
       const parentId = matchResult.transaction_id;
       const split = vendor === 'apple'
         ? await splitApple(sql, parentId, context as AppleContext)
-        : 0;
+        : vendor === 'amazon'
+          ? await splitAmazon(sql, parentId, context as AmazonContext)
+          : 0;
       if (split === 0) {
         await updateSupplement(sql, vendor, parentId, context);
         const desc = deriveDescription(vendor, context);

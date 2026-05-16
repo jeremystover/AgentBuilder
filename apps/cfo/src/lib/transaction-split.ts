@@ -1,19 +1,21 @@
 /**
- * Apple receipt splitting + email-derived descriptions.
+ * Apple/Amazon receipt splitting + email-derived descriptions.
  *
- * A multi-item Apple receipt matched to a single bank charge is replaced by
- * one staged child raw_transactions row per item (plus a "tax & fees" row
- * when item prices don't sum to the charge). The original row is kept with
- * status 'split' for Teller dedup and never enters the ledger.
+ * A multi-item Apple receipt or Amazon order matched to a single bank charge
+ * is replaced by one staged child raw_transactions row per item (plus a
+ * "tax & fees" row when item prices don't sum to the charge). The original
+ * row is kept with status 'split' for Teller dedup and never enters the
+ * ledger.
  *
- * For single-item Apple receipts and Venmo payments there is nothing to
- * split — instead the row's description is rewritten to the item name /
- * payment memo so it is readable in the review table.
+ * For single-item receipts and Venmo payments there is nothing to split —
+ * instead the row's description is rewritten to the item name / payment memo
+ * so it is readable in the review table.
  */
 
 import type { Env } from '../types';
 import { db, type Sql } from './db';
 import type { AppleContext } from './email-parsers/apple';
+import type { AmazonContext } from './email-parsers/amazon';
 import type { VenmoContext } from './email-parsers/venmo';
 
 const MAX_DESC = 140;
@@ -113,6 +115,42 @@ export function computeAppleSplits(parentAmount: number, apple: AppleContext): A
   return rows;
 }
 
+/**
+ * Build per-item split rows for an Amazon order, or null when it can't be
+ * split accurately. Amazon emails only itemize prices on the order
+ * confirmation, and the scraped list can be noisy, so a split is only
+ * produced when every item has a price and those prices sum to within a
+ * tax+shipping margin of the charge.
+ */
+export function computeAmazonSplits(parentAmount: number, amazon: AmazonContext): AppleSplitRow[] | null {
+  const items = amazon.items ?? [];
+  if (items.length < 2) return null;
+  if (!items.every(it => typeof it.price === 'number' && isFinite(it.price) && it.price > 0)) return null;
+
+  const sign = parentAmount < 0 ? -1 : 1;
+  const target = round2(Math.abs(parentAmount));
+  const itemsSum = round2(items.reduce((s, it) => s + it.price!, 0));
+  const remainder = round2(target - itemsSum);
+  // Items can't exceed the charge, and tax+shipping shouldn't dominate it —
+  // outside that band the scraped item list is untrustworthy, so don't split.
+  if (remainder < -0.01 || remainder > target * 0.35) return null;
+
+  const base = { order_id: amazon.order_id };
+  const rows: AppleSplitRow[] = items.map(it => ({
+    description: clip(it.name) || 'Amazon item',
+    amount: round2(it.price!) * sign,
+    supplement: { amazon: { ...base, item: { name: it.name, price: it.price }, split_child: true } },
+  }));
+  if (Math.abs(remainder) >= 0.01) {
+    rows.push({
+      description: 'Amazon — tax & shipping',
+      amount: remainder * sign,
+      supplement: { amazon: { ...base, tax_and_shipping: true, split_child: true } },
+    });
+  }
+  return rows;
+}
+
 /** A readable description from email enrichment, or null to keep the bank one. */
 export function deriveDescription(vendor: string, context: unknown): string | null {
   if (vendor === 'apple') {
@@ -123,6 +161,14 @@ export function deriveDescription(vendor: string, context: unknown): string | nu
     }
     return null;
   }
+  if (vendor === 'amazon') {
+    const a = context as AmazonContext;
+    const items = a.items ?? [];
+    if (items.length === 0) return null;
+    const first = clip(items[0]!.name);
+    if (!first) return null;
+    return items.length > 1 ? clip(`${first} +${items.length - 1} more`) : first;
+  }
   if (vendor === 'venmo') {
     const v = context as VenmoContext;
     const d = (v.memo && v.memo.trim()) || v.counterparty;
@@ -132,11 +178,17 @@ export function deriveDescription(vendor: string, context: unknown): string | nu
 }
 
 /**
- * Split a multi-item Apple receipt's matched bank row into per-item children.
- * Returns the number of children created (0 if not splittable or the parent
- * is no longer in the review queue).
+ * Replace a matched bank row with one staged child per split row, keeping the
+ * parent as status 'split'. Returns the number of children created (0 if not
+ * splittable or the parent is no longer in the review queue).
  */
-export async function splitApple(sql: Sql, parentRawId: string, apple: AppleContext): Promise<number> {
+async function splitMatched(
+  sql: Sql,
+  parentRawId: string,
+  merchant: string,
+  parentSupplement: Record<string, unknown>,
+  compute: (parentAmount: number) => AppleSplitRow[] | null,
+): Promise<number> {
   const parentRows = await sql<Array<{
     account_id: string | null;
     source: string;
@@ -151,10 +203,9 @@ export async function splitApple(sql: Sql, parentRawId: string, apple: AppleCont
   if (!parent) return 0;
   if (parent.status !== 'staged' && parent.status !== 'waiting') return 0;
 
-  const splits = computeAppleSplits(Number(parent.amount), apple);
+  const splits = compute(Number(parent.amount));
   if (!splits) return 0;
 
-  const parentSupplement = { apple };
   await sql.begin(async (tx) => {
     for (const s of splits) {
       await tx`
@@ -162,7 +213,7 @@ export async function splitApple(sql: Sql, parentRawId: string, apple: AppleCont
           (account_id, source, date, amount, description, merchant, status, supplement_json, parent_raw_id)
         VALUES (
           ${parent.account_id}, ${parent.source}, ${parent.date}, ${s.amount},
-          ${s.description}, 'Apple', 'staged', ${JSON.stringify(s.supplement)}::jsonb, ${parentRawId}
+          ${s.description}, ${merchant}, 'staged', ${JSON.stringify(s.supplement)}::jsonb, ${parentRawId}
         )
       `;
     }
@@ -175,19 +226,32 @@ export async function splitApple(sql: Sql, parentRawId: string, apple: AppleCont
   return splits.length;
 }
 
+/** Split a multi-item Apple receipt's matched bank row into per-item children. */
+export async function splitApple(sql: Sql, parentRawId: string, apple: AppleContext): Promise<number> {
+  return splitMatched(sql, parentRawId, 'Apple', { apple }, amt => computeAppleSplits(amt, apple));
+}
+
+/** Split a multi-item Amazon order's matched bank row into per-item children. */
+export async function splitAmazon(sql: Sql, parentRawId: string, amazon: AmazonContext): Promise<number> {
+  return splitMatched(sql, parentRawId, 'Amazon', { amazon }, amt => computeAmazonSplits(amt, amazon));
+}
+
 export interface BackfillResult {
   scanned: number;
   apple_split: number;
+  amazon_split: number;
   rows_created: number;
   descriptions_updated: number;
   supplement_repaired: number;
 }
 
 /**
- * One-time backfill: re-apply Apple splitting and Apple/Venmo descriptions to
+ * One-time backfill: re-apply splitting and Apple/Amazon/Venmo descriptions to
  * review-queue rows that were already email-matched before this was enabled.
  * Also repairs any supplement_json that was stored in a legacy malformed
- * shape so the enrichment data is readable again.
+ * shape so the enrichment data is readable again. Amazon rows enriched before
+ * per-item prices were parsed have no prices to split on — they get a
+ * description only.
  */
 export async function backfillEmailEnrichment(env: Env): Promise<BackfillResult> {
   const sql = db(env);
@@ -201,6 +265,7 @@ export async function backfillEmailEnrichment(env: Env): Promise<BackfillResult>
         AND supplement_json IS NOT NULL
     `;
     let appleSplit = 0;
+    let amazonSplit = 0;
     let rowsCreated = 0;
     let descUpdated = 0;
     let repaired = 0;
@@ -208,6 +273,7 @@ export async function backfillEmailEnrichment(env: Env): Promise<BackfillResult>
     for (const r of rows) {
       const norm = normalizeSupplement(r.supplement_json);
       const apple = norm.apple as AppleContext | undefined;
+      const amazon = norm.amazon as AmazonContext | undefined;
       const venmo = norm.venmo as VenmoContext | undefined;
       const malformed = JSON.stringify(r.supplement_json) !== JSON.stringify(norm);
 
@@ -219,12 +285,22 @@ export async function backfillEmailEnrichment(env: Env): Promise<BackfillResult>
           continue;
         }
       }
+      if (amazon && Array.isArray(amazon.items) && amazon.items.length >= 2) {
+        const created = await splitAmazon(sql, r.id, amazon);
+        if (created > 0) {
+          amazonSplit++;
+          rowsCreated += created;
+          continue;
+        }
+      }
 
       const desc = apple
         ? deriveDescription('apple', apple)
-        : venmo
-          ? deriveDescription('venmo', venmo)
-          : null;
+        : amazon
+          ? deriveDescription('amazon', amazon)
+          : venmo
+            ? deriveDescription('venmo', venmo)
+            : null;
 
       if (malformed) {
         await sql`
@@ -244,6 +320,7 @@ export async function backfillEmailEnrichment(env: Env): Promise<BackfillResult>
     return {
       scanned: rows.length,
       apple_split: appleSplit,
+      amazon_split: amazonSplit,
       rows_created: rowsCreated,
       descriptions_updated: descUpdated,
       supplement_repaired: repaired,
