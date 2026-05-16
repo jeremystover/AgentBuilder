@@ -371,7 +371,7 @@ export async function handleReviewNext(req: Request, env: Env): Promise<Response
       LEFT JOIN categories c ON c.id = t.category_id
       WHERE t.status = 'approved'
         AND (
-          (${merchant} IS NOT NULL AND t.merchant ILIKE ${merchant})
+          (${merchant}::text IS NOT NULL AND t.merchant ILIKE ${merchant})
           OR ABS(t.amount - ${amount}) < 0.01
         )
       ORDER BY t.approved_at DESC

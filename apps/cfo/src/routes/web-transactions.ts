@@ -12,22 +12,22 @@ import { db, type Sql } from '../lib/db';
 const ALLOWED_SORT = new Set(['date', 'amount', 'description', 'approved_at']);
 
 function transactionsWhere(sql: Sql, url: URL): ReturnType<Sql> {
-  const parts: ReturnType<Sql>[] = [sql`status = 'approved'`];
+  const parts: ReturnType<Sql>[] = [sql`t.status = 'approved'`];
   const q = url.searchParams.get('q');
   if (q) {
     const pattern = `%${q}%`;
-    parts.push(sql`(description ILIKE ${pattern} OR merchant ILIKE ${pattern})`);
+    parts.push(sql`(t.description ILIKE ${pattern} OR t.merchant ILIKE ${pattern})`);
   }
   const dateFrom = url.searchParams.get('date_from');
-  if (dateFrom) parts.push(sql`date >= ${dateFrom}`);
+  if (dateFrom) parts.push(sql`t.date >= ${dateFrom}`);
   const dateTo = url.searchParams.get('date_to');
-  if (dateTo) parts.push(sql`date <= ${dateTo}`);
+  if (dateTo) parts.push(sql`t.date <= ${dateTo}`);
   const entity = url.searchParams.get('entity_id');
-  if (entity) parts.push(sql`entity_id = ${entity}`);
+  if (entity) parts.push(sql`t.entity_id = ${entity}`);
   const cat = url.searchParams.get('category_id');
-  if (cat) parts.push(sql`category_id = ${cat}`);
+  if (cat) parts.push(sql`t.category_id = ${cat}`);
   const acct = url.searchParams.get('account_id');
-  if (acct) parts.push(sql`account_id = ${acct}`);
+  if (acct) parts.push(sql`t.account_id = ${acct}`);
 
   let combined = parts[0]!;
   for (let i = 1; i < parts.length; i++) combined = sql`${combined} AND ${parts[i]!}`;
@@ -45,7 +45,7 @@ export async function handleListTransactions(req: Request, env: Env): Promise<Re
   const sql = db(env);
   try {
     const where = transactionsWhere(sql, url);
-    const totalRows = await sql<Array<{ total: string }>>`SELECT COUNT(*)::text AS total FROM transactions WHERE ${where}`;
+    const totalRows = await sql<Array<{ total: string }>>`SELECT COUNT(*)::text AS total FROM transactions t WHERE ${where}`;
     const total = Number(totalRows[0]?.total ?? 0);
 
     const rows = await sql<Array<Record<string, unknown>>>`
