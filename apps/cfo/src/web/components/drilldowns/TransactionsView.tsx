@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { RefreshCw, Edit2 } from "lucide-react";
+import { RefreshCw, Edit2, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import {
   Button, Card, Badge, Input, Select, Drawer, PageHeader, EmptyState, SortTh, fmtUsd,
@@ -77,11 +77,24 @@ export function TransactionsView() {
 
   useEffect(() => { void refresh(); }, [refresh]);
 
-  const reopen = async (id: string) => {
+  const updateTx = async (id: string, body: Partial<TransactionRow>) => {
+    setBusy(true);
+    try {
+      await api.put(`/api/web/transactions/${id}`, body);
+      setOpenRow(prev => (prev && prev.id === id ? { ...prev, ...body } : prev));
+      await refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const sendToReview = async (id: string) => {
     setBusy(true);
     try {
       await api.put(`/api/web/transactions/${id}`, { status: "pending_review" });
-      toast.success("Re-opened for review");
+      toast.success("Sent back to review queue");
       setOpenRow(null);
       await refresh();
     } catch (e) {
@@ -212,44 +225,106 @@ export function TransactionsView() {
         title={openRow ? `${openRow.date} · ${fmtUsd(openRow.amount, { sign: true })}` : ""}
         footer={openRow && (
           <div className="flex justify-end">
-            <Button onClick={() => void reopen(openRow.id)} disabled={busy}>
-              <Edit2 className="w-4 h-4" /> Re-open for edit
+            <Button onClick={() => void sendToReview(openRow.id)} disabled={busy}>
+              <RotateCcw className="w-4 h-4" /> Send back to review
             </Button>
           </div>
         )}
       >
         {openRow && (
-          <div className="space-y-4 text-sm">
-            <section>
-              <div className="text-xs uppercase text-text-muted mb-1">Transaction</div>
-              <div className="font-medium">{openRow.description}</div>
-              {openRow.merchant && <div className="text-text-muted">{openRow.merchant}</div>}
-              <div className="mt-1 text-text-muted">
-                {openRow.date} · {fmtUsd(openRow.amount, { sign: true })} · {openRow.account_name ?? "—"}
-              </div>
-            </section>
-            <section className="grid grid-cols-2 gap-3">
-              <Field label="Entity">{openRow.entity_name ?? "—"}</Field>
-              <Field label="Category">{openRow.category_name ?? "—"}</Field>
-              <Field label="Method">{openRow.classification_method ?? "—"}</Field>
-              <Field label="Approved at">{openRow.approved_at ?? "—"}</Field>
-            </section>
-            {openRow.ai_notes && (
-              <section>
-                <div className="text-xs uppercase text-text-muted mb-1">AI reasoning</div>
-                <div className="bg-bg-elevated rounded-lg p-3 text-text-muted">{openRow.ai_notes}</div>
-              </section>
-            )}
-            {openRow.human_notes && (
-              <section>
-                <div className="text-xs uppercase text-text-muted mb-1">Notes</div>
-                <div className="bg-bg-elevated rounded-lg p-3">{openRow.human_notes}</div>
-              </section>
-            )}
-            <CheckImagesPanel endpoint={`/api/web/transactions/${openRow.id}`} />
-          </div>
+          <TransactionDetail
+            key={openRow.id}
+            row={openRow}
+            entities={entities}
+            categories={categories}
+            busy={busy}
+            onUpdate={updateTx}
+          />
         )}
       </Drawer>
+    </div>
+  );
+}
+
+interface TransactionDetailProps {
+  row: TransactionRow;
+  entities: Entity[];
+  categories: Category[];
+  busy: boolean;
+  onUpdate: (id: string, body: Partial<TransactionRow>) => Promise<void>;
+}
+
+function TransactionDetail({ row, entities, categories, busy, onUpdate }: TransactionDetailProps) {
+  const [notes, setNotes] = useState(row.human_notes ?? "");
+
+  return (
+    <div className="space-y-4 text-sm">
+      <section>
+        <div className="text-xs uppercase text-text-muted mb-1">Transaction</div>
+        <div className="font-medium">{row.description}</div>
+        {row.merchant && <div className="text-text-muted">{row.merchant}</div>}
+        <div className="mt-1 text-text-muted">
+          {row.date} · {fmtUsd(row.amount, { sign: true })} · {row.account_name ?? "—"}
+        </div>
+      </section>
+
+      <section className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="block text-xs uppercase text-text-muted mb-1">Entity</label>
+          <Select className="w-full" value={row.entity_id ?? ""} disabled={busy}
+            onChange={e => void onUpdate(row.id, { entity_id: e.target.value || null })}>
+            <option value="">—</option>
+            {entities.map(en => <option key={en.id} value={en.id}>{en.name}</option>)}
+          </Select>
+        </div>
+        <div>
+          <label className="block text-xs uppercase text-text-muted mb-1">Category</label>
+          <Select className="w-full" value={row.category_id ?? ""} disabled={busy}
+            onChange={e => void onUpdate(row.id, { category_id: e.target.value || null })}>
+            <option value="">—</option>
+            {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </Select>
+        </div>
+      </section>
+
+      <section className="flex items-center gap-4">
+        <label className="inline-flex items-center gap-2">
+          <input type="checkbox" checked={row.is_transfer} disabled={busy}
+            onChange={e => void onUpdate(row.id, { is_transfer: e.target.checked })} />
+          Transfer
+        </label>
+        <label className="inline-flex items-center gap-2">
+          <input type="checkbox" checked={row.is_reimbursable} disabled={busy}
+            onChange={e => void onUpdate(row.id, { is_reimbursable: e.target.checked })} />
+          Reimbursable
+        </label>
+      </section>
+
+      <section className="grid grid-cols-2 gap-3">
+        <Field label="Method">{row.classification_method ?? "—"}</Field>
+        <Field label="Approved at">{row.approved_at ?? "—"}</Field>
+      </section>
+
+      {row.ai_notes && (
+        <section>
+          <div className="text-xs uppercase text-text-muted mb-1">AI reasoning</div>
+          <div className="bg-bg-elevated rounded-lg p-3 text-text-muted">{row.ai_notes}</div>
+        </section>
+      )}
+
+      <section>
+        <label className="block text-xs uppercase text-text-muted mb-1">Notes</label>
+        <textarea
+          value={notes}
+          onChange={e => setNotes(e.target.value)}
+          onBlur={() => { if (notes !== (row.human_notes ?? "")) void onUpdate(row.id, { human_notes: notes }); }}
+          rows={3}
+          disabled={busy}
+          className="w-full rounded-lg border border-border bg-bg-surface px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent-primary"
+        />
+      </section>
+
+      <CheckImagesPanel endpoint={`/api/web/transactions/${row.id}`} />
     </div>
   );
 }
