@@ -27,6 +27,39 @@ function clip(s: string): string {
   return t.length > MAX_DESC ? t.slice(0, MAX_DESC).trim() : t;
 }
 
+function safeParse(s: string): unknown {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return s;
+  }
+}
+
+/**
+ * Coerce a stored supplement_json value into a clean { vendor: context }
+ * object. Tolerates legacy malformed shapes — a value double-encoded as a
+ * JSON string, or an array like `[{}, "<json-string>"]` produced when an
+ * already-stringified value was concatenated onto an empty object.
+ */
+export function normalizeSupplement(raw: unknown): Record<string, unknown> {
+  let v: unknown = raw;
+  if (typeof v === 'string') v = safeParse(v);
+  if (Array.isArray(v)) {
+    const merged: Record<string, unknown> = {};
+    for (const el of v) {
+      const obj = typeof el === 'string' ? safeParse(el) : el;
+      if (obj && typeof obj === 'object' && !Array.isArray(obj)) Object.assign(merged, obj);
+    }
+    v = merged;
+  }
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+  const out: Record<string, unknown> = {};
+  for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+    out[k] = typeof val === 'string' ? safeParse(val) : val;
+  }
+  return out;
+}
+
 /** Best-effort cleanup of noisy Apple item names from receipt HTML. */
 export function cleanItemName(raw: string): string {
   let s = (raw ?? '')
@@ -121,6 +154,7 @@ export async function splitApple(sql: Sql, parentRawId: string, apple: AppleCont
   const splits = computeAppleSplits(Number(parent.amount), apple);
   if (!splits) return 0;
 
+  const parentSupplement = { apple };
   await sql.begin(async (tx) => {
     for (const s of splits) {
       await tx`
@@ -134,8 +168,7 @@ export async function splitApple(sql: Sql, parentRawId: string, apple: AppleCont
     }
     await tx`
       UPDATE raw_transactions
-      SET status = 'split',
-          supplement_json = COALESCE(supplement_json, '{}'::jsonb) || ${JSON.stringify({ apple })}::jsonb
+      SET status = 'split', supplement_json = ${JSON.stringify(parentSupplement)}::jsonb
       WHERE id = ${parentRawId}
     `;
   });
@@ -143,34 +176,42 @@ export async function splitApple(sql: Sql, parentRawId: string, apple: AppleCont
 }
 
 export interface BackfillResult {
+  scanned: number;
   apple_split: number;
   rows_created: number;
   descriptions_updated: number;
+  supplement_repaired: number;
 }
 
 /**
  * One-time backfill: re-apply Apple splitting and Apple/Venmo descriptions to
  * review-queue rows that were already email-matched before this was enabled.
+ * Also repairs any supplement_json that was stored in a legacy malformed
+ * shape so the enrichment data is readable again.
  */
 export async function backfillEmailEnrichment(env: Env): Promise<BackfillResult> {
   const sql = db(env);
   try {
-    const rows = await sql<Array<{ id: string; supplement_json: Record<string, unknown> | null }>>`
+    // Don't filter on `supplement_json ? 'apple'` — legacy malformed rows
+    // store the data in an array/string shape the `?` operator can't see.
+    const rows = await sql<Array<{ id: string; supplement_json: unknown }>>`
       SELECT id, supplement_json FROM raw_transactions
       WHERE status IN ('staged', 'waiting')
         AND parent_raw_id IS NULL
-        AND (supplement_json ? 'apple' OR supplement_json ? 'venmo')
+        AND supplement_json IS NOT NULL
     `;
     let appleSplit = 0;
     let rowsCreated = 0;
     let descUpdated = 0;
+    let repaired = 0;
 
     for (const r of rows) {
-      const sup = r.supplement_json ?? {};
-      const apple = sup.apple as AppleContext | undefined;
-      const venmo = sup.venmo as VenmoContext | undefined;
+      const norm = normalizeSupplement(r.supplement_json);
+      const apple = norm.apple as AppleContext | undefined;
+      const venmo = norm.venmo as VenmoContext | undefined;
+      const malformed = JSON.stringify(r.supplement_json) !== JSON.stringify(norm);
 
-      if (apple) {
+      if (apple && Array.isArray(apple.items) && apple.items.length >= 2) {
         const created = await splitApple(sql, r.id, apple);
         if (created > 0) {
           appleSplit++;
@@ -178,11 +219,20 @@ export async function backfillEmailEnrichment(env: Env): Promise<BackfillResult>
           continue;
         }
       }
+
       const desc = apple
         ? deriveDescription('apple', apple)
         : venmo
           ? deriveDescription('venmo', venmo)
           : null;
+
+      if (malformed) {
+        await sql`
+          UPDATE raw_transactions SET supplement_json = ${JSON.stringify(norm)}::jsonb
+          WHERE id = ${r.id} AND status IN ('staged', 'waiting')
+        `;
+        repaired++;
+      }
       if (desc) {
         await sql`
           UPDATE raw_transactions SET description = ${desc}
@@ -191,7 +241,13 @@ export async function backfillEmailEnrichment(env: Env): Promise<BackfillResult>
         descUpdated++;
       }
     }
-    return { apple_split: appleSplit, rows_created: rowsCreated, descriptions_updated: descUpdated };
+    return {
+      scanned: rows.length,
+      apple_split: appleSplit,
+      rows_created: rowsCreated,
+      descriptions_updated: descUpdated,
+      supplement_repaired: repaired,
+    };
   } finally {
     await sql.end({ timeout: 5 }).catch(() => {});
   }
