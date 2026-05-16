@@ -71,6 +71,7 @@ import {
 import { handleGmailSyncAll, handleGmailSyncVendor, handleGmailStatus } from './routes/gmail';
 import { handleOAuthStart, handleOAuthCallback } from './routes/oauth';
 import { runEmailSync } from './lib/email-sync';
+import { runEmailDiscovery } from './lib/email-discovery';
 
 import { handleSnapshot } from './routes/web-snapshot';
 import {
@@ -311,6 +312,8 @@ function requireMcpAuth(request: Request, env: Env): { ok: true } | { ok: false;
 async function handleNightlySync(env: Env): Promise<void> {
   await runTellerSync(env);
   await runEmailSync(env);
+  // Reverse enrichment: identify whatever known-vendor sync couldn't.
+  await runEmailDiscovery(env).catch(err => console.warn('[cron] email discovery failed', err));
   // Auto-categorize anything newly staged before the user wakes up.
   await runClassify(env).catch(err => console.warn('[cron] classify failed', err));
 }
