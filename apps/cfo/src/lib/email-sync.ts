@@ -30,11 +30,11 @@ import { splitApple, splitAmazon, splitEtsy, deriveDescription } from './transac
 export const VENDORS: readonly VendorHint[] = ['amazon', 'venmo', 'apple', 'etsy', 'ebay'] as const;
 
 const SEARCH_QUERIES: Record<VendorHint, string> = {
-  amazon: 'from:(auto-confirm@amazon.com OR ship-confirm@amazon.com OR shipment-tracking@amazon.com OR order-update@amazon.com) subject:"Your Amazon.com order" newer_than:90d',
-  venmo:  'from:venmo@venmo.com newer_than:90d',
-  apple:  'subject:"receipt from Apple" newer_than:90d',
-  etsy:   '(from:(transaction@etsy.com OR support@etsy.com) OR subject:etsy) newer_than:90d',
-  ebay:   'from:ebay@ebay.com subject:"Order confirmed" newer_than:90d',
+  amazon: 'from:(auto-confirm@amazon.com OR ship-confirm@amazon.com OR shipment-tracking@amazon.com OR order-update@amazon.com) subject:"Your Amazon.com order" newer_than:24m',
+  venmo:  'from:venmo@venmo.com newer_than:24m',
+  apple:  'subject:"receipt from Apple" newer_than:24m',
+  etsy:   '(from:(transaction@etsy.com OR support@etsy.com) OR subject:etsy) newer_than:24m',
+  ebay:   'from:ebay@ebay.com subject:"Order confirmed" newer_than:24m',
 };
 
 const SOURCE_FOR_VENDOR: Record<VendorHint, 'email_amazon' | 'email_venmo' | 'email_apple' | 'email_etsy' | 'email_ebay'> = {
