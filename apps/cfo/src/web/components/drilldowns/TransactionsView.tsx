@@ -155,7 +155,7 @@ export function TransactionsView() {
                 <thead className="text-left text-xs uppercase text-text-muted bg-bg-elevated">
                   <tr>
                     <SortTh col="date" currentSort={sortBy} currentDir={sortDir} onSort={onSort} className="px-3 py-2">Date</SortTh>
-                    <th className="px-3 py-2">Description</th>
+                    <SortTh col="description" currentSort={sortBy} currentDir={sortDir} onSort={onSort} className="px-3 py-2">Description</SortTh>
                     <SortTh col="amount" currentSort={sortBy} currentDir={sortDir} onSort={onSort} className="px-3 py-2 text-right">Amount</SortTh>
                     <th className="px-3 py-2">Account</th>
                     <th className="px-3 py-2">Entity</th>
