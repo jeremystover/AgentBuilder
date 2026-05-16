@@ -16,6 +16,7 @@ import type { Env } from '../types';
 import { db, type Sql } from './db';
 import type { AppleContext } from './email-parsers/apple';
 import type { AmazonContext } from './email-parsers/amazon';
+import type { EtsyContext } from './email-parsers/etsy';
 import type { VenmoContext } from './email-parsers/venmo';
 
 const MAX_DESC = 140;
@@ -151,6 +152,37 @@ export function computeAmazonSplits(parentAmount: number, amazon: AmazonContext)
   return rows;
 }
 
+/**
+ * Build per-item split rows for an Etsy order. Etsy receipt emails itemize
+ * prices like Apple receipts, so this mirrors computeAppleSplits — a
+ * "tax & shipping" row absorbs any remainder so children sum to the charge.
+ */
+export function computeEtsySplits(parentAmount: number, etsy: EtsyContext): AppleSplitRow[] | null {
+  const items = etsy.items ?? [];
+  if (items.length < 2) return null;
+
+  const sign = parentAmount < 0 ? -1 : 1;
+  const target = round2(Math.abs(parentAmount));
+  const base = { order_id: etsy.order_id, shop_name: etsy.shop_name };
+
+  const rows: AppleSplitRow[] = items.map(it => ({
+    description: clip(it.name) || 'Etsy item',
+    amount: round2(it.price) * sign,
+    supplement: { etsy: { ...base, item: { name: it.name, price: it.price }, split_child: true } },
+  }));
+
+  const itemsSum = round2(items.reduce((s, it) => s + it.price, 0));
+  const remainder = round2(target - itemsSum);
+  if (Math.abs(remainder) >= 0.01) {
+    rows.push({
+      description: 'Etsy — tax & shipping',
+      amount: remainder * sign,
+      supplement: { etsy: { ...base, tax_and_shipping: true, split_child: true } },
+    });
+  }
+  return rows;
+}
+
 /** A readable description from email enrichment, or null to keep the bank one. */
 export function deriveDescription(vendor: string, context: unknown): string | null {
   if (vendor === 'apple') {
@@ -168,6 +200,14 @@ export function deriveDescription(vendor: string, context: unknown): string | nu
     const first = clip(items[0]!.name);
     if (!first) return null;
     return items.length > 1 ? clip(`${first} +${items.length - 1} more`) : first;
+  }
+  if (vendor === 'etsy') {
+    const e = context as EtsyContext;
+    if (e.items && e.items.length === 1) {
+      const name = clip(e.items[0]!.name);
+      return name || null;
+    }
+    return null;
   }
   if (vendor === 'venmo') {
     const v = context as VenmoContext;
@@ -236,18 +276,24 @@ export async function splitAmazon(sql: Sql, parentRawId: string, amazon: AmazonC
   return splitMatched(sql, parentRawId, 'Amazon', { amazon }, amt => computeAmazonSplits(amt, amazon));
 }
 
+/** Split a multi-item Etsy order's matched bank row into per-item children. */
+export async function splitEtsy(sql: Sql, parentRawId: string, etsy: EtsyContext): Promise<number> {
+  return splitMatched(sql, parentRawId, 'Etsy', { etsy }, amt => computeEtsySplits(amt, etsy));
+}
+
 export interface BackfillResult {
   scanned: number;
   apple_split: number;
   amazon_split: number;
+  etsy_split: number;
   rows_created: number;
   descriptions_updated: number;
   supplement_repaired: number;
 }
 
 /**
- * One-time backfill: re-apply splitting and Apple/Amazon/Venmo descriptions to
- * review-queue rows that were already email-matched before this was enabled.
+ * One-time backfill: re-apply splitting and Apple/Amazon/Etsy/Venmo
+ * descriptions to rows that were already email-matched before this was enabled.
  * Also repairs any supplement_json that was stored in a legacy malformed
  * shape so the enrichment data is readable again. Amazon rows enriched before
  * per-item prices were parsed have no prices to split on — they get a
@@ -266,6 +312,7 @@ export async function backfillEmailEnrichment(env: Env): Promise<BackfillResult>
     `;
     let appleSplit = 0;
     let amazonSplit = 0;
+    let etsySplit = 0;
     let rowsCreated = 0;
     let descUpdated = 0;
     let repaired = 0;
@@ -274,6 +321,7 @@ export async function backfillEmailEnrichment(env: Env): Promise<BackfillResult>
       const norm = normalizeSupplement(r.supplement_json);
       const apple = norm.apple as AppleContext | undefined;
       const amazon = norm.amazon as AmazonContext | undefined;
+      const etsy = norm.etsy as EtsyContext | undefined;
       const venmo = norm.venmo as VenmoContext | undefined;
       const malformed = JSON.stringify(r.supplement_json) !== JSON.stringify(norm);
 
@@ -293,14 +341,24 @@ export async function backfillEmailEnrichment(env: Env): Promise<BackfillResult>
           continue;
         }
       }
+      if (etsy && Array.isArray(etsy.items) && etsy.items.length >= 2) {
+        const created = await splitEtsy(sql, r.id, etsy);
+        if (created > 0) {
+          etsySplit++;
+          rowsCreated += created;
+          continue;
+        }
+      }
 
       const desc = apple
         ? deriveDescription('apple', apple)
         : amazon
           ? deriveDescription('amazon', amazon)
-          : venmo
-            ? deriveDescription('venmo', venmo)
-            : null;
+          : etsy
+            ? deriveDescription('etsy', etsy)
+            : venmo
+              ? deriveDescription('venmo', venmo)
+              : null;
 
       if (malformed) {
         await sql`
@@ -321,6 +379,7 @@ export async function backfillEmailEnrichment(env: Env): Promise<BackfillResult>
       scanned: rows.length,
       apple_split: appleSplit,
       amazon_split: amazonSplit,
+      etsy_split: etsySplit,
       rows_created: rowsCreated,
       descriptions_updated: descUpdated,
       supplement_repaired: repaired,

@@ -179,7 +179,7 @@ export const MCP_TOOLS = [
   {
     name: 'email_enrichment_backfill',
     description:
-      'One-time: re-apply email enrichment to already-matched review-queue transactions — split multi-item Apple receipts and Amazon orders into per-item rows and rewrite Apple/Amazon/Venmo descriptions to the item name / payment memo.',
+      'One-time: re-apply email enrichment to already-matched review-queue transactions — split multi-item Apple receipts and Amazon/Etsy orders into per-item rows and rewrite Apple/Amazon/Etsy/Venmo descriptions to the item name / payment memo.',
     inputSchema: { type: 'object' as const, properties: {}, additionalProperties: false },
   },
   {

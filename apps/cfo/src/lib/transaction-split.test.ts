@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { cleanItemName, computeAppleSplits, computeAmazonSplits, deriveDescription, normalizeSupplement } from './transaction-split';
+import { cleanItemName, computeAppleSplits, computeAmazonSplits, computeEtsySplits, deriveDescription, normalizeSupplement } from './transaction-split';
 import type { AppleContext } from './email-parsers/apple';
 import type { AmazonContext } from './email-parsers/amazon';
+import type { EtsyContext } from './email-parsers/etsy';
 import type { VenmoContext } from './email-parsers/venmo';
 
 function apple(items: Array<{ name: string; price: number }>): AppleContext {
@@ -12,6 +13,13 @@ function amazon(items: Array<{ name: string; price?: number }>): AmazonContext {
   return {
     order_id: '111-2222222-3333333', order_date: '2026-05-06', shipment_date: null,
     total_amount: 0, items, ship_to: null, shipping_address: null, order_status: 'Confirmed',
+  };
+}
+
+function etsy(items: Array<{ name: string; price: number }>): EtsyContext {
+  return {
+    order_id: '123456789', shop_name: 'MakerShop', total_amount: 0, items,
+    date: '2026-05-06', date_is_from_body: true,
   };
 }
 
@@ -108,6 +116,31 @@ describe('computeAmazonSplits', () => {
   });
 });
 
+describe('computeEtsySplits', () => {
+  it('splits a 2-item order with a tax & shipping remainder', () => {
+    const rows = computeEtsySplits(42.50, etsy([
+      { name: 'Hand-thrown Mug', price: 24.00 },
+      { name: 'Linen Napkins', price: 14.00 },
+    ]));
+    expect(rows!).toHaveLength(3);
+    expect(rows![2]!.description).toBe('Etsy — tax & shipping');
+    expect(rows![2]!.amount).toBeCloseTo(4.50, 2);
+    expect(rows!.reduce((s, r) => s + r.amount, 0)).toBeCloseTo(42.50, 2);
+  });
+
+  it('preserves the sign of a negative (bank debit) charge', () => {
+    const rows = computeEtsySplits(-24.00, etsy([
+      { name: 'Item A', price: 12.00 },
+      { name: 'Item B', price: 12.00 },
+    ]));
+    expect(rows!.map(r => r.amount)).toEqual([-12.00, -12.00]);
+  });
+
+  it('returns null for a single-item order', () => {
+    expect(computeEtsySplits(9.99, etsy([{ name: 'One Thing', price: 9.99 }]))).toBeNull();
+  });
+});
+
 describe('normalizeSupplement', () => {
   it('passes through a well-formed object', () => {
     const ok = { apple: { items: [{ name: 'A', price: 1 }] } };
@@ -154,5 +187,13 @@ describe('deriveDescription', () => {
     expect(deriveDescription('amazon', amazon([
       { name: 'USB-C Cable' }, { name: 'Desk Lamp' }, { name: 'Mouse Pad' },
     ]))).toBe('USB-C Cable +2 more');
+  });
+  it('uses the item name for a single-item Etsy order', () => {
+    expect(deriveDescription('etsy', etsy([{ name: 'Hand-thrown Mug', price: 24 }]))).toBe('Hand-thrown Mug');
+  });
+  it('returns null for a multi-item Etsy order (handled by splitting)', () => {
+    expect(deriveDescription('etsy', etsy([
+      { name: 'A', price: 1 }, { name: 'B', price: 2 },
+    ]))).toBeNull();
   });
 });
