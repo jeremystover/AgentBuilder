@@ -10,7 +10,7 @@
  * lives in the per-vendor match functions below.
  */
 
-export type VendorHint = 'amazon' | 'venmo' | 'apple' | 'etsy';
+export type VendorHint = 'amazon' | 'venmo' | 'apple' | 'etsy' | 'ebay';
 export type MatchType = 'exact' | 'probable' | 'possible' | null;
 
 export interface MatchCandidate {
@@ -79,6 +79,15 @@ export function scoreMatch(
       if (desc.includes('etsy')) score += 25;
       return score;
     }
+    case 'ebay': {
+      // Base 50. Amount exact: +25. Date forward closeness: +25. Desc 'ebay': +25.
+      // eBay ships after the charge posts, so the window is forward-skewed.
+      let score = 50;
+      if (exactAmount) score += 25;
+      score += Math.max(0, 25 - distance * 6);
+      if (desc.includes('ebay')) score += 25;
+      return score;
+    }
   }
 }
 
@@ -88,6 +97,7 @@ export function thresholdFor(vendor: VendorHint): number {
     case 'venmo':  return 70;
     case 'apple':  return 65;
     case 'etsy':   return 60;
+    case 'ebay':   return 60;
   }
 }
 

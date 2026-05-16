@@ -19,27 +19,30 @@ import { parseAmazonEmail, type AmazonContext } from './email-parsers/amazon';
 import { parseVenmoEmail, type VenmoContext } from './email-parsers/venmo';
 import { parseAppleEmail, type AppleContext } from './email-parsers/apple';
 import { parseEtsyEmail, type EtsyContext } from './email-parsers/etsy';
+import { parseEbayEmail, type EbayContext } from './email-parsers/ebay';
 import {
   pickBestMatch,
   type MatchCandidate,
   type VendorHint,
 } from './email-matchers/match';
-import { splitApple, splitAmazon, deriveDescription } from './transaction-split';
+import { splitApple, splitAmazon, splitEtsy, deriveDescription } from './transaction-split';
 
-export const VENDORS: readonly VendorHint[] = ['amazon', 'venmo', 'apple', 'etsy'] as const;
+export const VENDORS: readonly VendorHint[] = ['amazon', 'venmo', 'apple', 'etsy', 'ebay'] as const;
 
 const SEARCH_QUERIES: Record<VendorHint, string> = {
   amazon: 'from:(auto-confirm@amazon.com OR ship-confirm@amazon.com OR shipment-tracking@amazon.com OR order-update@amazon.com) subject:"Your Amazon.com order" newer_than:90d',
   venmo:  'from:venmo@venmo.com newer_than:90d',
   apple:  'subject:"receipt from Apple" newer_than:90d',
   etsy:   '(from:(transaction@etsy.com OR support@etsy.com) OR subject:etsy) newer_than:90d',
+  ebay:   'from:ebay@ebay.com subject:"Order confirmed" newer_than:90d',
 };
 
-const SOURCE_FOR_VENDOR: Record<VendorHint, 'email_amazon' | 'email_venmo' | 'email_apple' | 'email_etsy'> = {
+const SOURCE_FOR_VENDOR: Record<VendorHint, 'email_amazon' | 'email_venmo' | 'email_apple' | 'email_etsy' | 'email_ebay'> = {
   amazon: 'email_amazon',
   venmo:  'email_venmo',
   apple:  'email_apple',
   etsy:   'email_etsy',
+  ebay:   'email_ebay',
 };
 
 export interface VendorSyncResult {
@@ -153,7 +156,9 @@ async function syncVendor(env: Env, sql: Sql, vendor: VendorHint): Promise<Vendo
         ? await splitApple(sql, parentId, context as AppleContext)
         : vendor === 'amazon'
           ? await splitAmazon(sql, parentId, context as AmazonContext)
-          : 0;
+          : vendor === 'etsy'
+            ? await splitEtsy(sql, parentId, context as EtsyContext)
+            : 0;
       if (split === 0) {
         await updateSupplement(sql, vendor, parentId, context);
         const desc = deriveDescription(vendor, context);
@@ -187,7 +192,7 @@ async function syncVendor(env: Env, sql: Sql, vendor: VendorHint): Promise<Vendo
   };
 }
 
-type VendorContext = AmazonContext | VenmoContext | AppleContext | EtsyContext;
+type VendorContext = AmazonContext | VenmoContext | AppleContext | EtsyContext | EbayContext;
 
 function parseMessage(vendor: VendorHint, message: GmailMessage): VendorContext | null {
   switch (vendor) {
@@ -195,6 +200,7 @@ function parseMessage(vendor: VendorHint, message: GmailMessage): VendorContext 
     case 'venmo':  return parseVenmoEmail(message);
     case 'apple':  return parseAppleEmail(message);
     case 'etsy':   return parseEtsyEmail(message);
+    case 'ebay':   return parseEbayEmail(message);
   }
 }
 
@@ -217,11 +223,16 @@ function amountAndDateFor(vendor: VendorHint, context: VendorContext): { amount:
       const c = context as EtsyContext;
       return { amount: c.total_amount, date: c.date };
     }
+    case 'ebay': {
+      const c = context as EbayContext;
+      if (c.total_amount === null) return null;
+      return { amount: c.total_amount, date: c.date };
+    }
   }
 }
 
 function windowDaysFor(vendor: VendorHint, context: VendorContext): { back: number; forward: number } {
-  if (vendor === 'amazon') return { back: 2, forward: 12 };
+  if (vendor === 'amazon' || vendor === 'ebay') return { back: 2, forward: 12 };
   if (vendor === 'etsy') {
     const c = context as EtsyContext;
     return c.date_is_from_body ? { back: 2, forward: 5 } : { back: 60, forward: 5 };

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { GmailMessage } from '../gmail';
 import { parseAppleEmail } from './apple';
 import { parseEtsyEmail } from './etsy';
+import { parseEbayEmail } from './ebay';
 
 function msg(opts: { from: string; subject: string; body: string; internalDate?: string }): GmailMessage {
   return {
@@ -51,6 +52,28 @@ describe('parseAppleEmail', () => {
     expect(ctx!.total_amount).toBe(9.99);
     expect(ctx!.date_is_from_body).toBe(true);
     expect(ctx!.date).toBe('2026-01-05');
+  });
+});
+
+describe('parseEbayEmail', () => {
+  it('parses an eBay order confirmation, taking the item name from the subject', () => {
+    const ctx = parseEbayEmail(
+      msg({
+        from: 'eBay <ebay@ebay.com>',
+        subject: 'Order confirmed: CST/berger Magna-Trak 200 Magnetic Locator',
+        body: 'Hi Jeremy, thanks for your order.\nOrder number 05-14447-26915\nOrder total: $189.99',
+      }),
+    );
+    expect(ctx).not.toBeNull();
+    expect(ctx!.item_name).toBe('CST/berger Magna-Trak 200 Magnetic Locator');
+    expect(ctx!.order_id).toBe('05-14447-26915');
+    expect(ctx!.total_amount).toBe(189.99);
+  });
+
+  it('ignores non-eBay senders', () => {
+    expect(parseEbayEmail(
+      msg({ from: 'spam@example.com', subject: 'Order confirmed: Something', body: 'Total: $5.00' }),
+    )).toBeNull();
   });
 });
 

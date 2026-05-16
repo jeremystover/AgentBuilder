@@ -22,6 +22,7 @@ import { handleListRules, handleCreateRule } from './routes/web-rules';
 import { runTellerSync } from './routes/teller';
 import { runEmailSync } from './lib/email-sync';
 import { backfillEmailEnrichment } from './lib/transaction-split';
+import { runEmailDiscovery } from './lib/email-discovery';
 import type { VendorHint } from './lib/email-matchers/match';
 import { handleListReportConfigs, handleGenerateReport } from './routes/reports';
 import { db } from './lib/db';
@@ -179,8 +180,21 @@ export const MCP_TOOLS = [
   {
     name: 'email_enrichment_backfill',
     description:
-      'One-time: re-apply email enrichment to already-matched review-queue transactions — split multi-item Apple receipts and Amazon orders into per-item rows and rewrite Apple/Amazon/Venmo descriptions to the item name / payment memo.',
+      'One-time: re-apply email enrichment to already-matched review-queue transactions — split multi-item Apple receipts and Amazon/Etsy orders into per-item rows and rewrite Apple/Amazon/Etsy/eBay/Venmo descriptions to the item name / payment memo.',
     inputSchema: { type: 'object' as const, properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'email_discovery_run',
+    description:
+      "Reverse email enrichment: for un-enriched Teller transactions we can't identify, search Gmail for a matching email and use an LLM to write a readable description (captures arbitrary vendors like VRBO, Airbnb, Uber). Runs nightly automatically; call this to run it on demand. Pass transaction_id to (re-)run one transaction, or limit to cap the batch.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        transaction_id: { type: 'string' as const, description: 'A single raw_transactions id to (re-)process.' },
+        limit: { type: 'number' as const, description: 'Max transactions to process in this batch.' },
+      },
+      additionalProperties: false,
+    },
   },
   {
     name: 'report_list_configs',
@@ -315,6 +329,12 @@ export async function dispatchTool(name: string, args: Record<string, unknown>, 
 
     case 'email_enrichment_backfill':
       return JSON.stringify(await backfillEmailEnrichment(env));
+
+    case 'email_discovery_run':
+      return JSON.stringify(await runEmailDiscovery(env, {
+        transactionId: typeof args.transaction_id === 'string' ? args.transaction_id : undefined,
+        limit: typeof args.limit === 'number' ? args.limit : undefined,
+      }));
 
     case 'plan_list':
       return respondText(await handleListPlans(getReq('https://cfo.invalid/api/web/plans'), env));
