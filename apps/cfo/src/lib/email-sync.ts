@@ -110,8 +110,12 @@ export async function runEmailSync(
   }
 }
 
+// Enough headroom for 24 months of a vendor's emails — the default 200 cap
+// truncates high-volume senders like Amazon to the most recent ~6 months.
+const VENDOR_SEARCH_CAP = 1500;
+
 async function syncVendor(env: Env, sql: Sql, vendor: VendorHint): Promise<VendorSyncResult> {
-  const refs = await searchMessages(env, SEARCH_QUERIES[vendor]);
+  const refs = await searchMessages(env, SEARCH_QUERIES[vendor], VENDOR_SEARCH_CAP);
 
   let parsed = 0;
   let matched = 0;
